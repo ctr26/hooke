@@ -107,7 +107,7 @@ def launcher(
     gpus: int = ornamentalist.Configurable[1],
     cpus: int = ornamentalist.Configurable[16],
     ram: int = ornamentalist.Configurable[64],
-    timeout: int = ornamentalist.Configurable[20],
+    timeout: int = ornamentalist.Configurable[1440],
     partition: str = ornamentalist.Configurable["hopper"],
     qos: str = ornamentalist.Configurable["normal"],
     output_dir: str = ornamentalist.Configurable["./outputs/"],
