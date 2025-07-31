@@ -60,7 +60,6 @@ def main(config):
 
         prng(D.rank)
         torch.set_float32_matmul_precision("medium")
-        torch.backends.cudnn.benchmark = True
 
         model_cls = get_model_cls()
         net = model_cls(
