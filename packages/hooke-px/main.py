@@ -1,15 +1,13 @@
-import dataclasses
 import logging
 import os
 import pathlib
 import time
-from typing import Literal
+from typing import Callable, Literal
 
 import ornamentalist
 import submitit
 import torch
 import wandb
-from submitit.helpers import Checkpointable, RsyncSnapshot
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dataset
@@ -31,79 +29,86 @@ def prng(rank: int, seed: int = ornamentalist.Configurable[42]):
     log.info(f"Rank {rank} setting seed to {local_seed}")
 
 
-@dataclasses.dataclass
-class Main(Checkpointable):
-    """This is just the main function, but written in a format that's friendly to submitit."""
+def main(config: ornamentalist.ConfigDict):
+    ornamentalist.setup(config, force=True)
+    with Distributed() as D:
+        job_env = submitit.JobEnvironment()
 
-    config: ornamentalist.ConfigDict
+        cwd = pathlib.Path.cwd()
+        output_dir = str(cwd.parent / job_env.job_id)
+        name = generate_random_name(output_dir)
 
-    def __call__(self):
-        ornamentalist.setup(self.config, force=True)
-        with Distributed() as D:
-            job_env = submitit.JobEnvironment()
-
-            cwd = pathlib.Path.cwd()
-            output_dir = str(cwd.parent / job_env.job_id)
-            name = generate_random_name(output_dir)
-
-            if D.rank == 0:
-                wandb.init(
-                    name=name,
-                    id=name,
-                    dir=output_dir,
-                    notes=f"Outputs saved to: {output_dir}",
-                    project="big-img",
-                    entity="valencelabs",
-                    resume="allow",
-                    save_code=False,
-                    config=self.config,
-                )
-
-            log.info(f"Running job ID {job_env.job_id}")
-            log.info(f"{output_dir=}")
-            log.info(f"{name=}")
-            log.info(f"{self.config=}")
-
-            prng(D.rank)
-            torch.set_float32_matmul_precision("medium")
-
-            model_cls = get_model_cls()
-            net = model_cls(
-                input_size=32,
-                in_channels=8,
-                learn_sigma=False,
-                y_dim=dataset.NUM_PERTURBATIONS,
-                e_dim=dataset.NUM_EXPERIMENTS,
-                c_dim=dataset.NUM_CELL_TYPES,
-            )
-            net.to(D.device)
-            net: torch.nn.Module = torch.compile(net)  # type: ignore
-            ddp = DDP(net)
-            ema = EMA(net)
-            opt = torch.optim.Adam(
-                net.parameters(),
-                lr=1e-4,  # scheduler will override lr
-                betas=(0.9, 0.95),  # from appendix of arxiv.org/abs/2411.03177v1
-                eps=1e-8,
-                weight_decay=0.0,
-            )
-            state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0)
-
-            os.makedirs(os.path.join(output_dir, "checkpoints"), exist_ok=True)
-            state.load_latest_ckpt(dir=output_dir, device=D.device)
-
-            loaders: dict[str, torch.utils.data.DataLoader] = dataset.get_dataloaders()
-            train(
-                state=state,
-                train_loader=loaders["train"],
-                val_loader=loaders["iid_cp"],
-                test_loaders={k: v for k, v in loaders.items() if k != "train"},
-                output_dir=output_dir,
-                D=D,
+        if D.rank == 0:
+            wandb.init(
+                name=name,
+                id=name,
+                dir=output_dir,
+                notes=f"Outputs saved to: {output_dir}",
+                project="big-img",
+                entity="valencelabs",
+                resume="allow",
+                save_code=False,
+                config=config,
             )
 
-            if D.rank == 0:
-                wandb.finish(quiet=True)
+        log.info(f"Running job ID {job_env.job_id}")
+        log.info(f"{output_dir=}")
+        log.info(f"{name=}")
+        log.info(f"{config=}")
+
+        prng(D.rank)
+        torch.set_float32_matmul_precision("medium")
+
+        model_cls = get_model_cls()
+        net = model_cls(
+            input_size=32,
+            in_channels=8,
+            learn_sigma=False,
+            y_dim=dataset.NUM_PERTURBATIONS,
+            e_dim=dataset.NUM_EXPERIMENTS,
+            c_dim=dataset.NUM_CELL_TYPES,
+        )
+        net.to(D.device)
+        net: torch.nn.Module = torch.compile(net)  # type: ignore
+        ddp = DDP(net)
+        ema = EMA(net)
+        opt = torch.optim.Adam(
+            net.parameters(),
+            lr=1e-4,  # scheduler will override lr
+            betas=(0.9, 0.95),  # from appendix of arxiv.org/abs/2411.03177v1
+            eps=1e-8,
+            weight_decay=0.0,
+        )
+        state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0)
+
+        os.makedirs(os.path.join(output_dir, "checkpoints"), exist_ok=True)
+        state.load_latest_ckpt(dir=output_dir, device=D.device)
+
+        loaders: dict[str, torch.utils.data.DataLoader] = dataset.get_dataloaders()
+        train(
+            state=state,
+            train_loader=loaders["train"],
+            val_loader=loaders["iid_cp"],
+            test_loaders={k: v for k, v in loaders.items() if k != "train"},
+            output_dir=output_dir,
+            D=D,
+        )
+
+        if D.rank == 0:
+            wandb.finish(quiet=True)
+
+
+def prepare_submission(config: ornamentalist.ConfigDict) -> Callable:
+    # closure captures the config -- equivalant to partial(main, config=config)
+    def submission():
+        return main(config)
+
+    # attach a checkpoint method so submitit knows that it should auto-requeue on timeout
+    def checkpoint(*args, **kwargs):
+        return submitit.helpers.DelayedSubmission(submission)
+
+    setattr(submission, "checkpoint", checkpoint)
+    return submission
 
 
 @ornamentalist.configure()
@@ -139,8 +144,8 @@ def launcher(
     )
 
     snapshot_dir = os.path.join(output_dir, "snapshot")
-    with RsyncSnapshot(pathlib.Path(snapshot_dir)):
-        fns = [Main(config=config) for config in configs]
+    with submitit.helpers.RsyncSnapshot(pathlib.Path(snapshot_dir)):
+        fns = [prepare_submission(config=config) for config in configs]
         jobs = executor.submit_array(fns)
         log.info(f"Submitted {jobs=}")
 
