@@ -1,6 +1,7 @@
 import logging
 import os
 import pathlib
+import subprocess
 import time
 from typing import Callable, Literal
 
@@ -37,6 +38,22 @@ def main(config: ornamentalist.ConfigDict):
         cwd = pathlib.Path.cwd()
         output_dir = str(cwd.parent / job_env.job_id)
         name = generate_random_name(output_dir)
+
+        if D.rank == 0:
+            try:
+                subprocess.run(
+                    [
+                        "scontrol",
+                        "update",
+                        f"JobId={job_env.job_id}",
+                        f"JobName={name}",
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                log.info(f"Successfully renamed SLURM job to '{name}'")
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                log.warning(f"Could not rename SLURM job to '{name}'. Reason: {e}")
 
         if D.rank == 0:
             wandb.init(
