@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import re
+import tempfile
 import time
 
 import numpy as np
@@ -49,8 +50,11 @@ class TrainState:
 
     def save_ckpt(self, path: str) -> None:
         if torch.distributed.get_rank() == 0:
-            assert not os.path.exists(path), f"Checkpoint already exists at {path}"
-            torch.save(self._to_dict(), path)
+            dir = os.path.dirname(path)
+            with tempfile.NamedTemporaryFile(delete=False, dir=dir, suffix=".tmp") as f:
+                temp_path = f.name
+                torch.save(self._to_dict(), temp_path)
+            os.rename(temp_path, path)
         torch.distributed.barrier()
 
     def load_ckpt(self, path: str, device: torch.device) -> None:
@@ -516,10 +520,12 @@ def train(
                 )
 
         if state.global_step % ckpt_every_n_steps == 0:
-            os.makedirs(os.path.join(output_dir, "checkpoints"), exist_ok=True)
-            ckpt_dir = os.path.join(output_dir, "checkpoints")
-            log(step=state.global_step, msg=f"Saving checkpoint to {ckpt_dir}")
-            state.save_latest_ckpt(dir=ckpt_dir)
+            if D.rank == 0:
+                os.makedirs(os.path.join(output_dir, "checkpoints"), exist_ok=True)
+                ckpt_dir = os.path.join(output_dir, "checkpoints")
+                log(step=state.global_step, msg=f"Saving checkpoint to {ckpt_dir}")
+                state.save_latest_ckpt(dir=ckpt_dir)
+            D.barrier()
 
     log(step=state.global_step, msg="Training complete")
     return
