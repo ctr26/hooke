@@ -9,6 +9,7 @@ import time
 import numpy as np
 import ornamentalist
 import torch
+import torchdiffeq
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
@@ -102,7 +103,6 @@ def guided_prediction(
 
 
 @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-@ornamentalist.configure()
 def generate(
     model: DiTWrapper,  # DiT, maps x,cond -> velocity
     x0: torch.Tensor,  # shape (B, C, H, W), sampled from N(0, I)
@@ -110,21 +110,24 @@ def generate(
     z1: torch.Tensor,  # shape (B,) - zoom condition
     e1: torch.Tensor,  # shape (B,) - experiment condition
     c1: torch.Tensor,  # shape (B,) - cell type condition
-    show_progress: bool = False,
-    n_steps: int = ornamentalist.Configurable[100],
-) -> torch.Tensor:
-    """Generate a sample with the Euler probability flow ODE solver."""
-    ts = torch.linspace(0, 1, n_steps).to(x0.device)
-    dt = 1 / n_steps
-    x1 = x0
-    for i in tqdm(
-        range(n_steps),
-        desc="Generating...",
-        disable=not show_progress,
-    ):
-        t = ts[i].expand(x0.shape[0])
-        x1 += guided_prediction(model, x1, t, z1, y1, e1, c1) * dt
-    return x1
+) -> tuple[torch.Tensor, int]:
+    """Generate a sample with the dopri5 probability flow ODE solver."""
+    nfe = 0  # NB, if using guidance, the true nfe is this * 2
+
+    def forward_fn(t, x):
+        nonlocal nfe
+        nfe += 1
+        return guided_prediction(model, x=x, t=t, z=z1, y=y1, e=e1, c=c1)
+
+    traj = torchdiffeq.odeint(
+        forward_fn,
+        x0,
+        torch.linspace(0, 1, 2, device=x0.device),
+        method="dopri5",
+        rtol=1e-5,
+        atol=1e-5,
+    )
+    return traj[-1], nfe  # type: ignore
 
 
 @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
@@ -242,14 +245,13 @@ def visualise(
     zoom = zoom.to(D.device, non_blocking=True)
 
     x0_latent = vae.encode(x0)
-    preds = generate(
+    preds, nfe = generate(
         model=model,
         x0=x0_latent,
         y1=y1,
         z1=zoom,
         e1=exp,
         c1=cell_type,
-        show_progress=True,
     )
     preds = vae.decode(preds)
 
@@ -261,7 +263,10 @@ def visualise(
     os.makedirs(os.path.join(output_dir, "samples"), exist_ok=True)
     save_path = os.path.join(output_dir, f"samples/{state.global_step}.png")
     plot_samples(ctrls=x0, preds=preds, perts=x1, save_path=save_path)
-    log(step=state.global_step, data={"val/images": wandb.Image(save_path)})
+    log(
+        step=state.global_step,
+        data={"val/images": wandb.Image(save_path), "val/nfe": nfe},
+    )
     return
 
 
@@ -318,14 +323,13 @@ def compute_metrics(
 
         x0 = vae.encode(x0)
 
-        preds = generate(
+        preds, _ = generate(
             model=model,
             x0=x0,
             y1=y1,
             z1=zoom,
             e1=exp,
             c1=cell_type,
-            show_progress=False,
         )
         preds = vae.decode(preds)
         pred_features.append(detector(cp2rgb(preds)).cpu())
