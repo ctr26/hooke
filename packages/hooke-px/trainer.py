@@ -411,7 +411,6 @@ def train(
     eval_every_n_steps: int = ornamentalist.Configurable[10_000],
     ckpt_every_n_steps: int = ornamentalist.Configurable[50_000],
     metrics_every_n_steps: int = ornamentalist.Configurable[50_000],
-    switch_ema_every_n_steps: int = ornamentalist.Configurable[10_000],
 ) -> None:
     prof = get_profiler(return_dummy=D.rank != 0, save_dir=output_dir)
     start_step = state.global_step
@@ -474,9 +473,6 @@ def train(
 
         if state.global_step == 5000:  # after warmup, re-sync ema with model
             state.ema.sync(state.ddp.module)
-
-        if state.global_step % switch_ema_every_n_steps == 0:  # switch ema trick
-            state.ema.switch(state.ddp.module)
 
         if state.global_step % log_every_n_steps == 0:
             elapsed_time = time.time() - start_time
