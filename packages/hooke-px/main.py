@@ -98,7 +98,9 @@ def main(config: ornamentalist.ConfigDict):
         )
         state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0)
 
-        os.makedirs(os.path.join(output_dir, "checkpoints"), exist_ok=True)
+        ckpt_dir = os.path.join(output_dir, "checkpoints")
+        os.makedirs(ckpt_dir, exist_ok=True)
+        log.info(f"Using checkpoint directory: {ckpt_dir}")
         state.load_latest_ckpt(dir=output_dir, device=D.device)
 
         loaders: dict[str, torch.utils.data.DataLoader] = dataset.get_dataloaders()
@@ -133,8 +135,8 @@ def launcher(
     configs: list[dict],
     nodes: int = ornamentalist.Configurable[1],
     gpus: int = ornamentalist.Configurable[1],
-    cpus: int = ornamentalist.Configurable[16],
-    ram: int = ornamentalist.Configurable[64],
+    cpus: int = ornamentalist.Configurable[24],
+    ram: int = ornamentalist.Configurable[128],
     timeout: int = ornamentalist.Configurable[1440],
     partition: str = ornamentalist.Configurable["hopper"],
     qos: str = ornamentalist.Configurable["normal"],

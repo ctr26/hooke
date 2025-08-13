@@ -38,7 +38,7 @@ def log(*, step: int, msg: str | None = None, data: dict | None = None):
 class TrainState:
     ddp: DDP  # Distributed wrapper around DiT model
     ema: EMA  # EMA wrapper around DiT model
-    opt: torch.optim.Optimizer  # (should optimise both the adaptor and DiT)
+    opt: torch.optim.Optimizer
     global_step: int
 
     def _to_dict(self) -> dict:
@@ -49,14 +49,13 @@ class TrainState:
             "opt": self.opt.state_dict(),
         }
 
+    @rank_zero()
     def save_ckpt(self, path: str) -> None:
-        if torch.distributed.get_rank() == 0:
-            dir = os.path.dirname(path)
-            with tempfile.NamedTemporaryFile(delete=False, dir=dir, suffix=".tmp") as f:
-                temp_path = f.name
-                torch.save(self._to_dict(), temp_path)
-            os.rename(temp_path, path)
-        torch.distributed.barrier()
+        dir = os.path.dirname(path)
+        with tempfile.NamedTemporaryFile(delete=False, dir=dir, suffix=".tmp") as f:
+            temp_path = f.name
+            torch.save(self._to_dict(), temp_path)
+        os.rename(temp_path, path)
 
     def load_ckpt(self, path: str, device: torch.device) -> None:
         state = torch.load(path, weights_only=True, map_location=device)
@@ -77,12 +76,12 @@ class TrainState:
             if f.is_file() and re.fullmatch(pattern, f.name)
         ]
         if len(fnames) == 0:
-            print(f"No existing checkpoints found in {dir}")
+            print(f"No existing checkpoints found in {dir}, skipping load.")
             return None
 
         latest = max(fnames, key=lambda x: int(re.fullmatch(pattern, x).group(1)))  # type: ignore
         path = os.path.join(dir, latest)
-        print(f"Loading latest checkpoint from {path}")
+        print(f"Found previous checkpoint, loading latest from {path}")
         self.load_ckpt(path, device)
 
 
@@ -92,6 +91,9 @@ def guided_prediction(
     x, t, z, y, e, c,
     cfg: float = ornamentalist.Configurable[1.0],
 ) -> torch.Tensor:  # fmt: off
+    if t.ndim == 0:  # the ODE solver gives scalar t
+        t = t.expand(x.shape[0])
+
     if cfg == 0.0:  # unconditional
         return model(x=x, t=t, z=z, y=None, e=e, c=c)
     if cfg == 1.0:  # conditional
@@ -520,12 +522,9 @@ def train(
                 )
 
         if state.global_step % ckpt_every_n_steps == 0:
-            if D.rank == 0:
-                os.makedirs(os.path.join(output_dir, "checkpoints"), exist_ok=True)
-                ckpt_dir = os.path.join(output_dir, "checkpoints")
-                log(step=state.global_step, msg=f"Saving checkpoint to {ckpt_dir}")
-                state.save_latest_ckpt(dir=ckpt_dir)
-            D.barrier()
+            ckpt_dir = os.path.join(output_dir, "checkpoints")
+            log(step=state.global_step, msg=f"Saving checkpoint to {ckpt_dir}")
+            state.save_latest_ckpt(dir=ckpt_dir)
 
     log(step=state.global_step, msg="Training complete")
     return
