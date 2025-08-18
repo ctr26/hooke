@@ -211,7 +211,7 @@ def get_dataloaders(
     ],
     img_size: int = ornamentalist.Configurable[256],
     batch_size: int = ornamentalist.Configurable[64],
-    num_workers: int = ornamentalist.Configurable[16],
+    num_workers: int = ornamentalist.Configurable[12],
     pin_memory: bool = ornamentalist.Configurable[True],
     multiscale: bool = ornamentalist.Configurable[True],
 ) -> tuple[DataLoader, DataLoader]:
