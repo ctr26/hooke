@@ -161,8 +161,9 @@ def evaluate(
     loader: torch.utils.data.DataLoader,
     vae: StabilityCPEncoder,
     D: Distributed,
+    use_ema: bool,
 ) -> None:
-    model = state.ddp.module
+    model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
 
     running_loss = torch.tensor(0.0, device=D.device)
@@ -191,7 +192,7 @@ def evaluate(
         x0 = torch.randn_like(x1)
 
         loss = compute_loss(
-            model=model,
+            model=model,  # type: ignore
             x0=x0,
             x1=x1,
             y1=y1,
@@ -206,14 +207,14 @@ def evaluate(
     num_samples = D.all_reduce(num_samples, op="sum")
 
     val_loss = (running_loss / num_samples).item()
-    log(step=state.global_step, data={"val/loss": val_loss})
+    prefix = "val_ema" if use_ema else "val_ddp"
+    log(step=state.global_step, data={f"{prefix}/loss": val_loss})
     D.barrier()
     return
 
 
 @rank_zero()
 @torch.inference_mode()
-@ornamentalist.configure()
 def visualise(
     *,
     state: TrainState,
@@ -222,8 +223,7 @@ def visualise(
     vae: StabilityCPEncoder,
     cp2rgb: CellPaintConverter,
     D: Distributed,
-    use_ema: bool = ornamentalist.Configurable[True],
-    num_samples: int = ornamentalist.Configurable[16],
+    use_ema: bool,
 ):
     model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
@@ -252,7 +252,7 @@ def visualise(
         c1=cell_type,
     )
     preds = vae.decode(preds)
-    preds = cp2rgb(preds)[:num_samples]  # uint8 [B, 3, H, W]
+    preds = cp2rgb(preds)  # uint8 [B, 3, H, W]
     preds = preds.to(torch.float32) / 255  # save_image wants float32
 
     os.makedirs(os.path.join(output_dir, "samples"), exist_ok=True)
@@ -274,7 +274,7 @@ def compute_metrics(
     vae: StabilityCPEncoder,
     cp2rgb: CellPaintConverter,
     D: Distributed,
-    use_ema: bool = ornamentalist.Configurable[True],
+    use_ema: bool,
 ) -> None:
     model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
@@ -482,13 +482,21 @@ def train(
                 vae=vae,
                 cp2rgb=cp2rgb,
                 D=D,
+                use_ema=True,
             )
-            evaluate(state=state, vae=vae, loader=val_loader, D=D)
+            evaluate(state=state, vae=vae, loader=val_loader, D=D, use_ema=False)
+            evaluate(state=state, vae=vae, loader=val_loader, D=D, use_ema=True)
 
         if state.global_step % metrics_every_n_steps == 0:
             for name, loader in test_loaders.items():
                 compute_metrics(
-                    state=state, name=name, vae=vae, cp2rgb=cp2rgb, loader=loader, D=D
+                    state=state,
+                    name=name,
+                    vae=vae,
+                    cp2rgb=cp2rgb,
+                    loader=loader,
+                    D=D,
+                    use_ema=True,
                 )
 
         if state.global_step % ckpt_every_n_steps == 0:
