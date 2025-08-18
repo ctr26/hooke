@@ -12,13 +12,14 @@ import torch
 import torchdiffeq
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torchvision.utils import save_image
 from tqdm import tqdm
 
 from dataset import CellPaintConverter, StabilityCPEncoder
 from model import DiTWrapper
 from utils.distributed import Distributed, rank_zero
-from utils.ema import EMA
-from utils.evaluation import DINOv2Detector, compute_fd, compute_prdc, plot_samples
+from utils.ema import KarrasEMA
+from utils.evaluation import DINOv2Detector, compute_fd, compute_prdc
 from utils.infinite_dataloader import infinite_dataloader
 from utils.profiler import get_profiler
 
@@ -37,7 +38,7 @@ def log(*, step: int, msg: str | None = None, data: dict | None = None):
 @dataclasses.dataclass
 class TrainState:
     ddp: DDP  # Distributed wrapper around DiT model
-    ema: EMA  # EMA wrapper around DiT model
+    ema: KarrasEMA  # EMA wrapper around DiT model
     opt: torch.optim.Optimizer
     global_step: int
 
@@ -174,23 +175,20 @@ def evaluate(
         unit="step",
         disable=D.rank != 0,  # only show from one process
     ):
-        x0 = batch["ctrl_img"]
-        x1 = batch["pert_img"]
+        x1 = batch["img"]
         y1 = batch["perturbation_id"]
-
         exp = batch["experiment_id"]
         cell_type = batch["cell_type_id"]
         zoom = batch["zoom_id"]
 
-        x0 = x0.to(D.device, non_blocking=True)
         x1 = x1.to(D.device, non_blocking=True)
         y1 = y1.to(D.device, non_blocking=True)
         exp = exp.to(D.device, non_blocking=True)
         cell_type = cell_type.to(D.device, non_blocking=True)
         zoom = zoom.to(D.device, non_blocking=True)
 
-        x0 = vae.encode(x0)
         x1 = vae.encode(x1)
+        x0 = torch.randn_like(x1)
 
         loss = compute_loss(
             model=model,
@@ -213,7 +211,7 @@ def evaluate(
     return
 
 
-@rank_zero(barrier=True)
+@rank_zero()
 @torch.inference_mode()
 @ornamentalist.configure()
 def visualise(
@@ -231,40 +229,35 @@ def visualise(
     model.eval()
 
     batch = next(iter(loader))
-    x0 = batch["ctrl_img"]
-    x1 = batch["pert_img"]
+    x1 = batch["img"]
     y1 = batch["perturbation_id"]
-
     exp = batch["experiment_id"]
     cell_type = batch["cell_type_id"]
     zoom = batch["zoom_id"]
 
-    x0 = x0.to(D.device, non_blocking=True)
     x1 = x1.to(D.device, non_blocking=True)
     y1 = y1.to(D.device, non_blocking=True)
     exp = exp.to(D.device, non_blocking=True)
     cell_type = cell_type.to(D.device, non_blocking=True)
     zoom = zoom.to(D.device, non_blocking=True)
 
-    x0_latent = vae.encode(x0)
+    x1 = vae.encode(x1)
+    x0 = torch.randn_like(x1)
     preds, nfe = generate(
         model=model,
-        x0=x0_latent,
+        x0=x0,
         y1=y1,
         z1=zoom,
         e1=exp,
         c1=cell_type,
     )
     preds = vae.decode(preds)
-
-    # uint8 [B, 6, H, W] -> uint8 [B, 3, H, W]
-    x0 = cp2rgb(x0)[:num_samples]
-    x1 = cp2rgb(x1)[:num_samples]
-    preds = cp2rgb(preds)[:num_samples]
+    preds = cp2rgb(preds)[:num_samples]  # uint8 [B, 3, H, W]
+    preds = preds.to(torch.float32) / 255  # save_image wants float32
 
     os.makedirs(os.path.join(output_dir, "samples"), exist_ok=True)
     save_path = os.path.join(output_dir, f"samples/{state.global_step}.png")
-    plot_samples(ctrls=x0, preds=preds, perts=x1, save_path=save_path)
+    save_image(preds, save_path)
     log(
         step=state.global_step,
         data={"val/images": wandb.Image(save_path), "val/nfe": nfe},
@@ -288,9 +281,8 @@ def compute_metrics(
 
     detector = DINOv2Detector()
 
-    ctrl_features = []
+    real_features = []
     pred_features = []
-    pert_features = []
 
     N = len(loader.dataset)  # type: ignore
     log(step=state.global_step, msg=f"Generating {N} samples for {name}")
@@ -305,25 +297,20 @@ def compute_metrics(
             disable=disable_tqdm,  # only show from one process
         )
     ):
-        x0 = batch["ctrl_img"]
-        x1 = batch["pert_img"]
+        x1 = batch["img"]
         y1 = batch["perturbation_id"]
-
-        ctrl_features.append(detector(cp2rgb(x0)).cpu())
-        pert_features.append(detector(cp2rgb(x1)).cpu())
 
         exp = batch["experiment_id"]
         cell_type = batch["cell_type_id"]
         zoom = batch["zoom_id"]
 
-        x0 = x0.to(D.device, non_blocking=True)
         x1 = x1.to(D.device, non_blocking=True)
         y1 = y1.to(D.device, non_blocking=True)
         exp = exp.to(D.device, non_blocking=True)
         cell_type = cell_type.to(D.device, non_blocking=True)
         zoom = zoom.to(D.device, non_blocking=True)
-
-        x0 = vae.encode(x0)
+        x1 = vae.encode(x1)
+        x0 = torch.randn_like(x1)
 
         preds, _ = generate(
             model=model,
@@ -335,35 +322,25 @@ def compute_metrics(
         )
         preds = vae.decode(preds)
         pred_features.append(detector(cp2rgb(preds)).cpu())
+        real_features.append(detector(cp2rgb(x1)).cpu())
 
     D.barrier()
 
     # move to gpu, all_gather, move to cpu
     # we do it this way because all_gather is not supported on CPU
-    ctrl_features = torch.cat(ctrl_features, dim=0).to(D.device)
-    ctrl_features = D.gather_concat(ctrl_features).cpu().numpy()
+    real_features = torch.cat(real_features, dim=0).to(D.device)
+    real_features = D.gather_concat(real_features).cpu().numpy()
 
     pred_features = torch.cat(pred_features, dim=0).to(D.device)
     pred_features = D.gather_concat(pred_features).cpu().numpy()
 
-    pert_features = torch.cat(pert_features, dim=0).to(D.device)
-    pert_features = D.gather_concat(pert_features).cpu().numpy()
-
     # truncate duplicated samples in last batch from distributed dataloader
-    ctrl_features = ctrl_features[:N]
+    real_features = real_features[:N]
     pred_features = pred_features[:N]
-    pert_features = pert_features[:N]
 
     if D.rank == 0:
-        fd_pred = compute_fd(pred_features, pert_features)
-        fd_ctrl = compute_fd(ctrl_features, pert_features)
-        log(
-            step=state.global_step,
-            data={
-                f"{name}_metrics/fd@{N}": fd_pred,
-                f"{name}_metrics/fd_ctrl_baseline@{N}": fd_ctrl,
-            },
-        )
+        fd = compute_fd(real_features, pred_features)
+        log(step=state.global_step, data={f"{name}_metrics/fd@{N}": fd})
 
         SUBSAMPLE_N = 10000  # prdc is slow for the full dataset
         n_samples = pred_features.shape[0]
@@ -371,12 +348,12 @@ def compute_metrics(
             n = SUBSAMPLE_N
             rng = np.random.default_rng(seed=42)
             idxs = rng.choice(n_samples, size=SUBSAMPLE_N, replace=False)
-            pert_features = pert_features[idxs]
+            real_features = real_features[idxs]
             pred_features = pred_features[idxs]
         else:
             n = n_samples
 
-        prdc = compute_prdc(pert_features, pred_features, nearest_k=5)
+        prdc = compute_prdc(real_features, pred_features, nearest_k=5)
         prdc_preds = {f"{name}_metrics/{k}@{n}": v for k, v in prdc.items()}
         log(step=state.global_step, data=prdc_preds)
     D.barrier()
@@ -438,24 +415,20 @@ def train(
         disable=D.rank != 0,  # only show from one process
     ):
         state.ddp.train()
-        x0 = batch["ctrl_img"]
-        x1 = batch["pert_img"]
+        x1 = batch["img"]
         y1 = batch["perturbation_id"]
-
         exp = batch["experiment_id"]
         cell_type = batch["cell_type_id"]
         zoom = batch["zoom_id"]
 
-        x0 = x0.to(D.device, non_blocking=True)
         x1 = x1.to(D.device, non_blocking=True)
         y1 = y1.to(D.device, non_blocking=True)
         exp = exp.to(D.device, non_blocking=True)
         cell_type = cell_type.to(D.device, non_blocking=True)
         zoom = zoom.to(D.device, non_blocking=True)
 
-        x0 = vae.encode(x0)
         x1 = vae.encode(x1)
-
+        x0 = torch.randn_like(x1)
         loss = compute_loss(
             model=state.ddp,
             x0=x0,
@@ -470,15 +443,12 @@ def train(
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(state.ddp.parameters(), max_norm=1.0)
 
+        state.global_step += 1
         lr = lr_schedule(optimizer=state.opt, global_step=state.global_step)
         state.opt.step()
-        state.ema.update(model=state.ddp.module)
         state.opt.zero_grad()
-        state.global_step += 1
+        state.ema.update(model=state.ddp.module, step=state.global_step)
         prof.step()
-
-        if state.global_step == 5000:  # after warmup, re-sync ema with model
-            state.ema.sync(state.ddp.module)
 
         if state.global_step % log_every_n_steps == 0:
             elapsed_time = time.time() - start_time

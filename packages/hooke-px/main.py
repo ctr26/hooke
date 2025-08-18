@@ -15,7 +15,7 @@ import dataset
 from model import get_model_cls
 from trainer import TrainState, train
 from utils.distributed import Distributed
-from utils.ema import EMA
+from utils.ema import KarrasEMA
 from utils.name_run import generate_random_name
 
 logging.basicConfig(level=logging.INFO)
@@ -88,7 +88,7 @@ def main(config: ornamentalist.ConfigDict):
         net.to(D.device)
         net: torch.nn.Module = torch.compile(net)  # type: ignore
         ddp = DDP(net)
-        ema = EMA(net)
+        ema = KarrasEMA(net)
         opt = torch.optim.Adam(
             net.parameters(),
             lr=1e-4,  # scheduler will override lr
@@ -98,17 +98,20 @@ def main(config: ornamentalist.ConfigDict):
         )
         state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0)
 
+        nparams = sum(p.numel() for p in net.parameters())
+        log.info(f"Model has {nparams / 1e6:.0f}M parameters")
+
         ckpt_dir = os.path.join(output_dir, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=True)
         log.info(f"Using checkpoint directory: {ckpt_dir}")
-        state.load_latest_ckpt(dir=output_dir, device=D.device)
+        state.load_latest_ckpt(dir=ckpt_dir, device=D.device)
 
-        loaders: dict[str, torch.utils.data.DataLoader] = dataset.get_dataloaders()
+        train_loader, val_loader = dataset.get_dataloaders()
         train(
             state=state,
-            train_loader=loaders["train"],
-            val_loader=loaders["iid_cp"],
-            test_loaders={k: v for k, v in loaders.items() if k != "train"},
+            train_loader=train_loader,
+            val_loader=val_loader,
+            test_loaders={"val_iid": val_loader},
             output_dir=output_dir,
             D=D,
         )
@@ -142,10 +145,13 @@ def launcher(
     qos: str = ornamentalist.Configurable["normal"],
     output_dir: str = ornamentalist.Configurable["./outputs/"],
     cluster: Literal["debug", "local", "slurm"] = ornamentalist.Configurable["debug"],
+    desc: str = ornamentalist.Configurable[""],
 ):
     """Thin wrapper that launches the main function with submitit.
     If multiple configs are provided, they will be launched as an array job/sweep.
     Note that all jobs in the array will be launched with the same SLURM parameters."""
+
+    del desc  # desc is just some free text we can use to filter with wandb in the UI
 
     output_dir = os.path.join(output_dir, f"{time.time():.0f}")
     executor = submitit.AutoExecutor(folder=output_dir, cluster=cluster)
@@ -185,5 +191,6 @@ def launcher(
 
 if __name__ == "__main__":
     configs = ornamentalist.cli()
+    assert all(config["launcher"] == configs[0]["launcher"] for config in configs)
     ornamentalist.setup(configs[0], force=True)
     launcher(configs=configs)

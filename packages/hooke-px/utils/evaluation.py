@@ -9,13 +9,9 @@ images and use the standard OpenAI ADM evaluator script [2].
 [2] https://github.com/openai/guided-diffusion/tree/main/evaluations
 """
 
-import os
-
-import matplotlib.pyplot as plt
 import numpy as np
 import sklearn.metrics
 import torch
-from matplotlib import colors
 from scipy import linalg
 
 
@@ -145,54 +141,3 @@ def compute_prdc(real_features, fake_features, nearest_k):
 
     d = dict(precision=precision, recall=recall, density=density, coverage=coverage)
     return d
-
-
-def plot_samples(
-    ctrls: torch.Tensor,
-    preds: torch.Tensor,
-    perts: torch.Tensor,
-    save_path: str,
-) -> None:
-    """Plot and save a batch of samples, visualising
-    control, prediction, diff, and perturbed images.
-    Assumes input tensors are torch.uint8 in [0, 255] and shape Bx3xHxW.
-    """
-    num_samples = ctrls.shape[0]
-    controls_np = np.transpose(ctrls.cpu().numpy(), (0, 2, 3, 1))
-    preds_np = np.transpose(preds.cpu().numpy(), (0, 2, 3, 1))
-    perturbed_np = np.transpose(perts.cpu().numpy(), (0, 2, 3, 1))
-
-    height = 12
-    width = height * ((num_samples + 1) // 4)
-
-    fig, axs = plt.subplots(4, num_samples, figsize=(width, height))
-    fig.tight_layout()
-    for i in range(num_samples):
-        axs[0, i].imshow(controls_np[i])
-        axs[1, i].imshow(preds_np[i])
-
-        # important to convert to float32 before subtracting to avoid overflow
-        diff = controls_np[i].astype(np.float32) - preds_np[i].astype(np.float32)
-        diff = diff.mean(axis=2)  # take the mean of the channel-wise diff
-
-        # NB: we use a fixed range for the colormap to make it possible to compare images.
-        # The maximum possible range for the diff is [-255, 255], but we use a smaller range
-        # because the diffs are never going to be that large (so won't be visible).
-        # If the diffs are getting saturated too easily, try increasing the range.
-        # Similarly, if visible changes are not showing up in the diff, try decreasing the range.
-        axs[2, i].imshow(diff, cmap="RdBu_r", norm=colors.CenteredNorm(halfrange=75))
-
-        axs[3, i].imshow(perturbed_np[i])
-
-        axs[0, i].set_title("Control")
-        axs[1, i].set_title("Pred")
-        axs[2, i].set_title("Diff")
-        axs[3, i].set_title("Perturbed")
-        axs[0, i].axis("off")
-        axs[1, i].axis("off")
-        axs[2, i].axis("off")
-        axs[3, i].axis("off")
-
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    fig.savefig(save_path, format="png", bbox_inches="tight")
-    plt.close(fig)

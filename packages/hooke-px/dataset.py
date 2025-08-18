@@ -1,6 +1,4 @@
-import hashlib
-import os
-from typing import Callable, Literal
+from typing import Callable
 
 import diffusers
 import ornamentalist
@@ -13,10 +11,8 @@ from torchvision.transforms import v2
 
 # encode these cols as ints in the range [0, num_classes)
 # no harm in this being larger than the actual number of unique labels
-# if it's smaller (as in the case of perturbations), some labels will be mapped to the same index
-# this lets us trade off memory for hash collisions (should be ok for pretraining)
-NUM_PERTURBATIONS = 480_000 - 1  # -1 is because we will use an extra uncond token
-NUM_EXPERIMENTS = 4096 - 1
+NUM_PERTURBATIONS = 640_000 - 1  # -1 is because we will use an extra uncond token
+NUM_EXPERIMENTS = 4160 - 1
 NUM_CELL_TYPES = 36 - 1
 
 
@@ -107,13 +103,6 @@ class StabilityCPEncoder:
         return x
 
 
-def hash_label_encoder(s: str, num_classes: int) -> int:
-    """Convert a string to a label index in the range [0, num_classes).
-    If the actual number of unique labels is less than num_classes (or 2^256),
-    some labels will be mapped to the same index. This may be desirable in some cases."""
-    return int(hashlib.sha256(s.encode()).hexdigest(), 16) % num_classes
-
-
 def crop_zarr(
     zarr_array: zarr.core.Array, top: int, left: int, height: int, width: int
 ) -> torch.Tensor:
@@ -160,8 +149,7 @@ class CellDataset(torch.utils.data.Dataset):
         metadata: pl.DataFrame,
         train: bool,
         size: int,
-        multiscale: bool = False,
-        ctrl_coupling: Literal["random", "fixed"] = "random",
+        multiscale: bool = True,
     ):
         required_cols = [
             "path",
@@ -172,43 +160,24 @@ class CellDataset(torch.utils.data.Dataset):
         assert all(col in metadata.columns for col in required_cols), (
             f"metadata must have the following columns: {required_cols}"
         )
-        pert_metadata = metadata.filter(~pl.col("empty_control"))
-        ctrl_metadata = metadata.filter(pl.col("empty_control"))
-        self.pert_metadata = pert_metadata
+        self.metadata = metadata
         self.transforms = get_transforms(train, size)
         self.multiscale = multiscale
         self.size = size
         self.train = train
-        self.ctrl_coupling = ctrl_coupling
-
-        experiments = pert_metadata["experiment"].unique().to_list()
-        self.ctrl_dfs = {
-            exp: ctrl_metadata.filter(pl.col("experiment") == exp)
-            for exp in experiments
-        }
 
     def __len__(self):
-        return len(self.pert_metadata)
+        return len(self.metadata)
 
     def __getitem__(self, index: int):
-        row = self.pert_metadata.row(index, named=True)
-        pert_path = row["path"]
-        experiment = row["experiment"]
-
-        ctrl_df = self.ctrl_dfs[experiment]
-        if self.ctrl_coupling == "random":
-            ctrl_idx = int(torch.randint(0, len(ctrl_df), (1,)).item())
-        elif self.ctrl_coupling == "fixed":
-            ctrl_idx = index % len(ctrl_df)
-        else:
-            raise ValueError(f"Invalid ctrl_coupling: {self.ctrl_coupling}")
-        ctrl_row = ctrl_df.row(ctrl_idx, named=True)
-        ctrl_path = ctrl_row["path"]
+        row = self.metadata.row(index, named=True)
+        path = row["path"]
+        perturbation_id = row["perturbation_id"]
+        experiment_id = row["experiment_id"]
+        cell_type_id = row["cell_type_id"]
 
         # uint8 array (lazy loaded memory-mapped file)
-        pert_array = zarr.open_array(pert_path, mode="r")
-        ctrl_array = zarr.open_array(ctrl_path, mode="r")
-
+        array = zarr.open_array(path, mode="r")
         with torch.inference_mode():
             if self.multiscale:
                 crop_size = int(torch.randint(64, 1024, (1,)).item())
@@ -216,25 +185,17 @@ class CellDataset(torch.utils.data.Dataset):
                 crop_size = self.size
 
             if self.train:
-                pert_tensor = random_crop_zarr(pert_array, crop_size, border=256)
-                ctrl_tensor = random_crop_zarr(ctrl_array, crop_size, border=256)
+                tensor = random_crop_zarr(array, crop_size, border=256)
             else:
-                pert_tensor = center_crop_zarr(pert_array, crop_size)
-                ctrl_tensor = center_crop_zarr(ctrl_array, crop_size)
+                tensor = center_crop_zarr(array, crop_size)
 
             # C x H x W at this point. Will be stacked into
             # B x C x H x W by collate_fn in the dataloader
-            pert_tensor = self.transforms(pert_tensor)
-            ctrl_tensor = self.transforms(ctrl_tensor)
+            tensor = self.transforms(tensor)
 
         zoom_id = (crop_size - 64) / (1024 - 64)  # normalize to [0, 1]
-        perturbation_id = hash_label_encoder(row["perturbation"], NUM_PERTURBATIONS)
-        experiment_id = hash_label_encoder(experiment, NUM_EXPERIMENTS)
-        cell_type_id = hash_label_encoder(row["cell_type"], NUM_CELL_TYPES)
-
         return {
-            "pert_img": pert_tensor,
-            "ctrl_img": ctrl_tensor,
+            "img": tensor,
             "zoom_id": zoom_id,
             "perturbation_id": perturbation_id,
             "experiment_id": experiment_id,
@@ -245,44 +206,34 @@ class CellDataset(torch.utils.data.Dataset):
 @ornamentalist.configure()
 def get_dataloaders(
     *,
-    data_dir: str = ornamentalist.Configurable[
-        "/mnt/ps/home/CORP/charlie.jones/project/big-img/metadata"
+    path: str = ornamentalist.Configurable[
+        "/mnt/ps/home/CORP/charlie.jones/project/big-img/metadata/modest_cell2.parquet"
     ],
     img_size: int = ornamentalist.Configurable[256],
     batch_size: int = ornamentalist.Configurable[64],
     num_workers: int = ornamentalist.Configurable[16],
     pin_memory: bool = ornamentalist.Configurable[True],
     multiscale: bool = ornamentalist.Configurable[True],
-) -> dict[str, DataLoader]:
-    train_df = pl.read_parquet(os.path.join(data_dir, "gigacell_train.parquet"))
-    iid_cp_df = pl.read_parquet(os.path.join(data_dir, "gigacell_iid_cp.parquet"))
-    iid_bf_df = pl.read_parquet(os.path.join(data_dir, "gigacell_iid_bf.parquet"))
+) -> tuple[DataLoader, DataLoader]:
+    df = pl.read_parquet(path)
+    train_df = df.filter(pl.col("split") == "train")
+    val_df = df.filter(pl.col("split") == "val_iid")
 
     train_ds = CellDataset(
         train_df,
         train=True,
         size=img_size,
         multiscale=multiscale,
-        ctrl_coupling="random",
     )
-    iid_cp_ds = CellDataset(
-        iid_cp_df,
+    val_ds = CellDataset(
+        val_df,
         train=False,
         size=img_size,
         multiscale=False,
-        ctrl_coupling="fixed",
-    )
-    iid_bf_ds = CellDataset(
-        iid_bf_df,
-        train=False,
-        size=img_size,
-        multiscale=False,
-        ctrl_coupling="fixed",
     )
 
     train_sampler = DistributedSampler(train_ds, shuffle=True)
-    iid_cp_sampler = DistributedSampler(iid_cp_ds, shuffle=False)
-    iid_bf_sampler = DistributedSampler(iid_bf_ds, shuffle=False)
+    val_sampler = DistributedSampler(val_ds, shuffle=False)
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
@@ -291,21 +242,12 @@ def get_dataloaders(
         pin_memory=pin_memory,
         drop_last=True,
     )
-    iid_cp_loader = DataLoader(
-        iid_cp_ds,
+    val_loader = DataLoader(
+        val_ds,
         batch_size=batch_size,
         num_workers=num_workers,
-        sampler=iid_cp_sampler,
+        sampler=val_sampler,
         pin_memory=pin_memory,
         drop_last=False,
     )
-    iid_bf_loader = DataLoader(
-        iid_bf_ds,
-        batch_size=batch_size,
-        num_workers=num_workers,
-        sampler=iid_bf_sampler,
-        pin_memory=pin_memory,
-        drop_last=False,
-    )
-
-    return {"train": train_loader, "iid_cp": iid_cp_loader, "iid_bf": iid_bf_loader}
+    return train_loader, val_loader
