@@ -139,7 +139,7 @@ def launcher(
     configs: list[dict],
     nodes: int = ornamentalist.Configurable[1],
     gpus: int = ornamentalist.Configurable[1],
-    cpus: int = ornamentalist.Configurable[16],
+    cpus: int = ornamentalist.Configurable[24],
     ram: int = ornamentalist.Configurable[64],
     timeout: int = ornamentalist.Configurable[1440],
     partition: str = ornamentalist.Configurable["hopper"],
