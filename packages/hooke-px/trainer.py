@@ -241,8 +241,9 @@ def visualise(
     cell_type = cell_type.to(D.device, non_blocking=True)
     zoom = zoom.to(D.device, non_blocking=True)
 
-    x1 = vae.encode(x1)
-    x0 = torch.randn_like(x1)
+    g = torch.Generator(device=D.device).manual_seed(42)  # fix seed for visualisation
+    B, _, H, W = x1.shape
+    x0 = torch.randn(B, 8, H // 8, W // 8, device=D.device, generator=g)
     preds, nfe = generate(
         model=model,
         x0=x0,
