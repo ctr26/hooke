@@ -1,6 +1,5 @@
 import dataclasses
 import logging
-import math
 import os
 import re
 import tempfile
@@ -361,27 +360,6 @@ def compute_metrics(
 
 
 @ornamentalist.configure()
-def lr_schedule(
-    optimizer: torch.optim.Optimizer,
-    global_step: int,
-    warmup_steps: int = ornamentalist.Configurable[5_000],
-    constant_steps: int = ornamentalist.Configurable[45_000],
-    max_lr: float = ornamentalist.Configurable[1e-4],
-) -> float:
-    """Inverse square-root decay scheduler. Returns the new learning rate
-    at the current step, and sets the optimizer to that lr as a side effect."""
-    decay_start = warmup_steps + constant_steps
-    new_lr = max_lr
-
-    new_lr *= min(global_step / warmup_steps, 1.0)  # apply warmup
-    new_lr /= math.sqrt(max(global_step / decay_start, 1.0))  # apply decay
-
-    for pg in optimizer.param_groups:
-        pg["lr"] = new_lr
-    return new_lr
-
-
-@ornamentalist.configure()
 def train(
     *,
     state: TrainState,
@@ -402,6 +380,12 @@ def train(
 
     vae = StabilityCPEncoder(device=D.device)
     cp2rgb = CellPaintConverter(device=D.device)
+
+    @torch.compile(fullgraph=False)
+    def step(step, opt, ema, ddp):  # compiling the optimiser and ema step is helpful
+        opt.step()
+        opt.zero_grad()
+        ema.update(model=ddp.module, step=step)
 
     running_loss = torch.tensor(0.0, device=D.device)
     num_samples = torch.tensor(0, device=D.device)
@@ -445,10 +429,7 @@ def train(
         grad_norm = torch.nn.utils.clip_grad_norm_(state.ddp.parameters(), max_norm=1.0)
 
         state.global_step += 1
-        lr = lr_schedule(optimizer=state.opt, global_step=state.global_step)
-        state.opt.step()
-        state.opt.zero_grad()
-        state.ema.update(model=state.ddp.module, step=state.global_step)
+        step(state.global_step, state.opt, state.ema, state.ddp)
         prof.step()
 
         if state.global_step % log_every_n_steps == 0:
@@ -471,7 +452,6 @@ def train(
                     "train/throughput_total": throughput_total,
                     "train/throughput_per_gpu": throughput_per_gpu,
                     "train/grad_norm": grad_norm,
-                    "train/lr": lr,
                 },
             )
 

@@ -92,7 +92,7 @@ def main(config: ornamentalist.ConfigDict):
         ema = KarrasEMA(net)
         opt = torch.optim.Adam(
             net.parameters(),
-            lr=1e-4,  # scheduler will override lr
+            lr=1e-4,
             betas=(0.9, 0.95),  # from appendix of arxiv.org/abs/2411.03177v1
             eps=1e-8,
             weight_decay=0.0,
