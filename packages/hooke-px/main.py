@@ -171,7 +171,7 @@ def launcher(
     )
 
     os.makedirs(output_dir, exist_ok=True)
-    launch_cmd = f"{sys.executable} {''.join(sys.argv)}"
+    launch_cmd = f"{sys.executable} {' '.join(sys.argv)}"
     with open(os.path.join(output_dir, "launch_cmd.txt"), "w") as f:
         f.write(launch_cmd)
 
