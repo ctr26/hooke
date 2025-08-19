@@ -112,7 +112,7 @@ def main(config: ornamentalist.ConfigDict):
             state=state,
             train_loader=train_loader,
             val_loader=val_loader,
-            test_loaders={"val_iid": val_loader},
+            test_loaders={"iid": val_loader},
             output_dir=output_dir,
             D=D,
         )

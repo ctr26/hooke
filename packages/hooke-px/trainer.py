@@ -207,8 +207,8 @@ def evaluate(
     num_samples = D.all_reduce(num_samples, op="sum")
 
     val_loss = (running_loss / num_samples).item()
-    prefix = "val_ema" if use_ema else "val_ddp"
-    log(step=state.global_step, data={f"{prefix}/loss": val_loss})
+    prefix = "ema" if use_ema else "ddp"
+    log(step=state.global_step, data={f"val/{prefix}_loss": val_loss})
     D.barrier()
     return
 
