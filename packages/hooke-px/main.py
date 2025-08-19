@@ -164,6 +164,7 @@ def launcher(
         cpus_per_task=cpus,
         slurm_mem_per_gpu=f"{ram}G",
         timeout_min=timeout,
+        exclude="hop02",  # hop02 has issues
         stderr_to_stdout=True,
         slurm_signal_delay_s=120,
     )
