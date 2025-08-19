@@ -2,6 +2,7 @@ import logging
 import os
 import pathlib
 import subprocess
+import sys
 import time
 from typing import Callable, Literal
 
@@ -168,6 +169,11 @@ def launcher(
         stderr_to_stdout=True,
         slurm_signal_delay_s=120,
     )
+
+    os.makedirs(output_dir, exist_ok=True)
+    launch_cmd = f"{sys.executable} {''.join(sys.argv)}"
+    with open(os.path.join(output_dir, "launch_cmd.txt"), "w") as f:
+        f.write(launch_cmd)
 
     snapshot_dir = os.path.join(output_dir, "snapshot")
     with submitit.helpers.RsyncSnapshot(pathlib.Path(snapshot_dir)):
