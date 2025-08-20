@@ -280,7 +280,7 @@ def compute_metrics(
     model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
 
-    detector = DINOv2Detector()
+    detector = DINOv2Detector(device=D.device)
 
     real_features = []
     pred_features = []
@@ -340,8 +340,9 @@ def compute_metrics(
     pred_features = pred_features[:N]
 
     if D.rank == 0:
+        prefix = "ema" if use_ema else "ddp"
         fd = compute_fd(real_features, pred_features)
-        log(step=state.global_step, data={f"{name}_metrics/fd@{N}": fd})
+        log(step=state.global_step, data={f"{name}_metrics/{prefix}_fd@{N}": fd})
 
         SUBSAMPLE_N = 10000  # prdc is slow for the full dataset
         n_samples = pred_features.shape[0]
@@ -355,7 +356,7 @@ def compute_metrics(
             n = n_samples
 
         prdc = compute_prdc(real_features, pred_features, nearest_k=5)
-        prdc_preds = {f"{name}_metrics/{k}@{n}": v for k, v in prdc.items()}
+        prdc_preds = {f"{name}_metrics/{prefix}_{k}@{n}": v for k, v in prdc.items()}
         log(step=state.global_step, data=prdc_preds)
     D.barrier()
 
