@@ -6,7 +6,7 @@ Only depends on torch and standard libraries.
 
 import math
 from functools import partial
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -494,7 +494,7 @@ def build_phenom2_model() -> MAEStandalone:
 
 
 def load_phenom2(
-    checkpoint_path: str = DEFAULT_CHECKPOINT_PATH, device: Optional[str] = None
+    checkpoint_path: str = DEFAULT_CHECKPOINT_PATH, device: torch.device | None = None
 ) -> MAEStandalone:
     """
     Load Phenom-2 model from checkpoint file.
