@@ -258,9 +258,10 @@ def visualise(
     os.makedirs(os.path.join(output_dir, "samples"), exist_ok=True)
     save_path = os.path.join(output_dir, f"samples/{state.global_step}.png")
     save_image(preds, save_path)
+    prefix = "ema" if use_ema else "ddp"
     log(
         step=state.global_step,
-        data={"val/images": wandb.Image(save_path), "val/nfe": nfe},
+        data={f"val/{prefix}_samples": wandb.Image(save_path), "val/nfe": nfe},
     )
     return
 
