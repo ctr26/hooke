@@ -219,7 +219,7 @@ def get_dataloaders(
     batch_size: int = ornamentalist.Configurable[64],
     num_workers: int = ornamentalist.Configurable[16],
     pin_memory: bool = ornamentalist.Configurable[True],
-    multiscale: bool = ornamentalist.Configurable[True],
+    multiscale: bool = ornamentalist.Configurable[False],
 ) -> tuple[DataLoader, DataLoader]:
     df = pl.read_parquet(path)
     train_df = df.filter(pl.col("split") == "train")
