@@ -18,7 +18,13 @@ from dataset import CellPaintConverter, StabilityCPEncoder
 from model import DiTWrapper
 from utils.distributed import Distributed, rank_zero
 from utils.ema import KarrasEMA
-from utils.evaluation import DINOv2Detector, compute_fd, compute_prdc
+from utils.evaluation import (
+    DINOv2Detector,
+    Phenom2Detector,
+    compute_cossim,
+    compute_fd,
+    compute_prdc,
+)
 from utils.infinite_dataloader import infinite_dataloader
 from utils.profiler import get_profiler
 
@@ -133,7 +139,6 @@ def generate(
 
 
 @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-@ornamentalist.configure()
 def compute_loss(
     model: DDP,  # DDP wrapper around DiT, maps t,x,y,z,e,c -> velocity
     x0: torch.Tensor,  # shape (B, C, H, W), sampled from source distribution
@@ -240,9 +245,8 @@ def visualise(
     cell_type = cell_type.to(D.device, non_blocking=True)
     zoom = zoom.to(D.device, non_blocking=True)
 
-    g = torch.Generator(device=D.device).manual_seed(42)  # fix seed for visualisation
-    B, _, H, W = x1.shape
-    x0 = torch.randn(B, 8, H // 8, W // 8, device=D.device, generator=g)
+    x1 = vae.encode(x1)
+    x0 = torch.randn_like(x1)
     preds, nfe = generate(
         model=model,
         x0=x0,
@@ -280,10 +284,13 @@ def compute_metrics(
     model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
 
-    detector = DINOv2Detector(device=D.device)
+    dino = DINOv2Detector(device=D.device)
+    phenom = Phenom2Detector(device=D.device)
 
-    real_features = []
-    pred_features = []
+    real_features_dino = []
+    pred_features_dino = []
+    real_features_phenom = []
+    pred_features_phenom = []
 
     N = len(loader.dataset)  # type: ignore
     log(step=state.global_step, msg=f"Generating {N} samples for {name}")
@@ -292,7 +299,7 @@ def compute_metrics(
     for i, batch in enumerate(
         tqdm(
             loader,
-            desc=f"Computing FD metrics for {name}",
+            desc=f"Computing metrics for {name}",
             total=len(loader),
             unit="step",
             disable=disable_tqdm,  # only show from one process
@@ -322,41 +329,61 @@ def compute_metrics(
             c1=cell_type,
         )
         preds = vae.decode(preds)
-        pred_features.append(detector(cp2rgb(preds)).cpu())
-        real_features.append(detector(cp2rgb(x1)).cpu())
+
+        pred_features_dino.append(dino(cp2rgb(preds)).cpu())
+        real_features_dino.append(dino(cp2rgb(x1)).cpu())
+
+        pred_features_phenom.append(phenom(preds).cpu())
+        real_features_phenom.append(phenom(x1).cpu())
 
     D.barrier()
 
     # move to gpu, all_gather, move to cpu
     # we do it this way because all_gather is not supported on CPU
-    real_features = torch.cat(real_features, dim=0).to(D.device)
-    real_features = D.gather_concat(real_features).cpu().numpy()
+    real_features_dino = torch.cat(real_features_dino, dim=0).to(D.device)
+    real_features_dino = D.gather_concat(real_features_dino).cpu().numpy()
+    pred_features_dino = torch.cat(pred_features_dino, dim=0).to(D.device)
+    pred_features_dino = D.gather_concat(pred_features_dino).cpu().numpy()
 
-    pred_features = torch.cat(pred_features, dim=0).to(D.device)
-    pred_features = D.gather_concat(pred_features).cpu().numpy()
+    real_features_phenom = torch.cat(real_features_phenom, dim=0).to(D.device)
+    real_features_phenom = D.gather_concat(real_features_phenom).cpu().numpy()
+    pred_features_phenom = torch.cat(pred_features_phenom, dim=0).to(D.device)
+    pred_features_phenom = D.gather_concat(pred_features_phenom).cpu().numpy()
 
     # truncate duplicated samples in last batch from distributed dataloader
-    real_features = real_features[:N]
-    pred_features = pred_features[:N]
+    real_features_dino = real_features_dino[:N]
+    pred_features_dino = pred_features_dino[:N]
+    real_features_phenom = real_features_phenom[:N]
+    pred_features_phenom = pred_features_phenom[:N]
 
     if D.rank == 0:
         prefix = "ema" if use_ema else "ddp"
-        fd = compute_fd(real_features, pred_features)
-        log(step=state.global_step, data={f"{name}_metrics/{prefix}_fd@{N}": fd})
+        fd_dino = compute_fd(real_features_dino, pred_features_dino)
+        fd_phenom = compute_fd(real_features_phenom, pred_features_phenom)
+        cossim_phenom = compute_cossim(real_features_phenom, pred_features_phenom)
+        log(
+            step=state.global_step,
+            data={
+                f"{name}_metrics/{prefix}_fd_dinov2@{N}": fd_dino,
+                f"{name}_metrics/{prefix}_fd_phenom2@{N}": fd_phenom,
+                f"{name}_metrics/{prefix}_cossim_phenom2@{N}": cossim_phenom,
+            },
+        )
 
         SUBSAMPLE_N = 10000  # prdc is slow for the full dataset
-        n_samples = pred_features.shape[0]
-        if n_samples > SUBSAMPLE_N:
+        if N > SUBSAMPLE_N:
             n = SUBSAMPLE_N
             rng = np.random.default_rng(seed=42)
-            idxs = rng.choice(n_samples, size=SUBSAMPLE_N, replace=False)
-            real_features = real_features[idxs]
-            pred_features = pred_features[idxs]
+            idxs = rng.choice(N, size=SUBSAMPLE_N, replace=False)
+            real_features_dino = real_features_dino[idxs]
+            pred_features_dino = pred_features_dino[idxs]
         else:
-            n = n_samples
+            n = N
 
-        prdc = compute_prdc(real_features, pred_features, nearest_k=5)
-        prdc_preds = {f"{name}_metrics/{prefix}_{k}@{n}": v for k, v in prdc.items()}
+        prdc = compute_prdc(real_features_dino, pred_features_dino, nearest_k=5)
+        prdc_preds = {
+            f"{name}_metrics/{prefix}_{k}_dinov2@{n}": v for k, v in prdc.items()
+        }
         log(step=state.global_step, data=prdc_preds)
     D.barrier()
 

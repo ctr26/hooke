@@ -14,29 +14,11 @@ import sklearn.metrics
 import torch
 from scipy import linalg
 
-
-def _preprocess(x: torch.Tensor):
-    """Preprocess x for use with imagenet-pretrained DinoV2.
-    input: torch.uint8 tensor (B,3,H,W), range [0,255]
-    output: torch.float32 tensor (B,3,H,W), range ~[-1,1]
-    """
-    x = torch.nn.functional.interpolate(
-        x.to(torch.float32), size=(224, 224), mode="bicubic", antialias=True
-    )
-    x = x.to(torch.float32) / 255  # to float32 in [0,1]
-    mean = torch.tensor([0.485, 0.456, 0.406], device=x.device, dtype=x.dtype)
-    std = torch.tensor([0.229, 0.224, 0.225], device=x.device, dtype=x.dtype)
-
-    mean = mean.view(1, -1, 1, 1)
-    std = std.view(1, -1, 1, 1)
-    x = (x - mean) / std
-    return x
+from utils.phenom2 import load_phenom2
 
 
 class DINOv2Detector:
-    def __init__(self):
-        super().__init__()
-
+    def __init__(self, device: torch.device):
         self.model = torch.hub.load(
             "facebookresearch/dinov2:main",
             "dinov2_vitl14",
@@ -45,11 +27,38 @@ class DINOv2Detector:
             skip_validation=True,
         )
         assert isinstance(self.model, torch.nn.Module)
-        self.model.eval().requires_grad_(False)
+        self.model.eval().requires_grad_(False).to(device)
+
+        self.MEAN = torch.tensor(
+            [0.485, 0.456, 0.406], device=device, dtype=torch.float32
+        ).view(1, -1, 1, 1)
+        self.STD = torch.tensor(
+            [0.229, 0.224, 0.225], device=device, dtype=torch.float32
+        ).view(1, -1, 1, 1)
 
     def __call__(self, x):
-        x = _preprocess(x)
-        return self.model.to(x.device)(x)  # type: ignore
+        """Extract features using DinoV2.
+        Input is expected to be a torch.uint8 tensor of shape (B, 3, H, W)."""
+        x = torch.nn.functional.interpolate(
+            x.to(torch.float32),
+            size=(224, 224),
+            mode="bicubic",
+            antialias=True,
+        )
+        x = x.to(torch.float32) / 255  # to float32 in [0,1]
+        x = (x - self.MEAN) / self.STD
+        return self.model(x)  # type: ignore
+
+
+class Phenom2Detector:
+    def __init__(self, device: torch.device):
+        self.model = load_phenom2(device=device)
+        self.model.eval().requires_grad_(False).to(device)
+
+    def __call__(self, x):
+        """Extract features using Phenom-2.
+        Input is expected to be a torch.uint8 tensor of shape (B, 6, 256, 256)."""
+        return self.model(x)[0]
 
 
 def compute_statistics(reps):
@@ -58,6 +67,12 @@ def compute_statistics(reps):
     mu = np.atleast_1d(mu)
     sigma = np.atleast_2d(sigma)
     return mu, sigma
+
+
+def compute_cossim(reps1, reps2):
+    mu1, _ = compute_statistics(reps1)
+    mu2, _ = compute_statistics(reps2)
+    return np.dot(mu1, mu2) / (np.linalg.norm(mu1) * np.linalg.norm(mu2))
 
 
 def compute_fd(reps1, reps2):
