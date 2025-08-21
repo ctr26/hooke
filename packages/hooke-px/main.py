@@ -140,7 +140,7 @@ def launcher(
     nodes: int = ornamentalist.Configurable[1],
     gpus: int = ornamentalist.Configurable[1],
     cpus: int = ornamentalist.Configurable[24],
-    ram: int = ornamentalist.Configurable[64],
+    ram: int = ornamentalist.Configurable[128],
     timeout: int = ornamentalist.Configurable[1440],
     partition: str = ornamentalist.Configurable["hopper"],
     qos: str = ornamentalist.Configurable["normal"],

@@ -15,6 +15,10 @@ NUM_PERTURBATIONS = 640_000 - 1  # -1 is because we will use an extra uncond tok
 NUM_EXPERIMENTS = 4160 - 1
 NUM_CELL_TYPES = 36 - 1
 
+IMG_SIZE = 256  # the size of image that the model expects
+MAX_CROP_SIZE = 512  # max crop for multiscale training (will be resized to IMG_SIZE)
+MIN_CROP_SIZE = 64  # min crop for multiscale training (will be resized to IMG_SIZE)
+
 
 class CellPaintConverter:
     def __init__(self, device: torch.device):
@@ -180,7 +184,9 @@ class CellDataset(torch.utils.data.Dataset):
         array = zarr.open_array(path, mode="r")
         with torch.inference_mode():
             if self.multiscale:
-                crop_size = int(torch.randint(64, 1024, (1,)).item())
+                crop_size = 2 * int(
+                    torch.randint(MIN_CROP_SIZE // 2, MAX_CROP_SIZE // 2, (1,)).item()
+                )
             else:
                 crop_size = self.size
 
@@ -193,7 +199,8 @@ class CellDataset(torch.utils.data.Dataset):
             # B x C x H x W by collate_fn in the dataloader
             tensor = self.transforms(tensor)
 
-        zoom_id = (crop_size - 64) / (1024 - 64)  # normalize to [0, 1]
+        # normalize to [0, 1]
+        zoom_id = (crop_size - MIN_CROP_SIZE) / (MAX_CROP_SIZE - MIN_CROP_SIZE)
         return {
             "img": tensor,
             "zoom_id": zoom_id,
@@ -209,11 +216,10 @@ def get_dataloaders(
     path: str = ornamentalist.Configurable[
         "/mnt/ps/home/CORP/charlie.jones/project/big-img/metadata/modest_cell2.parquet"
     ],
-    img_size: int = ornamentalist.Configurable[256],
     batch_size: int = ornamentalist.Configurable[64],
     num_workers: int = ornamentalist.Configurable[16],
     pin_memory: bool = ornamentalist.Configurable[True],
-    multiscale: bool = ornamentalist.Configurable[False],
+    multiscale: bool = ornamentalist.Configurable[True],
 ) -> tuple[DataLoader, DataLoader]:
     df = pl.read_parquet(path)
     train_df = df.filter(pl.col("split") == "train")
@@ -222,13 +228,13 @@ def get_dataloaders(
     train_ds = CellDataset(
         train_df,
         train=True,
-        size=img_size,
+        size=IMG_SIZE,
         multiscale=multiscale,
     )
     val_ds = CellDataset(
         val_df,
         train=False,
-        size=img_size,
+        size=IMG_SIZE,
         multiscale=False,
     )
 
