@@ -60,7 +60,7 @@ class Phenom2Detector:
         Input is expected to be a torch.uint8 tensor of shape (B, 6, 256, 256)."""
         x = self.model.input_norm(x)
         embeddings, _, _ = self.model.encoder.forward_masked(x, mask_ratio=0.0)
-        embeddings = embeddings[:, :-1, :]  # B,1025,1664 -> B,1024,1664
+        embeddings = embeddings[:, :-1, :]  # B,1025,1664 -> B,1024,1664 (drop [CLS])
         return embeddings.mean(dim=1)  # B,1664
 
 
