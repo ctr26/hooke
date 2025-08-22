@@ -340,21 +340,15 @@ def compute_metrics(
 
     # move to gpu, all_gather, move to cpu
     # we do it this way because all_gather is not supported on CPU
-    real_features_dino = torch.cat(real_features_dino, dim=0).to(D.device)
-    real_features_dino = D.gather_concat(real_features_dino).cpu().numpy()
-    pred_features_dino = torch.cat(pred_features_dino, dim=0).to(D.device)
-    pred_features_dino = D.gather_concat(pred_features_dino).cpu().numpy()
+    def gather_cpu(x) -> np.ndarray:
+        x = torch.cat(x, dim=0).to(D.device)
+        x = D.gather_concat(x).cpu().numpy()
+        return x[:N]  # truncate duplicates from last batch of distributed dataloader
 
-    real_features_phenom = torch.cat(real_features_phenom, dim=0).to(D.device)
-    real_features_phenom = D.gather_concat(real_features_phenom).cpu().numpy()
-    pred_features_phenom = torch.cat(pred_features_phenom, dim=0).to(D.device)
-    pred_features_phenom = D.gather_concat(pred_features_phenom).cpu().numpy()
-
-    # truncate duplicated samples in last batch from distributed dataloader
-    real_features_dino = real_features_dino[:N]
-    pred_features_dino = pred_features_dino[:N]
-    real_features_phenom = real_features_phenom[:N]
-    pred_features_phenom = pred_features_phenom[:N]
+    real_features_dino = gather_cpu(real_features_dino)
+    pred_features_dino = gather_cpu(pred_features_dino)
+    real_features_phenom = gather_cpu(real_features_phenom)
+    pred_features_phenom = gather_cpu(pred_features_phenom)
 
     if D.rank == 0:
         prefix = "ema" if use_ema else "ddp"
@@ -365,7 +359,7 @@ def compute_metrics(
             step=state.global_step,
             data={
                 f"{name}_metrics/{prefix}_fd_dinov2@{N}": fd_dino,
-                f"{name}_metrics/{prefix}_fd_phenom2@{N}": fd_phenom,
+                f"{name}_metrics/{prefix}_fd_phemon2@{N}": fd_phenom,
                 f"{name}_metrics/{prefix}_cossim_phenom2@{N}": cossim_phenom,
             },
         )

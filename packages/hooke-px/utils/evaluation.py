@@ -58,7 +58,10 @@ class Phenom2Detector:
     def __call__(self, x):
         """Extract features using Phenom-2.
         Input is expected to be a torch.uint8 tensor of shape (B, 6, 256, 256)."""
-        return self.model(x)[0]
+        x = self.model.input_norm(x)
+        embeddings, _, _ = self.model.encoder.forward_masked(x, mask_ratio=0.0)
+        embeddings = embeddings[:, :-1, :]  # B,1025,1664 -> B,1024,1664
+        return embeddings.mean(dim=1)  # B,1664
 
 
 def compute_statistics(reps):
@@ -70,8 +73,8 @@ def compute_statistics(reps):
 
 
 def compute_cossim(reps1, reps2):
-    mu1, _ = compute_statistics(reps1)
-    mu2, _ = compute_statistics(reps2)
+    mu1 = np.mean(reps1, axis=0)
+    mu2 = np.mean(reps2, axis=0)
     return np.dot(mu1, mu2) / (np.linalg.norm(mu1) * np.linalg.norm(mu2))
 
 
