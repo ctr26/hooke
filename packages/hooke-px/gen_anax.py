@@ -20,7 +20,7 @@ from model import get_model_cls
 from trainer import TrainState, generate
 from utils.distributed import Distributed
 from utils.ema import KarrasEMA
-from utils.evaluation import Phenom2Detector
+from utils.evaluation import DINOv2Detector, Phenom2Detector
 from utils.name_run import generate_random_name
 
 logging.basicConfig(level=logging.INFO)
@@ -116,6 +116,8 @@ def main(config: ornamentalist.ConfigDict):
         load_ckpt(state, D)
         vae = dataset.StabilityCPEncoder(device=D.device)
         phenom = Phenom2Detector(device=D.device)
+        dino = DINOv2Detector(device=D.device)
+        cp2rgb = dataset.CellPaintConverter(device=D.device)
 
         df = pl.read_parquet(
             "/mnt/ps/home/CORP/charlie.jones/project/big-img/simulated_data/anax_rxrx3_subset_with_CORRECT_conditioning.parquet"
@@ -138,15 +140,17 @@ def main(config: ornamentalist.ConfigDict):
 
         real_imgs = []
         fake_imgs = []
-        real_features = []
-        fake_features = []
+        real_features_phenom = []
+        fake_features_phenom = []
+        real_features_dino = []
+        fake_features_dino = []
         y1s = []
         exps = []
         cell_types = []
         zooms = []
 
         for batch in tqdm(loader, total=len(loader)):
-            x1 = batch["img"]
+            x1 = batch["img"].to(D.device, non_blocking=True)
             y1 = batch["perturbation_id"].to(D.device, non_blocking=True)
             exp = batch["experiment_id"].to(D.device, non_blocking=True)
             cell_type = batch["cell_type_id"].to(D.device, non_blocking=True)
@@ -164,8 +168,12 @@ def main(config: ornamentalist.ConfigDict):
             )
             preds = vae.decode(preds)
 
-            real_features.append(phenom(x1).cpu())
-            fake_features.append(phenom(preds).cpu())
+            real_features_phenom.append(phenom(x1).cpu())
+            fake_features_phenom.append(phenom(preds).cpu())
+
+            fake_features_dino.append(dino(cp2rgb(preds)).cpu())
+            real_features_dino.append(dino(cp2rgb(x1)).cpu())
+
             real_imgs.append(x1.cpu())
             fake_imgs.append(preds.cpu())
             y1s.append(y1.cpu())
@@ -184,8 +192,10 @@ def main(config: ornamentalist.ConfigDict):
 
         real_imgs = gather_cpu(real_imgs)
         fake_imgs = gather_cpu(fake_imgs)
-        real_features = gather_cpu(real_features)
-        fake_features = gather_cpu(fake_features)
+        real_features_phenom = gather_cpu(real_features_phenom)
+        fake_features_phenom = gather_cpu(fake_features_phenom)
+        real_features_dino = gather_cpu(real_features_dino)
+        fake_features_dino = gather_cpu(fake_features_dino)
         y1s = gather_cpu(y1s)
         exps = gather_cpu(exps)
         cell_types = gather_cpu(cell_types)
@@ -199,8 +209,10 @@ def main(config: ornamentalist.ConfigDict):
                 os.path.join(output_dir, "results.npz"),
                 real_imgs=real_imgs,
                 fake_imgs=fake_imgs,
-                real_features=real_features,
-                fake_features=fake_features,
+                real_features_phenom=real_features_phenom,
+                fake_features_phenom=fake_features_phenom,
+                real_features_dino=real_features_dino,
+                fake_features_dino=fake_features_dino,
                 y1s=y1s,
                 exps=exps,
                 cell_types=cell_types,
