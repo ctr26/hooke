@@ -1,6 +1,6 @@
 # Virtual Cell Benchmark (VCB)
 
-Likely a temporary directory, but you never know...
+Intended to be a temporary repository, but you never know...
 
 ## Install
 
