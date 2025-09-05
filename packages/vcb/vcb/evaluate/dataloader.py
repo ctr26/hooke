@@ -6,6 +6,17 @@ from vcb.models.dataloader import BiologicalContext, Perturbation, PerturbationG
 from vcb.models.dataset import Dataset
 from vcb.models.misc import IndexSet
 
+NESTED_PERTURBATION_COLS = [
+    "usage_class",
+    "smiles",
+    "inchikey",
+    "type",
+    "ensembl_gene_id",
+    "genetic_id",
+    "concentration",
+    "concentration_units",
+]
+
 
 def from_perturbations_to_disease_model(perturbations: list[dict]) -> str:
     """
@@ -68,12 +79,16 @@ class DrugscreenDataloader:
             pl.Series(name="original_index", values=range(len(self.dataset.obs)))
         )
 
-        # Add a column with the disease model:
-        obs = obs.with_columns(
-            pl.col("perturbations")
-            .map_elements(from_perturbations_to_disease_model, return_dtype=pl.Utf8)
-            .alias("disease_model")
-        )
+        # a quick, random, sanity check on a consistent disease model before diving in
+        disease_obs = obs.filter(pl.col("is_base_state") | pl.col("drugscreen_query"))
+        for i in np.random.randint(0, disease_obs.shape[0], size=5):
+            i = int(i)
+            perturbations = disease_obs[i, "perturbations"]
+            found = from_perturbations_to_disease_model(perturbations)
+            expected = disease_obs[i, "plate_disease_model"]
+            assert found == expected, (
+                f"re-queried disease model: {found} != expected: {expected} in {disease_obs[i, 'experiment_label']} of {self.dataset}; is this standardized drugscreen data?"
+            )
 
         # Group the observations.
         # Within each group, we'll always have the same control and base states, paired with various sets of perturbed states.
@@ -93,58 +108,55 @@ class DrugscreenDataloader:
                 "original_index"
             ].to_list()
 
-            to_group = batch.filter(pl.col("disease_model").is_not_null())
-            for _, group in to_group.group_by("disease_model", maintain_order=True):
-                # Find all base state indices
-                base_state_indices = group.filter(pl.col("is_base_state"))[
-                    "original_index"
-                ].to_list()
+            # Find all base state indices
+            base_state_indices = batch.filter(pl.col("is_base_state"))[
+                "original_index"
+            ].to_list()
 
-                # Now group by unique perturbations
-                # Flatten the perturbation into a table, making sure to keep the original index
-                flat_perturbations = group.explode("perturbations").unnest(
-                    "perturbations"
-                )["original_index", "drugscreen_query", "inchikey", "concentration"]
+            # Now we will want to group by unique compound perturbations
+            with_compound_cols = batch.filter(
+                # select only compound perturbations
+                pl.col("drugscreen_query")
+            ).filter(
+                # only keep perturbations in this split
+                pl.col("original_index").is_in(self.indices)
+            )
 
-                # (1) Only keep the perturbations in this split
-                filtered_perturbations = flat_perturbations.filter(
-                    pl.col("original_index").is_in(self.indices)
+            # We'll extract just the compound relvant info from the nested pert column, for easier grouping
+            with_compound_cols = with_compound_cols.with_columns(
+                # explode = flatten list of perturbation
+                # unnest = turn dict/struct into columns
+                with_compound_cols.explode("perturbations")
+                .unnest("perturbations")
+                .filter(
+                    # take only the compound perts,
+                    pl.col("inchikey").is_not_null()
+                    # extracting id (inchikey) and concentration as columns into outer table
                 )
+                .select("inchikey", "concentration")
+            )
 
-                # (2) Only keep the actual perturbations
-                filtered_perturbations = filtered_perturbations.filter(
-                    pl.col("drugscreen_query")
+            # Aggregate indexes by unique query compounds
+            for _, perturbation_groups in with_compound_cols.group_by(
+                ["inchikey", "concentration"], maintain_order=True
+            ):
+                # Get the metadata about the perturbations.
+                # Since we've grouped by perturbation, all perturbations should be the same and we can just take any one of them. (the first)
+                perturbations = perturbation_groups[0, "perturbations"]
+
+                # merge the whole sample into alist
+                perturbation_indices = sorted(
+                    set(perturbation_groups["original_index"].to_list())
                 )
-
-                # (3) Only keep the perturbatins with a valid ID
-                filtered_perturbations = filtered_perturbations.filter(
-                    ~pl.col("inchikey").is_null()
-                )
-
-                # Aggregate indexes by unique query compounds
-                for perturbation_indices in (
-                    filtered_perturbations.group_by(
-                        ["inchikey", "concentration"], maintain_order=True
+                groups.append(
+                    PerturbationGroup(
+                        controls=control_indices,
+                        base_states=base_state_indices,
+                        perturbed_states=perturbation_indices,
+                        biological_context=biological_context,
+                        perturbations=perturbations,
                     )
-                    .agg(pl.col("original_index").alias("original_index"))
-                    .get_column("original_index")
-                    .to_list()
-                ):
-                    # Get the metadata about the perturbations.
-                    # Since we've grouped by perturbation, all perturbations should be the same and we can just take any one of them.
-                    perturbations = self.dataset.obs[
-                        perturbation_indices[0], "perturbations"
-                    ].to_list()
-
-                    groups.append(
-                        PerturbationGroup(
-                            controls=control_indices,
-                            base_states=base_state_indices,
-                            perturbed_states=perturbation_indices,
-                            biological_context=biological_context,
-                            perturbations=perturbations,
-                        )
-                    )
+                )
         return groups
 
     def __len__(self):
