@@ -1,8 +1,16 @@
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import zarr
-from pydantic import BaseModel, computed_field, field_validator, model_validator
+from loguru import logger
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 
 class DatasetPaths(BaseModel):
@@ -61,6 +69,11 @@ class Dataset(BaseModel):
     """
 
     paths: DatasetPaths
+    load_to_memory: bool = False
+
+    _cached_features: np.ndarray | None = None
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @field_validator("paths")
     def validate_paths(cls, v: DatasetPaths) -> DatasetPaths:
@@ -96,7 +109,12 @@ class Dataset(BaseModel):
 
     @property
     def X(self) -> zarr.Array:
-        return zarr.open(self.paths.features_path)
+        if not self.load_to_memory:
+            return zarr.open(self.paths.features_path)
+        elif self._cached_features is None:
+            logger.info(f"Loading {self.paths.features_path} into memory.")
+            self._cached_features = zarr.open(self.paths.features_path)[:]
+        return self._cached_features
 
     @computed_field
     @property
