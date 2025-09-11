@@ -30,10 +30,3 @@ dev = [
 
 [project.scripts]
 vcb = "vcb.cli:app"
-
-[project.optional-dependencies]
-state = [
-    "arc-state>=0.9.14",
-    "lightning>=2.5.5",
-    "torch>=2.8.0",
-]
