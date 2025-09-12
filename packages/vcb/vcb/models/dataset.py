@@ -66,11 +66,19 @@ class DatasetMetadata(BaseModel):
 class Dataset(BaseModel):
     """
     A dataset.
+
+    TODO (cwognum): For future reference: Predictions and Dataset have a lot of similarities.
+        They could share a super class, or maybe even be merged into a single class.
+
+    TODO (cwognum): We'll likely want to distinguish different dataset types, e.g. raw counts, embeddings, etc.
+        One clear example is the gene_id_column attribute, which is only needed for raw counts.
     """
 
     paths: DatasetPaths
-    load_to_memory: bool = False
 
+    gene_id_column: str = "ensembl_gene_id"
+
+    _gene_labels_subset: set[str] | None = None
     _cached_features: np.ndarray | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -104,16 +112,23 @@ class Dataset(BaseModel):
         return pl.read_parquet(self.paths.obs_path)
 
     @property
-    def var(self) -> zarr.Array:
-        return zarr.open(self.paths.var_path)
+    def var(self) -> pl.DataFrame:
+        return pl.read_parquet(self.paths.var_path)
 
     @property
     def X(self) -> zarr.Array:
-        if not self.load_to_memory:
-            return zarr.open(self.paths.features_path)
-        elif self._cached_features is None:
+        """
+        Returns the features.
+
+        Supports filtering by gene labels and loads the features into memory.
+        The upfront cost of loading everything into memory is high, but it speeds things up downstream.
+
+        Let's make this more robust once data actually no longer fits in memory.
+        """
+        if self._cached_features is None:
             logger.info(f"Loading {self.paths.features_path} into memory.")
-            self._cached_features = zarr.open(self.paths.features_path)[:]
+            arr = zarr.open(self.paths.features_path)
+            self._cached_features = arr[:, self._get_gene_mask()]
         return self._cached_features
 
     @computed_field
@@ -122,3 +137,27 @@ class Dataset(BaseModel):
         with open(self.paths.metadata_path, "r") as fd:
             metadata = DatasetMetadata.model_validate_json(fd.read())
         return metadata
+
+    @property
+    def gene_labels(self) -> pl.DataFrame:
+        return self.var[self.gene_id_column].to_list()
+
+    def set_gene_labels_subset(self, gene_labels: set[str]) -> None:
+        self._gene_labels_subset = gene_labels
+
+        # Also invalidate cached features
+        self._cached_features = None
+
+    def _get_gene_mask(self) -> np.ndarray:
+        if self._gene_labels_subset is None:
+            return np.ones(len(self.gene_labels), dtype=bool)
+        gene_mask = np.isin(self.gene_labels, np.array(list(self._gene_labels_subset)))
+
+        # Temporary fix: Deduplicate the gene labels.
+        # Because we're working with Ensembl IDs, this shouldn't be needed.
+        dedup_mask = np.zeros(len(self.gene_labels), dtype=bool)
+        deduplicate_indices = self.var[self.gene_id_column].arg_unique().to_numpy()
+        dedup_mask[deduplicate_indices] = True
+        gene_mask = gene_mask & dedup_mask
+
+        return gene_mask

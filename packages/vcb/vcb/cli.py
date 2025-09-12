@@ -1,5 +1,6 @@
 import polars as pl
 import typer
+from loguru import logger
 from tqdm import tqdm
 
 from vcb.evaluate.dataloader import DrugscreenDataloader
@@ -14,7 +15,7 @@ from vcb.models.dataset import Dataset, DatasetPaths
 from vcb.models.predictions import Predictions, PredictionsPaths
 from vcb.models.split import Split
 
-app = typer.Typer()
+app = typer.Typer(pretty_exceptions_enable=False)
 
 
 @app.command()
@@ -22,16 +23,39 @@ def evaluate(
     predictions_path: str,
     ground_truth_path: str,
     results_path: str,
-    load_to_memory: bool = False,
+    predictions_var_path: str | None = None,
+    predictions_features_array_name: str | None = None,
+    predictions_gene_id_column: str | None = "ensembl_gene_id",
+    ground_truth_gene_id_column: str | None = "ensembl_gene_id",
+    match_gene_labels: bool = False,
 ):
-    """Evaluate a set of predictions against a ground truth."""
+    """
+    Evaluate a set of predictions against a ground truth.
+
+    TODO (cwognum): The --match-gene-labels flag is a temporary, manual solution.
+        Ideally, we would specify through the CLI what the modality is, or maybe even use entirely separate CLI commands.
+        We'll for example also need to specify whether we're using raw counts, embeddings, etc. We're going to run into
+        this relatively soon (once we want to evaluate phenomics), but I'm going to punt on this for now.
+    """
 
     predictions = Predictions(
-        paths=PredictionsPaths(root=predictions_path), load_to_memory=load_to_memory
+        paths=PredictionsPaths(
+            root=predictions_path,
+            var_path=predictions_var_path,
+        ),
+        features_array_name=predictions_features_array_name,
+        gene_id_column=predictions_gene_id_column,
     )
+
     ground_truth = Dataset(
-        paths=DatasetPaths(root=ground_truth_path), load_to_memory=load_to_memory
+        paths=DatasetPaths(root=ground_truth_path),
+        gene_id_column=ground_truth_gene_id_column,
     )
+
+    if match_gene_labels:
+        intersection = set(predictions.gene_labels) & set(ground_truth.gene_labels)
+        predictions.set_gene_labels_subset(intersection)
+        ground_truth.set_gene_labels_subset(intersection)
 
     rows = []
 
@@ -52,6 +76,7 @@ def evaluate(
                 rows.append({**batch_definition, "score": v, "metric": k})
         return rows
 
+    logger.info("Calculating batch-level metrics.")
     for pred, truth, base, batch_definition, compounds_pred, compounds_truth in tqdm(
         yield_batch_pairs(predictions, ground_truth),
         total=predictions.obs["batch_center"].n_unique(),
@@ -73,6 +98,7 @@ def evaluate(
         extend_rows(scores, batch_definition)
 
     # This is not strictly needed, but makes for nicer progress bars.
+    logger.info("Calculating compound-level metrics.")
     query = add_compound_perturbation_to_obs(
         predictions.obs.filter(pl.col("drugscreen_query")).filter(
             pl.col("perturbations").list.len() == 2

@@ -50,7 +50,9 @@ def from_perturbations_to_compound(perturbations: list[dict]) -> str:
     return last_perturbation["inchikey"]
 
 
-def add_compound_perturbation_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
+def add_compound_perturbation_to_obs(
+    obs: pl.DataFrame, assume_only_two_perturbations: bool = True
+) -> pl.DataFrame:
     """
     Add the compound perturbation to the observations, including the inchikey and concentration.
     """
@@ -59,9 +61,16 @@ def add_compound_perturbation_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
     assert obs["drugscreen_query"].all(), (
         "Some observations were not drugscreen queries"
     )
-    assert (obs["perturbations"].list.len() == 2).all(), (
-        "Some observations did not have two perturbations"
-    )
+
+    # Not all drugscreen queries necessarily have two perturbations.
+    # We expect all predictions to have two perturbations, but the ground truth may not.
+    only_two_perturbations = obs["perturbations"].list.len() == 2
+    if not assume_only_two_perturbations:
+        obs = obs.filter(only_two_perturbations)
+    else:
+        assert only_two_perturbations.all(), (
+            "Some observations did not have two perturbations"
+        )
 
     # explode = flatten list of perturbation
     # unnest = turn dict/struct into columns
@@ -78,13 +87,6 @@ def add_compound_perturbation_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
         )
 
     return obs.with_columns(col)
-
-
-def add_index_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
-    """
-    Add the compound to the observations.
-    """
-    return obs.with_columns(pl.Series(name="original_index", values=range(len(obs))))
 
 
 def check_disease_model_consistency(obs: pl.DataFrame) -> None:

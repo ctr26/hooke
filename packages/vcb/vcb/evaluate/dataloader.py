@@ -4,7 +4,6 @@ import tqdm
 
 from vcb.evaluate.utils import (
     add_compound_perturbation_to_obs,
-    add_index_to_obs,
     check_disease_model_consistency,
 )
 from vcb.models.dataloader import BiologicalContext, Perturbation, PerturbationGroup
@@ -48,7 +47,7 @@ class DrugscreenDataloader:
         check_disease_model_consistency(self.dataset.obs)
 
         # Add a column that lets us map back to the original index as we filter the observations.
-        obs = add_index_to_obs(self.dataset.obs)
+        obs = self.dataset.obs.with_row_index("original_index")
 
         # Group the observations.
         # Within each group, we'll always have the same control and base states, paired with various sets of perturbed states.

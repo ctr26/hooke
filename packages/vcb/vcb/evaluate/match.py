@@ -5,7 +5,6 @@ import polars as pl
 
 from vcb.evaluate.utils import (
     add_compound_perturbation_to_obs,
-    add_index_to_obs,
     check_disease_model_consistency,
 )
 from vcb.models.dataset import Dataset
@@ -26,17 +25,12 @@ def yield_batch_paired_dataframes(
     check_disease_model_consistency(obs_pred)
 
     # An index to maintain a reference to the observation in the original dataframe.
-    obs_pred = add_index_to_obs(obs_pred)
-    obs_truth = add_index_to_obs(obs_truth)
+    obs_pred = obs_pred.with_row_index("original_index")
+    obs_truth = obs_truth.with_row_index("original_index")
 
     # Predictions will likely only have perturbed state observations (i.e. no base states or controls).
     # I nevertheless expect the flag to exist, for a more robust matching.
     obs_pred = obs_pred.filter(pl.col("drugscreen_query"))
-
-    # TODO (cwognum): Temporary workaround. Should be removed.
-    obs_pred = obs_pred.filter(pl.col("perturbations").list.len() == 2)
-    # ----> End todo
-
     obs_pred = add_compound_perturbation_to_obs(obs_pred)
 
     group_by = ["batch_center"] + ground_truth.metadata.biological_context
@@ -84,7 +78,9 @@ def yield_batch_pairs(
         y_pred_indices = y_pred["original_index"].to_list()
 
         perturbed = y_truth.filter(pl.col("drugscreen_query"))
-        perturbed = add_compound_perturbation_to_obs(perturbed)
+        perturbed = add_compound_perturbation_to_obs(
+            perturbed, assume_only_two_perturbations=False
+        )
 
         base = y_truth.filter(pl.col("is_base_state"))
 
@@ -126,7 +122,10 @@ def yield_compound_pairs(
         for (inchikey, concentration), prediction_group in y_pred.group_by(
             ["inchikey", "concentration"]
         ):
-            pert_states = add_compound_perturbation_to_obs(y_truth)
+            pert_states = add_compound_perturbation_to_obs(
+                y_truth.filter(pl.col("drugscreen_query")),
+                assume_only_two_perturbations=False,
+            )
             pert_states = pert_states.filter(pl.col("inchikey").eq(inchikey))
             pert_states = pert_states.filter(pl.col("concentration").eq(concentration))
 
