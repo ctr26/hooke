@@ -3,7 +3,8 @@ import typer
 from loguru import logger
 from tqdm import tqdm
 
-from vcb.evaluate.dataloader import DrugscreenDataloader
+from vcb.data.dataloader import DrugscreenDataloader
+from vcb.data.raw_count_scaler import RawCountScaler
 from vcb.evaluate.evaluate import (
     calculate_aggregated_metrics,
     calculate_distributional_metrics,
@@ -56,6 +57,11 @@ def evaluate(
         intersection = set(predictions.gene_labels) & set(ground_truth.gene_labels)
         predictions.set_gene_labels_subset(intersection)
         ground_truth.set_gene_labels_subset(intersection)
+
+    scaler = RawCountScaler()
+    scaler.fit(ground_truth.X)
+    predictions.X = scaler.transform(predictions.X, is_log1p_transformed=True)
+    ground_truth.X = scaler.transform(ground_truth.X)
 
     rows = []
 

@@ -131,6 +131,10 @@ class Dataset(BaseModel):
             self._cached_features = arr[:, self._get_gene_mask()]
         return self._cached_features
 
+    @X.setter
+    def X(self, features: np.ndarray) -> None:
+        self._cached_features = features
+
     @computed_field
     @property
     def metadata(self) -> DatasetMetadata:

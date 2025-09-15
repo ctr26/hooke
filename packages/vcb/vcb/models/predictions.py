@@ -96,6 +96,10 @@ class Predictions(BaseModel):
 
         return self._cached_features
 
+    @X.setter
+    def X(self, features: np.ndarray) -> None:
+        self._cached_features = features
+
     def set_gene_labels_subset(self, gene_labels: set[str]) -> None:
         self._gene_labels_subset = gene_labels
 
