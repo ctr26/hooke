@@ -7,12 +7,12 @@ from vcb.evaluate.utils import (
     add_compound_perturbation_to_obs,
     check_disease_model_consistency,
 )
+from vcb.models.anndata import AnnotatedDataMatrix
 from vcb.models.dataset import Dataset
-from vcb.models.predictions import Predictions
 
 
 def yield_batch_paired_dataframes(
-    predictions: Predictions, ground_truth: Dataset
+    predictions: AnnotatedDataMatrix, ground_truth: Dataset
 ) -> Generator[tuple[pl.DataFrame, pl.DataFrame, dict[str, str]]]:
     """
     Match predictions to ground truth.
@@ -60,7 +60,7 @@ def yield_batch_paired_dataframes(
 
 
 def yield_batch_pairs(
-    predictions: Predictions, ground_truth: Dataset
+    predictions: AnnotatedDataMatrix, ground_truth: Dataset
 ) -> Generator[
     tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, str], list[str], list[str]]
 ]:
@@ -102,7 +102,7 @@ def yield_batch_pairs(
 
 
 def yield_compound_pairs(
-    predictions: Predictions, ground_truth: Dataset
+    predictions: AnnotatedDataMatrix, ground_truth: Dataset
 ) -> Generator[tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, str]]]:
     """
     Match predictions to ground truth.
