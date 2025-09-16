@@ -9,7 +9,7 @@ class PredictionPaths(BaseModel):
     """
 
     root: Path
-    var_path: Path
+    var_path: Path | None = None
 
     @field_validator("root")
     def validate_root(cls, v: Path) -> Path:
@@ -19,7 +19,7 @@ class PredictionPaths(BaseModel):
 
     @field_validator("var_path")
     def validate_var_path(cls, v: Path) -> Path:
-        if not v.exists():
+        if v is not None and not v.exists():
             raise ValueError(f"var_path {v} does not exist")
         return v
 
