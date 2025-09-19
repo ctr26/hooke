@@ -21,7 +21,7 @@ class AnnotatedDataMatrix(BaseModel):
             this specifies the name of the array to load the features from.
     """
 
-    var_path: Path
+    var_path: Path | None = None
     obs_path: Path
     features_path: Path
 
@@ -34,7 +34,7 @@ class AnnotatedDataMatrix(BaseModel):
 
     @field_validator("var_path", "obs_path", "features_path")
     def validate_path_exists(cls, v: Path) -> Path:
-        if not v.exists():
+        if v is not None and not v.exists():
             raise ValueError(f"{v} does not exist")
         return v
 
@@ -44,7 +44,8 @@ class AnnotatedDataMatrix(BaseModel):
 
     @property
     def var(self) -> pl.DataFrame:
-        return pl.read_parquet(self.var_path)
+        if self.var_path is not None:
+            return pl.read_parquet(self.var_path)
 
     @property
     def X(self) -> zarr.Array:
@@ -72,7 +73,18 @@ class AnnotatedDataMatrix(BaseModel):
             # Load the features from the Zarr file to a NumPy array This assumes all features fit in memory.
             # This may not always be the case, and defeats the purpose of using Zarr in the first place,
             # but we'll cross that bridge when we get to it.
-            self._cached_features = X[:, self._var_mask]
+            if self._var_mask is not None:
+                self._cached_features = X[:, self._var_mask]
+            else:
+                self._cached_features = X[:]
+
+        # collapse patch embeddings if present
+        # assumes last two dimensions are the patch and embedding dimensions
+        if len(self._cached_features.shape) > 2:
+            logger.warning(
+                f"Collapsing patch embeddings. Input shape: {self._cached_features.shape}"
+            )
+            self._cached_features = self._cached_features.mean(axis=-2)
 
         return self._cached_features
 

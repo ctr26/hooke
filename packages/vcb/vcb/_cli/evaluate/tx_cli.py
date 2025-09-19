@@ -6,17 +6,26 @@ from vcb.models.dataset import Dataset, DatasetDirectory
 from vcb.models.predictions import PredictionPaths
 
 
-def evaluate_cli(
+def tx_evaluate_cli(
     predictions_path: str,
     ground_truth_path: str,
     results_path: str,
-    predictions_var_path: str,
     predictions_features_layer: str,
+    predictions_var_path: str,
     predictions_gene_id_column: str | None = "ensembl_gene_id",
     ground_truth_gene_id_column: str | None = "ensembl_gene_id",
 ):
     """
     Evaluate predictions in Transcriptomics against a ground truth.
+
+    Args:
+        predictions_path: Path to the predictions directory.
+        ground_truth_path: Path to the ground truth directory.
+        results_path: Path to the results parquet file.
+        predictions_var_path: Path to the var file for the predictions.
+        predictions_features_layer: Layer of the features to use for the predictions.
+        predictions_gene_id_column: (optional) Column of the predictions to use for the gene id.
+        ground_truth_gene_id_column: (optional) Column of the ground truth to use for the gene id.
 
     NOTE (cwognum): For now, this only supports the count space. We don't yet support evaluation in embedding spaces.
     """

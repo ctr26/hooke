@@ -71,7 +71,11 @@ def _extend_rows(rows: list[dict], scores: dict, batch_definition: dict) -> list
     return rows
 
 
-def evaluate(predictions: AnnotatedDataMatrix, ground_truth: Dataset) -> pl.DataFrame:
+def evaluate(
+    predictions: AnnotatedDataMatrix,
+    ground_truth: Dataset,
+    distributional_metrics: bool = True,
+) -> pl.DataFrame:
     """
     Evaluate predictions against a ground truth.
 
@@ -85,13 +89,14 @@ def evaluate(predictions: AnnotatedDataMatrix, ground_truth: Dataset) -> pl.Data
         yield_batch_pairs(predictions, ground_truth),
         total=predictions.obs["batch_center"].n_unique(),
     ):
-        scores = calculate_edistance_retrieval(
-            samples_pred=pred,
-            samples_truth=truth,
-            group_labels_pred=compounds_pred,
-            group_labels_truth=compounds_truth,
-        )
-        rows = _extend_rows(rows, scores, batch_definition)
+        if distributional_metrics:
+            scores = calculate_edistance_retrieval(
+                samples_pred=pred,
+                samples_truth=truth,
+                group_labels_pred=compounds_pred,
+                group_labels_truth=compounds_truth,
+            )
+            rows = _extend_rows(rows, scores, batch_definition)
 
         scores = calculate_mae_retrieval(
             samples_pred=pred,
@@ -122,7 +127,8 @@ def evaluate(predictions: AnnotatedDataMatrix, ground_truth: Dataset) -> pl.Data
         scores = calculate_aggregated_metrics(pred, truth, base)
         rows = _extend_rows(rows, scores, batch_definition)
 
-        scores = calculate_distributional_metrics(pred, truth)
-        rows = _extend_rows(rows, scores, batch_definition)
+        if distributional_metrics:
+            scores = calculate_distributional_metrics(pred, truth)
+            rows = _extend_rows(rows, scores, batch_definition)
 
     return pl.DataFrame(rows)

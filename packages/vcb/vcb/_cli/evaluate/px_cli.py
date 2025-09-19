@@ -4,7 +4,7 @@ from vcb.models.dataset import Dataset, DatasetDirectory
 from vcb.models.predictions import PredictionPaths
 
 
-def evaluate_cli(
+def px_evaluate_cli(
     predictions_path: str,
     ground_truth_path: str,
     results_path: str,
@@ -13,6 +13,13 @@ def evaluate_cli(
 ):
     """
     Evaluate predictions in Phenomics against a ground truth.
+
+    Args:
+        predictions_path: Path to the predictions directory.
+        ground_truth_path: Path to the ground truth directory.
+        results_path: Path to the results parquet file.
+        predictions_features_layer: Layer of the features to use for the predictions.
+        predictions_var_path: (optional) Path to the var file for the predictions.
     """
 
     # Load the predictions.
@@ -27,5 +34,6 @@ def evaluate_cli(
     # Load the ground truth.
     ground_truth = Dataset.from_directory(DatasetDirectory(root=ground_truth_path))
 
+    # Evaluate and save the results
     results = evaluate(predictions, ground_truth)
     results.write_parquet(results_path)
