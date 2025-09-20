@@ -28,7 +28,7 @@ class AnnotatedDataMatrix(BaseModel):
     features_layer: str | None = None
 
     _cached_features: np.ndarray | None = None
-    _var_mask: np.ndarray | None = None
+    _var_indices: np.ndarray | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -73,8 +73,8 @@ class AnnotatedDataMatrix(BaseModel):
             # Load the features from the Zarr file to a NumPy array This assumes all features fit in memory.
             # This may not always be the case, and defeats the purpose of using Zarr in the first place,
             # but we'll cross that bridge when we get to it.
-            if self._var_mask is not None:
-                self._cached_features = X[:, self._var_mask]
+            if self._var_indices is not None:
+                self._cached_features = X[:, self._var_indices]
             else:
                 self._cached_features = X[:]
 
@@ -92,10 +92,10 @@ class AnnotatedDataMatrix(BaseModel):
     def X(self, features: np.ndarray) -> None:
         self._cached_features = features
 
-    def set_var_mask(self, mask: np.ndarray) -> None:
+    def set_var_indices(self, indices: np.ndarray) -> None:
         """
         Mask the features along the var dimension.
         Also invalidates the cached features, if any.
         """
-        self._var_mask = mask
+        self._var_indices = indices
         self._cached_features = None

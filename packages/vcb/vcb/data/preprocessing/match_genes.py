@@ -1,4 +1,3 @@
-import numpy as np
 from loguru import logger
 
 from vcb.models.anndata import AnnotatedDataMatrix
@@ -25,14 +24,15 @@ def match_gene_space(
 
     intersection = list(set(labels_a) & set(labels_b))
 
-    mask_a = np.isin(labels_a, np.array(intersection))
-    mask_b = np.isin(labels_b, np.array(intersection))
+    # We need consistently reorder the labels
+    indices_a = [labels_a.index(label) for label in intersection]
+    indices_b = [labels_b.index(label) for label in intersection]
 
     # Since data copies are expensive with large arrays,
-    # we set a mask instead of directly modifying the features.
+    # we set the indices instead of directly modifying the features.
     # This way it's also not a destructive operation.
-    a.set_var_mask(mask_a)
-    b.set_var_mask(mask_b)
+    a.set_var_indices(indices_a)
+    b.set_var_indices(indices_b)
 
     logger.info(
         f"Matched gene space: {len(labels_a)} -> {len(intersection)}, {len(labels_b)} -> {len(intersection)}"
