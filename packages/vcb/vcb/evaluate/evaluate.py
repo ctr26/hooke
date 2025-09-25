@@ -3,7 +3,7 @@ import polars as pl
 from loguru import logger
 from tqdm import tqdm
 
-from vcb.evaluate.match import yield_batch_pairs, yield_compound_pairs
+from vcb.evaluate.match import yield_compound_pairs
 from vcb.evaluate.utils import add_compound_perturbation_to_obs
 from vcb.metrics import DISTRIBUTIONAL_METRICS, SAMPLE_METRICS
 from vcb.metrics.retrieval import calculate_edistance_retrieval, calculate_mae_retrieval
@@ -53,21 +53,21 @@ def calculate_aggregated_metrics(
     return metrics_dict
 
 
-def _extend_rows(rows: list[dict], scores: dict, batch_definition: dict) -> list[dict]:
+def _extend_rows(rows: list[dict], scores: dict, context: dict) -> list[dict]:
     """Helper function to extend the rows list with the scores and batch definition."""
     for k, v in scores.items():
         if isinstance(v, list):
             for i, v_i in enumerate(v):
                 rows.append(
                     {
-                        **batch_definition,
+                        **context,
                         "score": v_i,
                         "metric": k,
                         "sample_index": i,
                     }
                 )
         else:
-            rows.append({**batch_definition, "score": v, "metric": k})
+            rows.append({**context, "score": v, "metric": k})
     return rows
 
 
@@ -84,27 +84,52 @@ def evaluate(
 
     rows = []
 
-    logger.info("Calculating batch-level metrics.")
-    for pred, truth, base, batch_definition, compounds_pred, compounds_truth in tqdm(
-        yield_batch_pairs(predictions, ground_truth),
-        total=predictions.obs["batch_center"].n_unique(),
+    logger.info("Calculating retrieval metrics.")
+
+    # Prepare the observation-level metadata
+    truth_obs = ground_truth.obs.with_row_index("original_index")
+    predictions_obs = add_compound_perturbation_to_obs(
+        predictions.obs.with_row_index("original_index")
+    )
+    total = predictions_obs["plate_disease_model"].n_unique()
+
+    # Loop over each disease model.
+    for (disease_model,), predictions_group_obs in tqdm(
+        predictions_obs.group_by("plate_disease_model"),
+        total=total,
+        desc="Calculating retrieval per disease model",
     ):
+        # Filter down the ground truth to the same group.
+        truth_group_obs = add_compound_perturbation_to_obs(
+            truth_obs.filter(pl.col("obs_id").is_in(predictions_group_obs["obs_id"]))
+        )
+
+        # Get the actual features
+        predictions_group = predictions.X[
+            predictions_group_obs["original_index"].to_list()
+        ]
+        truth_group = ground_truth.X[truth_group_obs["original_index"].to_list()]
+
+        # Get the group labels
+        pert_pred = list(predictions_group_obs["inchikey", "concentration"].iter_rows())
+        pert_truth = list(truth_group_obs["inchikey", "concentration"].iter_rows())
+
         if distributional_metrics:
             scores = calculate_edistance_retrieval(
-                samples_pred=pred,
-                samples_truth=truth,
-                group_labels_pred=compounds_pred,
-                group_labels_truth=compounds_truth,
+                samples_pred=predictions_group,
+                samples_truth=truth_group,
+                group_labels_pred=pert_pred,
+                group_labels_truth=pert_truth,
             )
-            rows = _extend_rows(rows, scores, batch_definition)
+            rows = _extend_rows(rows, scores, {"disease_model": disease_model})
 
         scores = calculate_mae_retrieval(
-            samples_pred=pred,
-            samples_truth=truth,
-            group_labels_pred=compounds_pred,
-            group_labels_truth=compounds_truth,
+            samples_pred=predictions_group,
+            samples_truth=truth_group,
+            group_labels_pred=pert_pred,
+            group_labels_truth=pert_truth,
         )
-        rows = _extend_rows(rows, scores, batch_definition)
+        rows = _extend_rows(rows, scores, {"disease_model": disease_model})
 
     # This is not strictly needed, but makes for nicer progress bars.
     logger.info("Calculating compound-level metrics.")

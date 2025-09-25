@@ -11,15 +11,14 @@ def calculate_grouping_stats(
     unique_groups: list[CompoundPerturbation],
 ):
     stats = {
-        "group_size": [],
-        "intra_group_variance": [],
+        "population_size": [],
+        "intra_population_variance": [],
     }
 
     for group in unique_groups:
-        stats["group_size"].append(len(group))
-        stats["intra_group_variance"].append(
-            np.var(samples_truth[group_labels_truth == group])
-        )
+        population = samples_truth[group_labels_truth == group]
+        stats["population_size"].append(len(population))
+        stats["intra_population_variance"].append(np.var(population))
 
     return {f"retrieval_mean_{k}": np.mean(v) for k, v in stats.items()}
 
@@ -65,7 +64,7 @@ def calculate_mae_retrieval(
     group_means_truth = {}
 
     for group in unique_groups:
-        # Get indices for this group
+        # Get mask for this group
         pred_mask = group_labels_pred == group
         truth_mask = group_labels_truth == group
 

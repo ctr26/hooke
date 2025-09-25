@@ -1,3 +1,5 @@
+import polars as pl
+
 from vcb.data.preprocessing.match_genes import match_gene_space
 from vcb.data.preprocessing.scale_counts import RawCountScaler
 from vcb.evaluate.evaluate import evaluate
@@ -14,6 +16,8 @@ def tx_evaluate_cli(
     predictions_var_path: str,
     predictions_gene_id_column: str | None = "ensembl_gene_id",
     ground_truth_gene_id_column: str | None = "ensembl_gene_id",
+    library_size: int | None = None,
+    distributional_metrics: bool = True,
 ):
     """
     Evaluate predictions in Transcriptomics against a ground truth.
@@ -26,6 +30,8 @@ def tx_evaluate_cli(
         predictions_features_layer: Layer of the features to use for the predictions.
         predictions_gene_id_column: (optional) Column of the predictions to use for the gene id.
         ground_truth_gene_id_column: (optional) Column of the ground truth to use for the gene id.
+        library_size: (optional) Library size to use for the evaluation.
+        distributional_metrics: (optional) Whether to include distributional metrics.
 
     NOTE (cwognum): For now, this only supports the count space. We don't yet support evaluation in embedding spaces.
     """
@@ -51,11 +57,29 @@ def tx_evaluate_cli(
     )
 
     # Scale to a consistent library size
-    scaler = RawCountScaler()
-    scaler.fit(ground_truth.X)
-    predictions.X = scaler.transform(predictions.X, is_log1p_transformed=True)
+    if library_size is not None:
+        scaler = RawCountScaler(desired_library_size=library_size)
+    else:
+        scaler = RawCountScaler()
+        scaler.fit(ground_truth.X)
+        predictions.X = scaler.transform(predictions.X, is_log1p_transformed=True)
+
     ground_truth.X = scaler.transform(ground_truth.X)
 
     # Evaluate and save the results
-    results = evaluate(predictions, ground_truth)
+    results = evaluate(
+        predictions, ground_truth, distributional_metrics=distributional_metrics
+    )
     results.write_parquet(results_path)
+
+    summary = (
+        results.group_by("metric")
+        .agg(
+            pl.col("score").mean().alias("mean"),
+            pl.col("score").std().alias("std"),
+            pl.col("score").min().alias("min"),
+            pl.col("score").max().alias("max"),
+        )
+        .sort("metric")
+    )
+    print(summary)
