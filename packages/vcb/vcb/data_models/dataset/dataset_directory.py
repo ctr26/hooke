@@ -6,8 +6,6 @@ from pydantic import (
     field_validator,
 )
 
-from vcb.models.anndata import AnnotatedDataMatrix
-
 
 class DatasetDirectory(BaseModel):
     """
@@ -46,37 +44,3 @@ class DatasetDirectory(BaseModel):
     @property
     def var_path(self) -> Path:
         return self.root / f"{self.dataset_id}_var.parquet"
-
-
-class DatasetMetadata(BaseModel):
-    """
-    A dataset metadata object.
-
-    Note (cwognum): There is additional metadata that is not included here, since it's not used in this code base.
-    """
-
-    dataset_id: str
-    biological_context: list[str]
-
-
-class Dataset(AnnotatedDataMatrix):
-    """
-    Dataset.
-    """
-
-    metadata_path: Path
-
-    @property
-    def dataset_id(self) -> str:
-        return self.metadata.dataset_id
-
-    @computed_field
-    @property
-    def metadata(self) -> DatasetMetadata:
-        with open(self.metadata_path, "r") as fd:
-            metadata = DatasetMetadata.model_validate_json(fd.read())
-        return metadata
-
-    @classmethod
-    def from_directory(cls, directory: DatasetDirectory) -> "Dataset":
-        return cls(**directory.model_dump())

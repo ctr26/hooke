@@ -43,9 +43,7 @@ class RawCountScaler:
         d = np.log1p(d)
 
         changes = self._summarize_changes(data, d)
-        logger.info(
-            f"Rescaled the data to a library size of {self.desired_library_size}:\n{changes}"
-        )
+        logger.info(f"Rescaled the data to a library size of {self.desired_library_size}:\n{changes}")
 
         return d
 

@@ -4,7 +4,10 @@ import numpy as np
 import polars as pl
 import zarr
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator
+
+from vcb.data_models.dataset.dataset_directory import DatasetDirectory
+from vcb.data_models.dataset.metadata import DatasetMetadata
 
 
 class AnnotatedDataMatrix(BaseModel):
@@ -21,13 +24,15 @@ class AnnotatedDataMatrix(BaseModel):
             this specifies the name of the array to load the features from.
     """
 
-    var_path: Path | None = None
     obs_path: Path
     features_path: Path
+    var_path: Path | None = None
+    metadata_path: Path | None = None
 
     features_layer: str | None = None
 
-    _cached_features: np.ndarray | None = None
+    _cached_features: np.ndarray | None = PrivateAttr(default=None)
+    _cached_obs: pl.DataFrame | None = None
     _var_indices: np.ndarray | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -40,7 +45,9 @@ class AnnotatedDataMatrix(BaseModel):
 
     @property
     def obs(self) -> pl.DataFrame:
-        return pl.read_parquet(self.obs_path)
+        if self._cached_obs is None:
+            self._cached_obs = pl.read_parquet(self.obs_path)
+        return self._cached_obs
 
     @property
     def var(self) -> pl.DataFrame:
@@ -55,9 +62,7 @@ class AnnotatedDataMatrix(BaseModel):
         Let's make this more robust once data actually no longer fits in memory.
         """
         if self._cached_features is None:
-            logger.info(
-                f"Loading {self.features_path} into memory. This may take a while."
-            )
+            logger.info(f"Loading {self.features_path} into memory. This may take a while.")
 
             # Load the Zarr archive, can be a group or an array
             X = zarr.open(self.features_path)
@@ -81,9 +86,7 @@ class AnnotatedDataMatrix(BaseModel):
         # collapse patch embeddings if present
         # assumes last two dimensions are the patch and embedding dimensions
         if len(self._cached_features.shape) > 2:
-            logger.warning(
-                f"Collapsing patch embeddings. Input shape: {self._cached_features.shape}"
-            )
+            logger.warning(f"Collapsing patch embeddings. Input shape: {self._cached_features.shape}")
             self._cached_features = self._cached_features.mean(axis=-2)
 
         return self._cached_features
@@ -91,6 +94,29 @@ class AnnotatedDataMatrix(BaseModel):
     @X.setter
     def X(self, features: np.ndarray) -> None:
         self._cached_features = features
+
+    @obs.setter
+    def obs(self, obs: pl.DataFrame) -> None:
+        self._cached_obs = obs
+
+    @computed_field
+    @property
+    def metadata(self) -> DatasetMetadata | None:
+        if self.metadata_path is None:
+            return None
+        with open(self.metadata_path, "r") as fd:
+            metadata = DatasetMetadata.model_validate_json(fd.read())
+        return metadata
+
+    @property
+    def dataset_id(self) -> str | None:
+        if self.metadata is None:
+            return None
+        return self.metadata.dataset_id
+
+    @classmethod
+    def from_dataset_directory(cls, directory: DatasetDirectory) -> "AnnotatedDataMatrix":
+        return cls(**directory.model_dump())
 
     def set_var_indices(self, indices: np.ndarray) -> None:
         """

@@ -1,6 +1,6 @@
 from loguru import logger
 
-from vcb.models.anndata import AnnotatedDataMatrix
+from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 
 
 def get_gene_labels(a: AnnotatedDataMatrix, gene_id_column: str) -> list[str]:

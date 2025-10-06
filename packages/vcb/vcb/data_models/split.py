@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from vcb.models.misc import IndexSet
+from vcb.data_models.misc import IndexSet
 
 
 class Fold(BaseModel):

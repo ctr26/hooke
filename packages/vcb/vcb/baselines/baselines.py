@@ -1,10 +1,36 @@
+from collections import defaultdict
+from functools import partial
+
 import numpy as np
 import polars as pl
 from loguru import logger
 from tqdm import tqdm
-from collections import defaultdict
-from functools import partial
-from vcb.evaluate.utils import from_perturbations_to_compound_conc
+
+
+def from_perturbations_to_compound_conc(perturbations: list[dict]) -> str:
+    """
+    Given a list of perturbations, return the drug compound and concentration.
+    For drugscreen data, we can assume that it's the last perturbation in the list.
+
+    If there is no perturbations or the last perturbation is not a compound perturbation, return None.
+    """
+
+    if len(perturbations) == 0:
+        return None
+
+    sorted_perturbations = sorted(perturbations, key=lambda x: x["hours_post_reference"])
+
+    # Should be fine, but a quick sanity check won't hurt.
+    last_perturbation = sorted_perturbations[-1]
+    if last_perturbation["type"] != "compound":
+        return None
+
+    # standardize concentration
+    # to account for differences in precision and rounding
+    conc_formatted = f"{last_perturbation['concentration']:.3e}"
+
+    # create hashable tuple
+    return (last_perturbation["inchikey"], conc_formatted)
 
 
 class Baseline:
@@ -12,9 +38,7 @@ class Baseline:
     Base class for all baselines.
     """
 
-    def __init__(
-        self, train_dataset, valid_indices, reference_column: str = "is_base_state"
-    ):
+    def __init__(self, train_dataset, valid_indices, reference_column: str = "is_base_state"):
         """
         Args:
         train_dataset: Dataset object containing the training data.
@@ -37,19 +61,13 @@ class Baseline:
         self.PERT_COL = "perturbations"
 
         # dict: context -> batches -> aggregated array
-        self.baseline_ctrls = defaultdict(
-            lambda: defaultdict(partial(np.zeros, shape=self.feature_shape))
-        )
+        self.baseline_ctrls = defaultdict(lambda: defaultdict(partial(np.zeros, shape=self.feature_shape)))
         self.baseline_ctrls_count = defaultdict(lambda: defaultdict(lambda: 0))
         # dict: context -> perturbations -> batches -> aggregated array
         self.baseline_perts = defaultdict(
-            lambda: defaultdict(
-                lambda: defaultdict(partial(np.zeros, shape=self.feature_shape))
-            )
+            lambda: defaultdict(lambda: defaultdict(partial(np.zeros, shape=self.feature_shape)))
         )
-        self.baseline_perts_count = defaultdict(
-            lambda: defaultdict(lambda: defaultdict(lambda: 0))
-        )
+        self.baseline_perts_count = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: 0)))
 
         # group obs by context, perturbation, and batch
         self.obs = self.obs.group_by(
@@ -78,30 +96,22 @@ class Baseline:
             if row[self.CONTROL_COL]:
                 # collect controls by context and batch
                 if X_group.shape[0] > 1:
-                    self.baseline_ctrls[row[self.CONTEXT_COL]][row[self.BATCH_COL]] += (
-                        X_group.mean(axis=0)
-                    )
+                    self.baseline_ctrls[row[self.CONTEXT_COL]][row[self.BATCH_COL]] += X_group.mean(axis=0)
                 else:
-                    self.baseline_ctrls[row[self.CONTEXT_COL]][row[self.BATCH_COL]] += (
-                        X_group.squeeze()
-                    )
-                self.baseline_ctrls_count[row[self.CONTEXT_COL]][
-                    row[self.BATCH_COL]
-                ] += 1
+                    self.baseline_ctrls[row[self.CONTEXT_COL]][row[self.BATCH_COL]] += X_group.squeeze()
+                self.baseline_ctrls_count[row[self.CONTEXT_COL]][row[self.BATCH_COL]] += 1
             else:
                 # collect perturbations by context and batch
                 pert_id = from_perturbations_to_compound_conc(row[self.PERT_COL])
                 if X_group.shape[0] > 1:
-                    self.baseline_perts[row[self.CONTEXT_COL]][pert_id][
-                        row[self.BATCH_COL]
-                    ] += X_group.mean(axis=0)
+                    self.baseline_perts[row[self.CONTEXT_COL]][pert_id][row[self.BATCH_COL]] += X_group.mean(
+                        axis=0
+                    )
                 else:
-                    self.baseline_perts[row[self.CONTEXT_COL]][pert_id][
-                        row[self.BATCH_COL]
-                    ] += X_group.squeeze()
-                self.baseline_perts_count[row[self.CONTEXT_COL]][pert_id][
-                    row[self.BATCH_COL]
-                ] += 1
+                    self.baseline_perts[row[self.CONTEXT_COL]][pert_id][row[self.BATCH_COL]] += (
+                        X_group.squeeze()
+                    )
+                self.baseline_perts_count[row[self.CONTEXT_COL]][pert_id][row[self.BATCH_COL]] += 1
 
         # get mean control and delta by context and perturbation
         baseline_ctrls_tmp = {}
@@ -141,8 +151,7 @@ class Baseline:
 
                     # caclulate delta
                     batch_ctrl_mean = (
-                        self.baseline_ctrls[context][batch]
-                        / self.baseline_ctrls_count[context][batch]
+                        self.baseline_ctrls[context][batch] / self.baseline_ctrls_count[context][batch]
                     )
                     delta += pert_mean - batch_ctrl_mean
 
@@ -168,22 +177,18 @@ class Baseline:
         """
         self.test_obs = test_dataset.obs.with_row_index("X_index")
         self.test_obs = self.test_obs.filter(pl.col(self.CONTROL_COL))
-        self.test_obs = self.test_obs.group_by(
-            self.CONTEXT_COL, self.BATCH_COL, maintain_order=True
-        ).agg(pl.col("X_index"))
-
-        self.test_ctrls = defaultdict(
-            lambda: defaultdict(partial(np.zeros, shape=(self.feature_shape,)))
+        self.test_obs = self.test_obs.group_by(self.CONTEXT_COL, self.BATCH_COL, maintain_order=True).agg(
+            pl.col("X_index")
         )
+
+        self.test_ctrls = defaultdict(lambda: defaultdict(partial(np.zeros, shape=(self.feature_shape,))))
         for row in tqdm(
             self.test_obs.iter_rows(named=True),
             total=len(self.test_obs),
             desc="Fitting controls",
         ):
             X_group = self.X[np.array(row["X_index"])]
-            self.test_ctrls[row[self.CONTEXT_COL]][row[self.BATCH_COL]] += X_group.mean(
-                axis=0
-            )
+            self.test_ctrls[row[self.CONTEXT_COL]][row[self.BATCH_COL]] += X_group.mean(axis=0)
 
 
 class ContextMeanBaseline(Baseline):
@@ -313,9 +318,7 @@ class ContextSampleBaseline(Baseline):
         sampled_batch = list(batches)[np.random.choice(len(batches))]
 
         # sample cell from matched context
-        sampled_cell = self.baseline_perts[biological_context][sampled_pert][
-            sampled_batch
-        ]
+        sampled_cell = self.baseline_perts[biological_context][sampled_pert][sampled_batch]
 
         return sampled_cell
 
@@ -332,9 +335,7 @@ class PerturbationSampleBaseline(Baseline):
     def __init__(self, dataset, valid_indices):
         super().__init__(dataset, valid_indices)
 
-        raise NotImplementedError(
-            "PerturbationSampleBaseline is not (fully) implemented yet."
-        )
+        raise NotImplementedError("PerturbationSampleBaseline is not (fully) implemented yet.")
 
     def forward(self, obs_row):
         pert_id = from_perturbations_to_compound_conc(obs_row[self.PERT_COL])
@@ -359,6 +360,4 @@ class ExperimentalReproducibilityBaseline(Baseline):
     def __init__(self, dataset, valid_indices):
         super().__init__(dataset, valid_indices)
 
-        raise NotImplementedError(
-            "ExperimentalReproducibilityBaseline is not implemented yet."
-        )
+        raise NotImplementedError("ExperimentalReproducibilityBaseline is not implemented yet.")

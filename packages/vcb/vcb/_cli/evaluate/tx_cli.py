@@ -1,17 +1,22 @@
+from pathlib import Path
+
 import polars as pl
 
-from vcb.data.preprocessing.match_genes import match_gene_space
-from vcb.data.preprocessing.scale_counts import RawCountScaler
-from vcb.evaluate.evaluate import evaluate
-from vcb.models.anndata import AnnotatedDataMatrix
-from vcb.models.dataset import Dataset, DatasetDirectory
-from vcb.models.predictions import PredictionPaths
+from vcb.data_models.config import EvaluationConfig
+from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.data_models.dataset.dataset_directory import DatasetDirectory
+from vcb.data_models.dataset.predictions import PredictionPaths
+from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
+from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
+from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
+from vcb.preprocessing.match_genes import match_gene_space
+from vcb.preprocessing.scale_counts import RawCountScaler
 
 
 def tx_evaluate_cli(
     predictions_path: str,
     ground_truth_path: str,
-    results_path: str,
+    save_destination: Path,
     predictions_features_layer: str,
     predictions_var_path: str,
     predictions_gene_id_column: str | None = "ensembl_gene_id",
@@ -25,7 +30,7 @@ def tx_evaluate_cli(
     Args:
         predictions_path: Path to the predictions directory.
         ground_truth_path: Path to the ground truth directory.
-        results_path: Path to the results parquet file.
+        save_destination: Path to where results should be saved.
         predictions_var_path: Path to the var file for the predictions.
         predictions_features_layer: Layer of the features to use for the predictions.
         predictions_gene_id_column: (optional) Column of the predictions to use for the gene id.
@@ -36,17 +41,16 @@ def tx_evaluate_cli(
     NOTE (cwognum): For now, this only supports the count space. We don't yet support evaluation in embedding spaces.
     """
 
+    # Load the ground truth.
+    ground_truth = AnnotatedDataMatrix.from_dataset_directory(DatasetDirectory(root=ground_truth_path))
+
     # Load the predictions.
     predictions = AnnotatedDataMatrix(
-        **PredictionPaths(
-            root=predictions_path,
-            var_path=predictions_var_path,
-        ).model_dump(),
+        **PredictionPaths(root=predictions_path).model_dump(),
+        var_path=predictions_var_path,
+        metadata_path=ground_truth.metadata_path,
         features_layer=predictions_features_layer,
     )
-
-    # Load the ground truth.
-    ground_truth = Dataset.from_directory(DatasetDirectory(root=ground_truth_path))
 
     # Match the gene space
     predictions, ground_truth = match_gene_space(
@@ -66,12 +70,54 @@ def tx_evaluate_cli(
 
     ground_truth.X = scaler.transform(ground_truth.X)
 
-    # Evaluate and save the results
-    results = evaluate(
-        predictions, ground_truth, distributional_metrics=distributional_metrics
+    config = EvaluationConfig(
+        metric_suites=[
+            RetrievalSuite(
+                ground_truth=DrugscreenTaskAdapter(
+                    dataset=ground_truth,
+                    context_groupby_cols={*ground_truth.metadata.biological_context, "plate_disease_model"},
+                ),
+                predictions=DrugscreenTaskAdapter(
+                    dataset=predictions,
+                    context_groupby_cols={*predictions.metadata.biological_context, "plate_disease_model"},
+                ),
+                metric_labels={"retrieval_mae", "retrieval_mae_delta", "retrieval_edistance"},
+                use_distributional_metrics=distributional_metrics,
+            ),
+            PerturbationEffectPredictionSuite(
+                ground_truth=DrugscreenTaskAdapter(
+                    dataset=ground_truth,
+                    context_groupby_cols={
+                        *ground_truth.metadata.biological_context,
+                        "batch_center",
+                        "plate_disease_model",
+                    },
+                ),
+                predictions=DrugscreenTaskAdapter(
+                    dataset=predictions,
+                    context_groupby_cols={
+                        *predictions.metadata.biological_context,
+                        "batch_center",
+                        "plate_disease_model",
+                    },
+                ),
+                metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
+                use_distributional_metrics=distributional_metrics,
+            ),
+        ],
     )
-    results.write_parquet(results_path)
 
+    # Evaluate
+    results = config.execute()
+
+    # Save the results
+    save_destination.mkdir(parents=True, exist_ok=True)
+    results.write_parquet(save_destination / "results.parquet")
+    with open(save_destination / "config.json", "w") as f:
+        # TODO (cwognum): This is not a perfect serialization, because we don't persist which dataset subclass was used.
+        f.write(config.model_dump_json(indent=4))
+
+    # Summarize the results
     summary = (
         results.group_by("metric")
         .agg(

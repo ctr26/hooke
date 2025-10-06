@@ -1,17 +1,11 @@
-from vcb.models.dataset import Dataset, DatasetDirectory
-from vcb.models.split import Split
-from vcb.data.preprocessing.scale_counts import RawCountScaler
 from vcb.baselines.baselines import (
     ContextMeanBaseline,
-    PerturbationMeanBaseline,
     ContextSampleBaseline,
+    PerturbationMeanBaseline,
     PerturbationSampleBaseline,
 )
-from vcb.models.baseline_predictions import InMemoryPredictions
-from vcb.evaluate.evaluate import evaluate
-import numpy as np
-from tqdm import tqdm
-
+from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.preprocessing.scale_counts import RawCountScaler
 
 baseline_lookup = {
     "context_mean": ContextMeanBaseline,
@@ -21,7 +15,7 @@ baseline_lookup = {
 }
 
 
-def align_scale_counts(ground_truth: Dataset):
+def align_scale_counts(ground_truth: AnnotatedDataMatrix):
     ground_truth.X = ground_truth.X[:]
     scaler = RawCountScaler()
     scaler.fit(ground_truth.X)
@@ -46,38 +40,38 @@ def run_baseline_tx_cli(
             Options: context_mean, context_sample, perturbation_mean, perturbation_sample
         results_path: Path to the results parquet file.
     """
+    pass
+    # ground_truth = Dataset.from_directory(DatasetDirectory(root=root))
+    # split = Split.from_json(split_path)
 
-    ground_truth = Dataset.from_directory(DatasetDirectory(root=root))
-    split = Split.from_json(split_path)
+    # fold = split.folds[split_idx]
 
-    fold = split.folds[split_idx]
+    # # define split indices
+    # finetune_split = fold.finetune + split.controls
+    # test_split = fold.test + split.controls
 
-    # define split indices
-    finetune_split = fold.finetune + split.controls
-    test_split = fold.test + split.controls
+    # # log1p-normalize counts
+    # ground_truth.X = align_scale_counts(ground_truth)
 
-    # log1p-normalize counts
-    ground_truth.X = align_scale_counts(ground_truth)
+    # # init and cache baseline
+    # if baseline_type not in baseline_lookup.keys():
+    #     raise ValueError(f"Baseline {baseline_type} not supported")
+    # else:
+    #     BaselineType = baseline_lookup[baseline_type]
+    #     baseline = BaselineType(ground_truth, valid_indices=finetune_split)
 
-    # init and cache baseline
-    if baseline_type not in baseline_lookup.keys():
-        raise ValueError(f"Baseline {baseline_type} not supported")
-    else:
-        BaselineType = baseline_lookup[baseline_type]
-        baseline = BaselineType(ground_truth, valid_indices=finetune_split)
+    # # get baseline predictions
+    # # TODO: add variable number sample generation for N2D models
+    # predictions_list = []
+    # for obs_row in tqdm(ground_truth.obs[test_split].iter_rows(named=True)):
+    #     output = baseline.forward(obs_row)
+    #     predictions_list.append(output)
 
-    # get baseline predictions
-    # TODO: add variable number sample generation for N2D models
-    predictions_list = []
-    for obs_row in tqdm(ground_truth.obs[test_split].iter_rows(named=True)):
-        output = baseline.forward(obs_row)
-        predictions_list.append(output)
+    # # create datasets for evaluation
+    # predictions = InMemoryPredictions(
+    #     obs=ground_truth.obs[test_split], X=np.stack(predictions_list)
+    # )
 
-    # create datasets for evaluation
-    predictions = InMemoryPredictions(
-        obs=ground_truth.obs[test_split], X=np.stack(predictions_list)
-    )
-
-    # Evaluate and save the results
-    results = evaluate(predictions, ground_truth)
-    results.write_parquet(results_path)
+    # # Evaluate and save the results
+    # results = evaluate(predictions, ground_truth)
+    # results.write_parquet(results_path)
