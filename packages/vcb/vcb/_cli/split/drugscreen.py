@@ -122,19 +122,6 @@ def drugscreen_split_cli(
     found = original[expected]["original_index"].to_list()
     assert expected == found, f"Sanity check failed: {expected} != {found}"
 
-    # Find the batch-paired negative controls
-    negative_control_indices = (
-        original.filter(pl.col("is_negative_control"))
-        .filter(pl.col("batch_center").is_in(obs["batch_center"].unique()))["original_index"]
-        .to_list()
-    )
-
-    base_state_indices = (
-        original.filter(pl.col("is_base_state"))
-        .filter(pl.col("batch_center").is_in(obs["batch_center"].unique()))["original_index"]
-        .to_list()
-    )
-
     drugscreen_subset = add_compound(
         original.filter(pl.col("drugscreen_query")).filter(
             pl.col("batch_center").is_in(obs["batch_center"].unique())
@@ -158,6 +145,21 @@ def drugscreen_split_cli(
     if subsample_ratio is not None:
         subsample_size = int(len(unique_values) * subsample_ratio)
         unique_values = np.random.choice(unique_values, size=subsample_size, replace=False)
+        drugscreen_subset = drugscreen_subset.filter(pl.col(splitting_col).is_in(unique_values))
+        log_step("Subsampled", len(drugscreen_subset))
+
+    # Find the batch-paired negative controls
+    negative_control_indices = (
+        original.filter(pl.col("is_negative_control"))
+        .filter(pl.col("batch_center").is_in(drugscreen_subset["batch_center"].unique()))["original_index"]
+        .to_list()
+    )
+
+    base_state_indices = (
+        original.filter(pl.col("is_base_state"))
+        .filter(pl.col("batch_center").is_in(drugscreen_subset["batch_center"].unique()))["original_index"]
+        .to_list()
+    )
 
     # 5x5 Cross Validation
     folds = []
@@ -213,9 +215,13 @@ def drugscreen_split_cli(
 
     logger.info("\n" + str(split_model))
 
+    output_dir = output_dir / dataset.dataset_id
     output_dir.mkdir(parents=True, exist_ok=True)
-    fname = f"{dataset.dataset_id}__split_{splitting_level}_{splitting_strategy}__v{version}.json"
-    with open(output_dir / fname, "w") as fd:
+
+    fname = f"split_{splitting_level}_{splitting_strategy}__v{version}.json"
+    output_path = output_dir / fname
+
+    with open(output_path, "w") as fd:
         fd.write(split_model.model_dump_json())
 
-    logger.info(f"Split saved to {output_dir / fname}")
+    logger.info(f"Split saved to {output_path}")

@@ -13,18 +13,17 @@ app = typer.Typer(pretty_exceptions_enable=False)
 predictions_app = typer.Typer(pretty_exceptions_enable=False)
 predictions_app.command("tx")(tx_evaluate_cli)
 predictions_app.command("px")(px_evaluate_cli)
-app.add_typer(predictions_app, name="predictions")
 
 # Subapp: baselines
 baseline_app = typer.Typer(pretty_exceptions_enable=False)
 baseline_app.command("tx")(run_baseline_tx_cli)
 baseline_app.command("px")(run_baseline_px_cli)
-app.add_typer(baseline_app, name="baseline")
 
 # Subapp: Evaluate
 evaluate_app = typer.Typer(pretty_exceptions_enable=False)
 evaluate_app.add_typer(predictions_app, name="predictions")
 evaluate_app.add_typer(baseline_app, name="baseline")
+app.add_typer(evaluate_app, name="evaluate")
 
 # Subapp: Split
 split_app = typer.Typer(pretty_exceptions_enable=False)

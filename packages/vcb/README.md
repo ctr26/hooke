@@ -15,14 +15,14 @@ Installing this package makes a CLI command available.
 
 ### Evaluate model predictions:
 ```bash
-uv run vcb predictions --help
-uv run vcb predictions [tx/px/...] <path_to_predictions_dir> <path_to_groundtruth_dir> <results_save_path> <feature_layer_name> <path_to_predictions_var (tx only)>
+uv run vcb evaluate predictions --help
+uv run vcb evaluate predictions [tx/px/...] <path_to_predictions_dir> <path_to_groundtruth_dir> <results_save_path> <feature_layer_name> <path_to_predictions_var (tx only)>
 ```
 
 ### Evaluate baselines:
 ```bash
-uv run vcb baseline --help
-uv run vcb baseline [tx/px/...] <path_to_groundtruth_dir> <path_to_split_json> <split_index> <baseline_type> <results_save_path>
+uv run vcb evaluate baseline --help
+uv run vcb evaluate baseline [tx/px/...] <path_to_groundtruth_dir> <path_to_split_json> <split_index> <baseline_type> <results_save_path>
 ```
 
 <!-- ### Draft command for active dev on baseline
