@@ -18,6 +18,7 @@ def tx_evaluate_cli(
     ground_truth_path: str,
     save_destination: Path,
     predictions_features_layer: str,
+    predictions_zarr_index_column: str,
     predictions_var_path: str,
     predictions_gene_id_column: str | None = "ensembl_gene_id",
     ground_truth_gene_id_column: str | None = "ensembl_gene_id",
@@ -33,6 +34,7 @@ def tx_evaluate_cli(
         save_destination: Path to where results should be saved.
         predictions_var_path: Path to the var file for the predictions.
         predictions_features_layer: Layer of the features to use for the predictions.
+        predictions_zarr_index_column: Column of the predictions to use for the zarr index.
         predictions_gene_id_column: (optional) Column of the predictions to use for the gene id.
         ground_truth_gene_id_column: (optional) Column of the ground truth to use for the gene id.
         library_size: (optional) Library size to use for the evaluation.
@@ -50,6 +52,7 @@ def tx_evaluate_cli(
         var_path=predictions_var_path,
         metadata_path=ground_truth.metadata_path,
         features_layer=predictions_features_layer,
+        zarr_index_column=predictions_zarr_index_column,
     )
 
     # Match the gene space

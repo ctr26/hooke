@@ -103,7 +103,7 @@ class DrugscreenTaskAdapter(TaskAdapter):
     """
 
     perturbation_groupby_cols: set[str] = Field(default_factory=lambda: {"inchikey", "concentration"})
-    context_groupby_cols: set[str] = Field(default_factory=lambda: {"batch_center"})
+    context_groupby_cols: set[str] = Field(default_factory=lambda: {"batch_center", "cell_type"})
 
     _is_prepared: bool = False
     _filtered_perturbed_obs: pl.DataFrame | None = None

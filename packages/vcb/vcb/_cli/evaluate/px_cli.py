@@ -16,6 +16,7 @@ def px_evaluate_cli(
     ground_truth_path: str,
     save_destination: Path,
     predictions_features_layer: str,
+    predictions_zarr_index_column: str,
     predictions_var_path: str | None = None,
     distributional_metrics: bool = True,
 ):
@@ -27,6 +28,7 @@ def px_evaluate_cli(
         ground_truth_path: Path to the ground truth directory.
         save_destination: Path to where results should be saved.
         predictions_features_layer: Layer of the features to use for the predictions.
+        predictions_zarr_index_column: Column of the predictions to use for the zarr index.
         predictions_var_path: (optional) Path to the var file for the predictions.
         distributional_metrics: (optional) Whether to include distributional metrics.
     """
@@ -40,6 +42,7 @@ def px_evaluate_cli(
         var_path=predictions_var_path,
         metadata_path=ground_truth.metadata_path,
         features_layer=predictions_features_layer,
+        zarr_index_column=predictions_zarr_index_column,
     )
 
     config = EvaluationConfig(

@@ -30,6 +30,7 @@ class AnnotatedDataMatrix(BaseModel):
     metadata_path: Path | None = None
 
     features_layer: str | None = None
+    zarr_index_column: str | None = None
 
     _cached_features: np.ndarray | None = PrivateAttr(default=None)
     _cached_obs: pl.DataFrame | None = None
@@ -75,13 +76,20 @@ class AnnotatedDataMatrix(BaseModel):
                     )
                 X = X[self.features_layer]
 
+            # Match features and observations
+            obs_indices = (
+                self.obs[self.zarr_index_column].to_numpy()
+                if self.zarr_index_column is not None
+                else slice(None)
+            )
+
             # Load the features from the Zarr file to a NumPy array This assumes all features fit in memory.
             # This may not always be the case, and defeats the purpose of using Zarr in the first place,
             # but we'll cross that bridge when we get to it.
             if self._var_indices is not None:
-                self._cached_features = X[:, self._var_indices]
+                self._cached_features = X.oindex[obs_indices, self._var_indices]
             else:
-                self._cached_features = X[:]
+                self._cached_features = X.oindex[obs_indices, :]
 
         # collapse patch embeddings if present
         # assumes last two dimensions are the patch and embedding dimensions
