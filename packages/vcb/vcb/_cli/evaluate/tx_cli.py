@@ -8,18 +8,21 @@ from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
+from vcb.data_models.split import Split
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 from vcb.preprocessing.match_genes import match_gene_space
 from vcb.preprocessing.scale_counts import RawCountScaler
 
 
 def tx_evaluate_cli(
-    predictions_path: str,
-    ground_truth_path: str,
+    predictions_path: Path,
+    ground_truth_path: Path,
+    split_path: Path,
+    split_idx: int,
     save_destination: Path,
     predictions_features_layer: str,
     predictions_zarr_index_column: str,
-    predictions_var_path: str,
+    predictions_var_path: Path,
     predictions_gene_id_column: str | None = "ensembl_gene_id",
     ground_truth_gene_id_column: str | None = "ensembl_gene_id",
     library_size: int | None = None,
@@ -31,6 +34,8 @@ def tx_evaluate_cli(
     Args:
         predictions_path: Path to the predictions directory.
         ground_truth_path: Path to the ground truth directory.
+        split_path: Path to the split json file.
+        split_idx: Index of the split to evaluate.
         save_destination: Path to where results should be saved.
         predictions_var_path: Path to the var file for the predictions.
         predictions_features_layer: Layer of the features to use for the predictions.
@@ -45,6 +50,12 @@ def tx_evaluate_cli(
 
     # Load the ground truth.
     ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
+
+    # Load the split to filter down the ground truth.
+    split = Split.from_json(split_path)
+    fold = split.folds[split_idx]
+    split_indices = fold.test + split.base_states
+    ground_truth.set_obs_indices(split_indices)
 
     # Load the predictions.
     predictions = AnnotatedDataMatrix(

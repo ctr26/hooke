@@ -109,21 +109,29 @@ class DrugscreenTaskAdapter(TaskAdapter):
     _filtered_perturbed_obs: pl.DataFrame | None = None
     _filtered_basal_obs: pl.DataFrame | None = None
 
-    @property
-    def filtered_perturbed_obs(self) -> pl.DataFrame:
+    def get_all_perturbed_obs(self) -> pl.DataFrame:
         if self._filtered_perturbed_obs is None:
             obs = self.dataset.obs
             obs = obs.filter(pl.col("drugscreen_query"))
 
-            # This filter is needed because the ground truth data contains
-            # observations with more or less than two perturbations, which we want to ignore.
-            obs = obs.filter(pl.col("perturbations").list.len().eq(2))
+            # TODO (cwognum): This filter should not be needed, as we filter these out in the split.
+            #   However, something is currently wrong with the split.
+            mask = pl.col("perturbations").list.len().eq(2)
+            skipped = obs.filter(~mask)
+            if len(skipped) > 0:
+                logger.warning(
+                    f"Some observations had more than two perturbations. They were skipped.\n"
+                    f"Path: {self.dataset.obs_path}\n"
+                    f"IDs: {skipped['obs_id'].to_list()}"
+                )
+
+            obs = obs.filter(mask)
+
             self._filtered_perturbed_obs = obs
 
         return self._filtered_perturbed_obs
 
-    @property
-    def filtered_basal_obs(self) -> pl.DataFrame:
+    def get_all_basal_obs(self) -> pl.DataFrame:
         if self._filtered_basal_obs is None:
             obs = self.dataset.obs.filter(pl.col("is_base_state"))
             self._filtered_basal_obs = obs
@@ -143,7 +151,8 @@ class DrugscreenTaskAdapter(TaskAdapter):
         # some of the preprocessing here may already have been done, even if _is_prepared is False.
         # Out of precaution, we reset and recompute.
 
-        obs = pl.read_parquet(self.dataset.obs_path)
+        self.dataset._cached_obs = None
+        obs = self.dataset.obs
         obs = obs.with_row_index("original_index")
         obs = add_compound_perturbation_to_obs(obs)
         self.dataset.obs = obs
@@ -153,12 +162,12 @@ class DrugscreenTaskAdapter(TaskAdapter):
         self._filtered_basal_obs = None
 
     def get_basal_states(self, *predictates: pl.Expr) -> np.ndarray:
-        obs = self.filtered_basal_obs.filter(*predictates)
+        obs = self.get_all_basal_obs().filter(*predictates)
         return self.dataset.X[obs["original_index"].to_list()]
 
     def get_perturbations(self, *predictates: pl.Expr) -> np.ndarray:
         # Filter for drugscreen queries
-        obs = self.filtered_perturbed_obs.filter(*predictates)
+        obs = self.get_all_perturbed_obs().filter(*predictates)
 
         # Get the perturbations and convert to numpy array
         perturbations = list(obs[["inchikey", "concentration"]].iter_rows())
@@ -168,5 +177,5 @@ class DrugscreenTaskAdapter(TaskAdapter):
         return perturbations
 
     def get_perturbed_states(self, *predictates: pl.Expr) -> np.ndarray:
-        obs = self.filtered_perturbed_obs.filter(*predictates)
+        obs = self.get_all_perturbed_obs().filter(*predictates)
         return self.dataset.X[obs["original_index"].to_list()]

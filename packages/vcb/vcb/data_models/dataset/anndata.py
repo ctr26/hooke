@@ -1,3 +1,4 @@
+import uuid
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +35,7 @@ class AnnotatedDataMatrix(BaseModel):
     _cached_features: np.ndarray | None = PrivateAttr(default=None)
     _cached_obs: pl.DataFrame | None = None
     _var_indices: np.ndarray | None = None
+    _obs_indices: np.ndarray | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -76,7 +78,18 @@ class AnnotatedDataMatrix(BaseModel):
     @property
     def obs(self) -> pl.DataFrame:
         if self._cached_obs is None:
-            self._cached_obs = pl.read_parquet(self.obs_path)
+            obs = pl.read_parquet(self.obs_path)
+
+            # If specified, filter down the observations.
+            if self._obs_indices is not None:
+                # To make minimal assumptions about columns in the obs,
+                # we add a temporary, randomly named row index we remove after filtering.
+                tmp_column = uuid.uuid4().hex
+                obs = obs.with_row_index(tmp_column)
+                obs = obs.filter(pl.col(tmp_column).is_in(self._obs_indices))
+                obs = obs.drop(tmp_column)
+
+            self._cached_obs = obs
         return self._cached_obs
 
     @property
@@ -105,12 +118,17 @@ class AnnotatedDataMatrix(BaseModel):
                     )
                 X = X[self.features_layer]
 
-            # Match features and observations
-            obs_indices = (
-                self.obs[self.zarr_index_column].to_numpy()
-                if self.zarr_index_column is not None
-                else slice(None)
-            )
+            if self.zarr_index_column is not None:
+                # For predictions, we need to explicitly match observations to features.
+                # We do this using the zarr_index_column to reorder the features.
+                # We do not need to worry about the `_obs_indices` here, because `self.obs` is already filtered.
+                obs_indices = self.obs[self.zarr_index_column].to_numpy()
+            elif self._obs_indices is not None:
+                # Otherwise, if `_obs_indices` is set, we use it to filter down the features.
+                obs_indices = self._obs_indices
+            else:
+                # Otherwise, we load all features.
+                obs_indices = slice(None)
 
             # Load the features from the Zarr file to a NumPy array This assumes all features fit in memory.
             # This may not always be the case, and defeats the purpose of using Zarr in the first place,
@@ -151,10 +169,25 @@ class AnnotatedDataMatrix(BaseModel):
             return None
         return self.metadata.dataset_id
 
+    def invalidate_cache(self) -> None:
+        """
+        Invalidate the cached features and obs.
+        """
+        self._cached_obs = None
+        self._cached_features = None
+
     def set_var_indices(self, indices: np.ndarray) -> None:
         """
         Mask the features along the var dimension.
         Also invalidates the cached features, if any.
         """
         self._var_indices = indices
-        self._cached_features = None
+        self.invalidate_cache()
+
+    def set_obs_indices(self, indices: np.ndarray) -> None:
+        """
+        Mask the features along the obs dimension.
+        Also invalidates the cached features, if any.
+        """
+        self._obs_indices = indices
+        self.invalidate_cache()

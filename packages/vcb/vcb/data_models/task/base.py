@@ -49,11 +49,19 @@ class TaskAdapter(BaseModel, ABC):
         pass
 
     @abstractmethod
+    def get_all_basal_obs(self) -> pl.DataFrame:
+        pass
+
+    @abstractmethod
     def get_perturbations(self, *predictates: pl.Expr) -> np.ndarray:
         pass
 
     @abstractmethod
     def get_perturbed_states(self, *predictates: pl.Expr) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def get_all_perturbed_obs(self) -> pl.DataFrame:
         pass
 
     def get_biological_context(self, *predictates: pl.Expr) -> dict:

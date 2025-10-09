@@ -34,6 +34,26 @@ class MetricSuite(BaseModel, ABC):
             raise ValueError("Ground truth and predictions do not have the same perturbation groupby cols")
         return self
 
+    @model_validator(mode="after")
+    def validate_ground_truth_and_predictions_matching_obs(self) -> "MetricSuite":
+        """
+        Assert the ground truth and predictions are the same type.
+        """
+        gt = self.ground_truth.get_all_perturbed_obs()["obs_id"].to_list()
+        p = self.predictions.get_all_perturbed_obs()["obs_id"].to_list()
+        if len(gt) != len(p):
+            raise ValueError(
+                "Ground truth and predictions do not have the same number of observations. "
+                f"Ground truth has {len(gt)} observations, predictions has {len(p)}."
+            )
+        if set(gt) != set(p):
+            raise ValueError(
+                "Ground truth and predictions do not have the same observations.\n"
+                f"Ground truth - predictions = {set(gt) - set(p)}.\n"
+                f"Predictions - ground truth = {set(p) - set(gt)}."
+            )
+        return self
+
     @property
     def metrics(self) -> dict[str, Callable]:
         return {metric: METRICS[metric] for metric in self.metric_labels}
