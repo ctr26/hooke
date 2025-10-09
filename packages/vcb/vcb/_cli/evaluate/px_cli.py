@@ -12,12 +12,12 @@ from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 
 
 def px_evaluate_cli(
-    predictions_path: str,
-    ground_truth_path: str,
+    predictions_path: Path,
+    ground_truth_path: Path,
     save_destination: Path,
     predictions_features_layer: str,
     predictions_zarr_index_column: str,
-    predictions_var_path: str | None = None,
+    predictions_var_path: Path | None = None,
     distributional_metrics: bool = True,
 ):
     """
@@ -34,7 +34,7 @@ def px_evaluate_cli(
     """
 
     # Load the ground truth.
-    ground_truth = AnnotatedDataMatrix.from_dataset_directory(DatasetDirectory(root=ground_truth_path))
+    ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
 
     # Load the predictions.
     predictions = AnnotatedDataMatrix(
@@ -56,7 +56,7 @@ def px_evaluate_cli(
             PerturbationEffectPredictionSuite(
                 ground_truth=DrugscreenTaskAdapter(dataset=ground_truth),
                 predictions=DrugscreenTaskAdapter(dataset=predictions),
-                metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
+                metric_labels={"cosine", "mse"},
                 use_distributional_metrics=distributional_metrics,
             ),
         ],

@@ -44,7 +44,7 @@ def tx_evaluate_cli(
     """
 
     # Load the ground truth.
-    ground_truth = AnnotatedDataMatrix.from_dataset_directory(DatasetDirectory(root=ground_truth_path))
+    ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
 
     # Load the predictions.
     predictions = AnnotatedDataMatrix(

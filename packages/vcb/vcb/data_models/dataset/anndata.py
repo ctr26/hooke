@@ -4,9 +4,8 @@ import numpy as np
 import polars as pl
 import zarr
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator, model_validator
 
-from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.metadata import DatasetMetadata
 
 
@@ -38,11 +37,41 @@ class AnnotatedDataMatrix(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    @field_validator("var_path", "obs_path", "features_path")
+    @field_validator("var_path", "obs_path", "features_path", "metadata_path")
     def validate_path_exists(cls, v: Path) -> Path:
         if v is not None and not v.exists():
             raise ValueError(f"{v} does not exist")
         return v
+
+    @model_validator(mode="after")
+    def validate_features_layer(cls, m: "AnnotatedDataMatrix") -> "AnnotatedDataMatrix":
+        root = zarr.open(m.features_path, mode="r")
+
+        if m.features_layer is not None and isinstance(root, zarr.Array):
+            logger.warning(
+                f"Ignoring features_layer `{m.features_layer}` because {m.features_path} is not a Zarr Group."
+            )
+
+        if isinstance(root, zarr.Group):
+            array_keys = list(root.array_keys())
+            if m.features_layer is None:
+                raise ValueError(
+                    "features_layer needs to be set when the features_path is a Zarr Group. "
+                    f"Set it to one of the following arrays: {array_keys}"
+                )
+            elif m.features_layer not in array_keys:
+                raise ValueError(
+                    f"features_layer {m.features_layer} not found in {m.features_path}. "
+                    f"These are the available arrays: {array_keys}"
+                )
+
+        columns = pl.read_parquet(m.obs_path).columns
+        if m.zarr_index_column is not None and m.zarr_index_column not in columns:
+            raise ValueError(
+                f"zarr_index_column {m.zarr_index_column} not found in {m.obs_path}. "
+                f"These are the available columns: {columns}"
+            )
+        return m
 
     @property
     def obs(self) -> pl.DataFrame:
@@ -121,10 +150,6 @@ class AnnotatedDataMatrix(BaseModel):
         if self.metadata is None:
             return None
         return self.metadata.dataset_id
-
-    @classmethod
-    def from_dataset_directory(cls, directory: DatasetDirectory) -> "AnnotatedDataMatrix":
-        return cls(**directory.model_dump())
 
     def set_var_indices(self, indices: np.ndarray) -> None:
         """
