@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import polars as pl
+from loguru import logger
 
 from vcb.data_models.config import EvaluationConfig
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
@@ -77,6 +78,9 @@ def tx_evaluate_cli(
     # Scale to a consistent library size
     if library_size is not None:
         scaler = RawCountScaler(desired_library_size=library_size)
+
+        changes = scaler.summarize_changes(predictions.X, predictions.X)
+        logger.info(f"Did not rescale the predictions, because a library size was provided:\n{changes}")
     else:
         scaler = RawCountScaler()
         scaler.fit(ground_truth.X)

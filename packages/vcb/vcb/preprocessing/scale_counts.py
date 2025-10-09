@@ -42,7 +42,7 @@ class RawCountScaler:
         d = d * self.desired_library_size
         d = np.log1p(d)
 
-        changes = self._summarize_changes(data, d)
+        changes = self.summarize_changes(data, d)
         logger.info(f"Rescaled the data to a library size of {self.desired_library_size}:\n{changes}")
 
         return d
@@ -57,7 +57,7 @@ class RawCountScaler:
             self.fit(reference)
         return self.transform(data, is_log1p_transformed)
 
-    def _summarize_changes(self, before: np.ndarray, after: np.ndarray) -> pl.DataFrame:
+    def summarize_changes(self, before: np.ndarray, after: np.ndarray) -> pl.DataFrame:
         """Summarize the data distribution."""
         return pl.DataFrame(
             {
