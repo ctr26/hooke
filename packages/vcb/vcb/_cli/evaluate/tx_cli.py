@@ -12,7 +12,7 @@ from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
 from vcb.data_models.split import Split
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 from vcb.preprocessing.match_genes import match_gene_space
-from vcb.preprocessing.scale_counts import TxDistributionHandler 
+from vcb.preprocessing.scale_counts import RawCountScaler
 
 
 def tx_evaluate_cli(
@@ -28,9 +28,6 @@ def tx_evaluate_cli(
     ground_truth_gene_id_column: str | None = "ensembl_gene_id",
     library_size: int | None = None,
     distributional_metrics: bool = True,
-    log1p_predictions: bool = False,
-    rescale_predictions: bool = True,
-    use_val_split: bool = False,
 ):
     """
     Evaluate predictions in Transcriptomics against a ground truth.
@@ -46,11 +43,9 @@ def tx_evaluate_cli(
         predictions_zarr_index_column: Column of the predictions to use for the zarr index.
         predictions_gene_id_column: (optional) Column of the predictions to use for the gene id.
         ground_truth_gene_id_column: (optional) Column of the ground truth to use for the gene id.
-        library_size: (optional) Library size to use for the evaluation (default ground truth median library size).
+        library_size: (optional) Library size to use for the evaluation.
         distributional_metrics: (optional) Whether to include distributional metrics.
-        log1p_predictions: (optional) Log1p the predictions (default False, assuming this is done).
-        rescale_predictions: (optional) Rescale the predictions to a target library size (default True).
-        use_val_split: (optional) Whether to use the validation split instead of the test split (default False).
+
     NOTE (cwognum): For now, this only supports the count space. We don't yet support evaluation in embedding spaces.
     """
 
@@ -60,10 +55,7 @@ def tx_evaluate_cli(
     # Load the split to filter down the ground truth.
     split = Split.from_json(split_path)
     fold = split.folds[split_idx]
-    if use_val_split:
-        split_indices = fold.validation + split.base_states
-    else:
-        split_indices = fold.test + split.base_states
+    split_indices = fold.test + split.base_states
     ground_truth.set_obs_indices(split_indices)
 
     # Load the predictions.
@@ -84,11 +76,17 @@ def tx_evaluate_cli(
     )
 
     # Scale to a consistent library size
-    tx_scaling_handler = TxDistributionHandler(ground_truth, predictions, library_size, 
-                                               rescale_predictions=rescale_predictions, 
-                                               log1p_predictions=log1p_predictions)
-    
-    tx_scaling_handler.scale_both_as_needed()
+    if library_size is not None:
+        scaler = RawCountScaler(desired_library_size=library_size)
+
+        changes = scaler.summarize_changes(predictions.X, predictions.X)
+        logger.info(f"Did not rescale the predictions, because a library size was provided:\n{changes}")
+    else:
+        scaler = RawCountScaler()
+        scaler.fit(ground_truth.X)
+        predictions.X = scaler.transform(predictions.X, is_log1p_transformed=True)
+
+    ground_truth.X = scaler.transform(ground_truth.X)
 
     config = EvaluationConfig(
         metric_suites=[
