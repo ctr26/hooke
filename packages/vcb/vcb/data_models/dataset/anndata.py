@@ -189,5 +189,5 @@ class AnnotatedDataMatrix(BaseModel):
         Mask the features along the obs dimension.
         Also invalidates the cached features, if any.
         """
-        self._obs_indices = indices
+        self._obs_indices = np.sort(indices)
         self.invalidate_cache()
