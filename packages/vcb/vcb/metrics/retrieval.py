@@ -23,23 +23,23 @@ def calculate_grouping_stats(
     return {f"retrieval_mean_{k}": np.mean(v) for k, v in stats.items()}
 
 
-def from_similarities_to_retrieval_score(similarities: np.ndarray) -> float:
+def from_distances_to_retrieval_score(distances: np.ndarray) -> float:
     # get ranks of true sample for each generated sample
     # sort from lowest to highest distance
-    ranks_argsort = np.argsort(similarities, axis=1)
+    ranks_argsort = np.argsort(distances, axis=1)
     ranks_indicator = ranks_argsort == np.arange(ranks_argsort.shape[0]).reshape(-1, 1)
 
     # extract rank of correct pairing
     ranks = np.nonzero(ranks_indicator)[1]
 
     # normalize by number of comparisons
-    score = 1 - np.mean(ranks) / (similarities.shape[0] - 1)
+    score = 1 - np.mean(ranks) / (distances.shape[0] - 1)
     return score
 
 
 def calculate_mae_retrieval(
-    y_pred: np.ndarray,
     y_true: np.ndarray,
+    y_pred: np.ndarray,
     p_true: np.ndarray,
     p_pred: np.ndarray,
     y_base: np.ndarray | None = None,
@@ -84,16 +84,14 @@ def calculate_mae_retrieval(
     pred_expanded = pred_samples_matrix[:, np.newaxis, :]
     truth_expanded = truth_samples_matrix[np.newaxis, :, :]
 
-    sims = np.mean(np.abs(pred_expanded - truth_expanded), axis=2)
-    sims = -sims
-
+    distances = np.mean(np.abs(pred_expanded - truth_expanded), axis=2)
     stats = calculate_grouping_stats(samples_true, p_true, unique_groups)
-    return from_similarities_to_retrieval_score(sims), stats
+    return from_distances_to_retrieval_score(distances), stats
 
 
 def calculate_edistance_retrieval(
-    y_pred: np.ndarray,
     y_true: np.ndarray,
+    y_pred: np.ndarray,
     y_base: np.ndarray,
     p_true: np.ndarray,
     p_pred: np.ndarray,
@@ -108,9 +106,8 @@ def calculate_edistance_retrieval(
     """
     # Get the groups to compare
     unique_groups = np.intersect1d(np.unique(p_pred), np.unique(p_true))
-
     n_groups = len(unique_groups)
-    sims = np.zeros((n_groups, n_groups))
+    distances = np.zeros((n_groups, n_groups))
 
     y_base_mean = np.mean(y_base, axis=0)
     delta_true = y_true - y_base_mean
@@ -127,7 +124,7 @@ def calculate_edistance_retrieval(
                 delta_true[p_true == group1],
                 delta_pred[p_pred == group2],
             )
-            sims[ix1, ix2] = dist
+            distances[ix1, ix2] = dist
 
     supp = calculate_grouping_stats(y_true, p_true, unique_groups)
-    return from_similarities_to_retrieval_score(sims), supp
+    return from_distances_to_retrieval_score(distances), supp

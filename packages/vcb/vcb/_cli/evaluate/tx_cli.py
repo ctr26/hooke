@@ -146,4 +146,5 @@ def tx_evaluate_cli(
         )
         .sort("metric")
     )
-    print(summary)
+    logger.info(f"Summary of results:\n{summary}")
+    return results

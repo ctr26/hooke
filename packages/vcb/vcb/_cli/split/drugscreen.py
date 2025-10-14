@@ -118,7 +118,7 @@ def drugscreen_split_cli(
 
     # Sanity check
     # Can we use the index of the subsampled ID to get the row in the original dataframe?
-    expected = np.random.randint(0, len(original), size=50).tolist()
+    expected = np.random.randint(0, len(original), size=min(50, len(original))).tolist()
     found = original[expected]["original_index"].to_list()
     assert expected == found, f"Sanity check failed: {expected} != {found}"
 

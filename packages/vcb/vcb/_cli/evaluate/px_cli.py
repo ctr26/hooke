@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import polars as pl
+from loguru import logger
 
 from vcb.data_models.config import EvaluationConfig
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
@@ -92,4 +93,5 @@ def px_evaluate_cli(
         )
         .sort("metric")
     )
-    print(summary)
+    logger.info(f"Summary of results:\n{summary}")
+    return results

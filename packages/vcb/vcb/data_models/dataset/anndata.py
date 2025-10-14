@@ -181,7 +181,7 @@ class AnnotatedDataMatrix(BaseModel):
         Mask the features along the var dimension.
         Also invalidates the cached features, if any.
         """
-        self._var_indices = indices
+        self._var_indices = np.sort(indices)
         self.invalidate_cache()
 
     def set_obs_indices(self, indices: np.ndarray) -> None:
