@@ -22,7 +22,13 @@ def match_gene_space(
     labels_a = get_gene_labels(a, gene_id_column_a)
     labels_b = get_gene_labels(b, gene_id_column_b)
 
-    intersection = sorted(list(set(labels_a) & set(labels_b)))
+    set_a = set(labels_a)
+    set_b = set(labels_b)
+
+    set_a.discard(None)
+    set_b.discard(None)
+
+    intersection = sorted(list(set_a & set_b))
 
     # We need consistently reorder the labels
     indices_a = [labels_a.index(label) for label in intersection]

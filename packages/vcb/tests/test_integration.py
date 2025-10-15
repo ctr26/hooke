@@ -185,6 +185,7 @@ def test_evaluate_tx_cli(mock_dataset, mock_predictions, mock_split, tmpdir):
         predictions_features_layer="predictions",
         predictions_var_path=Path(mock_predictions) / "var.parquet",
         predictions_zarr_index_column=None,
+        log1p_transform_predictions=False,
     )
     assert_perfect_performance(
         results,
