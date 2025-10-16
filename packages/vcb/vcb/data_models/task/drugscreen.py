@@ -114,8 +114,6 @@ class DrugscreenTaskAdapter(TaskAdapter):
             obs = self.dataset.obs
             obs = obs.filter(pl.col("drugscreen_query"))
 
-            # TODO (cwognum): This filter should not be needed, as we filter these out in the split.
-            #   However, something is currently wrong with the split.
             mask = pl.col("perturbations").list.len().eq(2)
             skipped = obs.filter(~mask)
             if len(skipped) > 0:

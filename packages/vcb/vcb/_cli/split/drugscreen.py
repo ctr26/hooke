@@ -64,7 +64,7 @@ def drugscreen_split_cli(
     """
 
     # Load the dataset
-    dataset = AnnotatedDataMatrix.from_dataset_directory(DatasetDirectory(root=dataset_dir))
+    dataset = AnnotatedDataMatrix(**DatasetDirectory(root=dataset_dir).model_dump())
 
     # Preprocess the observations
     original = dataset.obs.with_row_index("original_index")
@@ -116,17 +116,17 @@ def drugscreen_split_cli(
     obs = obs.filter(pl.col("disease_model").is_in(compounds_per_disease_model))
     log_step("≥25 unique compounds", len(obs))
 
+    # Filter out any observations that are not drugscreen queries
+    obs = obs.filter(pl.col("drugscreen_query"))
+    log_step("Is drugscreen query", len(obs))
+
     # Sanity check
     # Can we use the index of the subsampled ID to get the row in the original dataframe?
     expected = np.random.randint(0, len(original), size=min(50, len(original))).tolist()
     found = original[expected]["original_index"].to_list()
     assert expected == found, f"Sanity check failed: {expected} != {found}"
 
-    drugscreen_subset = add_compound(
-        original.filter(pl.col("drugscreen_query")).filter(
-            pl.col("batch_center").is_in(obs["batch_center"].unique())
-        )
-    )
+    drugscreen_subset = add_compound(obs)
 
     # We split randomly on the compound level
     if splitting_level == "observation":
@@ -204,14 +204,47 @@ def drugscreen_split_cli(
     # Reload the dataset for a sanity check
     obs = pl.read_parquet(dataset.obs_path)
     obs = obs.with_row_index("original_index")
+    obs = obs.with_columns(
+        pl.col("perturbations").list.eval(
+            pl.element().sort_by(pl.element().struct.field("hours_post_reference"))
+        )
+    )
 
-    assert all(obs.filter(pl.col("original_index").is_in(split_model.controls))["is_negative_control"])
-    assert all(obs.filter(pl.col("original_index").is_in(split_model.base_states))["is_base_state"])
+    controls = obs.filter(pl.col("original_index").is_in(split_model.controls))
+    assert all(controls["is_negative_control"])
+    assert all(controls["perturbations"].list.len().is_in([0, 1]))
+
+    base_states = obs.filter(pl.col("original_index").is_in(split_model.base_states))
+    assert all(base_states["is_base_state"])
+    assert all(base_states["perturbations"].list.len().eq(1))
 
     for fold in split_model.folds:
-        assert all(obs.filter(pl.col("original_index").is_in(fold.finetune))["drugscreen_query"])
-        assert all(obs.filter(pl.col("original_index").is_in(fold.validation))["drugscreen_query"])
-        assert all(obs.filter(pl.col("original_index").is_in(fold.test))["drugscreen_query"])
+        finetune = obs.filter(pl.col("original_index").is_in(fold.finetune))
+        validation = obs.filter(pl.col("original_index").is_in(fold.validation))
+        test = obs.filter(pl.col("original_index").is_in(fold.test))
+
+        assert all(finetune["drugscreen_query"])
+        assert all(validation["drugscreen_query"])
+        assert all(test["drugscreen_query"])
+
+        assert all(finetune["perturbations"].list.len().eq(2))
+        assert all(validation["perturbations"].list.len().eq(2))
+        assert all(test["perturbations"].list.len().eq(2))
+
+        if splitting_level == "compound":
+            finetune_compounds = set(add_compound(finetune)["compound"].unique())
+            validation_compounds = set(add_compound(validation)["compound"].unique())
+            test_compounds = set(add_compound(test)["compound"].unique())
+
+            assert finetune_compounds.intersection(validation_compounds) == set(), (
+                f"Finetune and validation have {finetune_compounds.intersection(validation_compounds)}"
+            )
+            assert finetune_compounds.intersection(test_compounds) == set(), (
+                f"Finetune and test have {finetune_compounds.intersection(test_compounds)}"
+            )
+            assert validation_compounds.intersection(test_compounds) == set(), (
+                f"Validation and test have {validation_compounds.intersection(test_compounds)}"
+            )
 
     logger.info("\n" + str(split_model))
 
