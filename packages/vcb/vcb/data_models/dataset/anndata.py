@@ -1,4 +1,3 @@
-import uuid
 from pathlib import Path
 
 import numpy as np
@@ -82,12 +81,7 @@ class AnnotatedDataMatrix(BaseModel):
 
             # If specified, filter down the observations.
             if self._obs_indices is not None:
-                # To make minimal assumptions about columns in the obs,
-                # we add a temporary, randomly named row index we remove after filtering.
-                tmp_column = uuid.uuid4().hex
-                obs = obs.with_row_index(tmp_column)
-                obs = obs.filter(pl.col(tmp_column).is_in(self._obs_indices))
-                obs = obs.drop(tmp_column)
+                obs = obs[self._obs_indices]
 
             self._cached_obs = obs
         return self._cached_obs
@@ -95,7 +89,10 @@ class AnnotatedDataMatrix(BaseModel):
     @property
     def var(self) -> pl.DataFrame:
         if self.var_path is not None:
-            return pl.read_parquet(self.var_path)
+            var = pl.read_parquet(self.var_path)
+            if self._var_indices is not None:
+                var = var[self._var_indices]
+            return var
 
     @property
     def X(self) -> zarr.Array:

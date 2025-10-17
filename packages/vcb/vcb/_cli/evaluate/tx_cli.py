@@ -9,10 +9,11 @@ from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
-from vcb.data_models.split import Split
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
-from vcb.preprocessing.match_genes import match_gene_space
-from vcb.preprocessing.scale_counts import TxDistributionHandler
+from vcb.preprocessing.pipeline import TranscriptomicsPreprocessingPipeline
+from vcb.preprocessing.steps.log1p import InverseLog1pStep, Log1pStep
+from vcb.preprocessing.steps.match_genes import MatchGenesStep
+from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
 
 
 def tx_evaluate_cli(
@@ -30,7 +31,7 @@ def tx_evaluate_cli(
     distributional_metrics: bool = True,
     log1p_transform_predictions: bool = False,
     rescale_predictions: bool = True,
-    use_val_split: bool = False,
+    use_validation_split: bool = False,
 ):
     """
     Evaluate predictions in Transcriptomics against a ground truth.
@@ -51,20 +52,12 @@ def tx_evaluate_cli(
         log1p_transform_predictions: (optional) Log1p the predictions (default False, assuming this is done).
         rescale_predictions: (optional) Rescale the predictions to a target library size (default True).
         use_val_split: (optional) Whether to use the validation split instead of the test split (default False).
+
     NOTE (cwognum): For now, this only supports the count space. We don't yet support evaluation in embedding spaces.
     """
 
     # Load the ground truth.
     ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
-
-    # Load the split to filter down the ground truth.
-    split = Split.from_json(split_path)
-    fold = split.folds[split_idx]
-    if use_val_split:
-        split_indices = fold.validation + split.base_states
-    else:
-        split_indices = fold.test + split.base_states
-    ground_truth.set_obs_indices(split_indices)
 
     # Load the predictions.
     predictions = AnnotatedDataMatrix(
@@ -75,58 +68,42 @@ def tx_evaluate_cli(
         zarr_index_column=predictions_zarr_index_column,
     )
 
-    # Match the gene space
-    predictions, ground_truth = match_gene_space(
-        predictions,
-        ground_truth,
-        predictions_gene_id_column,
-        ground_truth_gene_id_column,
-    )
-
-    # Scale to a consistent library size
-    tx_scaling_handler = TxDistributionHandler(
-        ground_truth=ground_truth,
-        predictions=predictions,
-        desired_library_size=library_size,
-        rescale_predictions=rescale_predictions,
-        log1p_transform_predictions=log1p_transform_predictions,
-    )
-
-    tx_scaling_handler.scale_both_as_needed()
-
     config = EvaluationConfig(
+        ground_truth=DrugscreenTaskAdapter(dataset=ground_truth),
+        predictions=DrugscreenTaskAdapter(dataset=predictions),
+        split_path=split_path,
+        split_index=split_idx,
+        use_validation_split=use_validation_split,
+        preprocessing_pipeline=TranscriptomicsPreprocessingPipeline(
+            steps=[
+                MatchGenesStep(
+                    ground_truth_gene_id_column=ground_truth_gene_id_column,
+                    predictions_gene_id_column=predictions_gene_id_column,
+                ),
+                InverseLog1pStep(transform_predictions=rescale_predictions, transform_ground_truth=False),
+                ScaleCountsStep(library_size=library_size, transform_predictions=rescale_predictions),
+                Log1pStep(
+                    transform_predictions=log1p_transform_predictions or rescale_predictions,
+                    transform_ground_truth=True,
+                ),
+            ]
+        ),
         metric_suites=[
             RetrievalSuite(
-                ground_truth=DrugscreenTaskAdapter(
-                    dataset=ground_truth,
-                    context_groupby_cols={*ground_truth.metadata.biological_context, "plate_disease_model"},
-                ),
-                predictions=DrugscreenTaskAdapter(
-                    dataset=predictions,
-                    context_groupby_cols={*predictions.metadata.biological_context, "plate_disease_model"},
-                ),
                 metric_labels={"retrieval_mae", "retrieval_mae_delta", "retrieval_edistance"},
                 use_distributional_metrics=distributional_metrics,
+                context_groupby_cols={*ground_truth.metadata.biological_context, "plate_disease_model"},
+                perturbation_groupby_cols={"inchikey", "concentration"},
             ),
             PerturbationEffectPredictionSuite(
-                ground_truth=DrugscreenTaskAdapter(
-                    dataset=ground_truth,
-                    context_groupby_cols={
-                        *ground_truth.metadata.biological_context,
-                        "batch_center",
-                        "plate_disease_model",
-                    },
-                ),
-                predictions=DrugscreenTaskAdapter(
-                    dataset=predictions,
-                    context_groupby_cols={
-                        *predictions.metadata.biological_context,
-                        "batch_center",
-                        "plate_disease_model",
-                    },
-                ),
                 metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
                 use_distributional_metrics=distributional_metrics,
+                perturbation_groupby_cols={"inchikey", "concentration"},
+                context_groupby_cols={
+                    *ground_truth.metadata.biological_context,
+                    "plate_disease_model",
+                    "batch_center",
+                },
             ),
         ],
     )

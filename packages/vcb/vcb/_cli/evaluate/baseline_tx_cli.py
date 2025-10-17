@@ -5,7 +5,7 @@ from vcb.baselines.baselines import (
     PerturbationSampleBaseline,
 )
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
-from vcb.preprocessing.scale_counts import RawCountScaler
+from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
 
 baseline_lookup = {
     "context_mean": ContextMeanBaseline,
@@ -17,7 +17,7 @@ baseline_lookup = {
 
 def align_scale_counts(ground_truth: AnnotatedDataMatrix):
     ground_truth.X = ground_truth.X[:]
-    scaler = RawCountScaler()
+    scaler = ScaleCountsStep()
     scaler.fit(ground_truth.X)
     return scaler.transform(ground_truth.X, is_log1p_transformed=False)
 

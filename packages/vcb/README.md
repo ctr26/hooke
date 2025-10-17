@@ -25,23 +25,82 @@ uv run vcb evaluate baseline --help
 uv run vcb evaluate baseline [tx/px/...] <path_to_groundtruth_dir> <path_to_split_json> <split_index> <baseline_type> <results_save_path>
 ```
 
-<!-- ### Draft command for active dev on baseline
+## Development
 
-Hooke-1 prediction evaluation:
-```
-uv run vcb predictions tx "/rxrx/data/user/andrew.quirke/outgoing/drugscreen_tx_benchmark" "/rxrx/data/valence/internal_benchmarking/vcds1/drugscreen__trekseq__v1_0" "./test.pq" /rxrx/data/user/cas.wognum/outgoing/txfm_v0_2g2zvul8__gene_labels.parquet tx_raw_counts --predictions-gene-id-column "gene_label"
+```mermaid
+classDiagram
+    direction LR
+    
+    class EvaluationConfig {
+        ground_truth : TaskAdapter
+        predictions : TaskAdapter
+        split : Split
+        metric_suites : list[MetricSuite]
+        preprocessing_pipeline : PreprocessingPipeline
+        + execute()
+    }
+    class MetricSuite {
+        <<abstract>>
+        metric_labels : set[str]
+        context_groupby_cols : set[str]
+        perturbation_groupby_cols : set[str]
+        + prepare(ground_truth, predictions)
+        + evaluate(ground_truth, predictions)
+    }
+    class Metric
+    class MetricInfo
+    class TaskAdapter {
+        <<abstract>>
+        dataset : AnnotatedDataMatrix
+        + prepare()
+        + get_basal_states()
+        + get_perturbations()
+        + get_perturbed_states()
+        + get_biological_context()
+    }
+    class Split {
+        folds : Fold[*]
+        controls : list[int]
+        base_states : list[int]
+    }
+    class Fold {
+        finetune : list[int]
+        test : list[int]
+        validate : list[int]
+    }
+    class PreprocessingPipeline {
+        steps : list[PreprocessingStep]
+        + transform(ground_truth, predictions)
+    }
+    class PreprocessingStep {
+        + fit(ground_truth, predictions)
+        + transform(ground_truth, predictions)
+    }
+    class AnnotatedDataMatrix {
+        X : Array
+        obs : DataFrame
+        var : DataFrame
+        metadata : DatasetMetadata
+    }
+    
+    %% Relationships
+    
+    EvaluationConfig --> TaskAdapter
+    EvaluationConfig --> Split
+    EvaluationConfig --> MetricSuite
+    EvaluationConfig --> PreprocessingPipeline
+    
+    MetricSuite --> Metric
+    Metric --> MetricInfo 
+    Split --> Fold
+    PreprocessingPipeline  --> PreprocessingStep
+    TaskAdapter --> AnnotatedDataMatrix    
 ```
 
-```
-uv run vcb predictions px "/rxrx/data/user/andrew.quirke/outgoing/phx_inf2/drugscreen_phx_benchmark/fold_o0_i0_r0/o0_i0__20250912_093245/" "/rxrx/data/valence/internal_benchmarking/vcds1/drugscreen__cell_paint__v1_0" "./test.pq" ph2_embeddings
-```
+The above overview presents the main classes. 
 
-Trekseq baselines:
-```
-uv run vcb baseline tx "/rxrx/data/valence/internal_benchmarking/vcds1/drugscreen__trekseq__v1_0" "/rxrx/data/user/cas.wognum/outgoing/vcb/2025_09_vcb_benchmark_v1/drugscreen__trekseq__v1_0__split_random__v1_0.json" 0 "context_mean" "./baseline_predictions.parquet"
-```
+- To add a new task, implement a new `TaskAdapter`.
+- To add a new preprocessing step, implement a new `PreprocessingStep`.
+- To add a new metric, add an entry to `vcb.metrics.METRICS`.
 
-CellPaint baselines:
-```
-uv run vcb baseline px "/rxrx/data/valence/internal_benchmarking/vcds1/drugscreen__cell_paint__v1_0" "/rxrx/data/user/cas.wognum/outgoing/vcb/2025_09_vcb_benchmark_v1/drugscreen__cell_paint__v1_0__split_random__v1_0.json" 0 "context_mean" "./baseline_predictions.parquet"
-``` -->
+To run a new experiment with existing pieces, define a new `EvaluationConfig`.

@@ -9,7 +9,6 @@ from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
-from vcb.data_models.split import Split
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 
 
@@ -23,6 +22,7 @@ def px_evaluate_cli(
     predictions_zarr_index_column: str,
     predictions_var_path: Path | None = None,
     distributional_metrics: bool = True,
+    use_validation_split: bool = False,
 ):
     """
     Evaluate predictions in Phenomics against a ground truth.
@@ -37,16 +37,11 @@ def px_evaluate_cli(
         predictions_zarr_index_column: Column of the predictions to use for the zarr index.
         predictions_var_path: (optional) Path to the var file for the predictions.
         distributional_metrics: (optional) Whether to include distributional metrics.
+        use_validation_split: (optional) Whether to use the validation split instead of the test split (default False).
     """
 
     # Load the ground truth.
     ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
-
-    # Load the split to filter down the ground truth.
-    split = Split.from_json(split_path)
-    fold = split.folds[split_idx]
-    split_indices = fold.test + split.base_states
-    ground_truth.set_obs_indices(split_indices)
 
     # Load the predictions.
     predictions = AnnotatedDataMatrix(
@@ -58,18 +53,22 @@ def px_evaluate_cli(
     )
 
     config = EvaluationConfig(
+        ground_truth=DrugscreenTaskAdapter(dataset=ground_truth),
+        predictions=DrugscreenTaskAdapter(dataset=predictions),
+        split_path=split_path,
+        split_index=split_idx,
+        use_validation_split=use_validation_split,
         metric_suites=[
             RetrievalSuite(
-                ground_truth=DrugscreenTaskAdapter(dataset=ground_truth),
-                predictions=DrugscreenTaskAdapter(dataset=predictions),
                 metric_labels={"retrieval_mae", "retrieval_edistance"},
                 use_distributional_metrics=distributional_metrics,
+                context_groupby_cols={"batch_center", "cell_type"},
             ),
             PerturbationEffectPredictionSuite(
-                ground_truth=DrugscreenTaskAdapter(dataset=ground_truth),
-                predictions=DrugscreenTaskAdapter(dataset=predictions),
                 metric_labels={"cosine", "mse"},
                 use_distributional_metrics=distributional_metrics,
+                context_groupby_cols={"batch_center", "cell_type"},
+                perturbation_groupby_cols={"inchikey", "concentration"},
             ),
         ],
     )

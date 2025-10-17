@@ -1,17 +1,5 @@
 import numpy as np
-
-
-def mean_relative_abs_error(dist_stats_ref, dist_stats_pred, epsilon=0.0001):
-    """MAE normalized to dist_stats_ref
-
-    while the code will work for any array-like dist_stats* arguments, it's impolemented here to be used with distributional stats,
-    currently: mean, max, skew, and whether the data is integers only or not
-    as a quick & dirty way to check if any requested transformations have us comparing apples to apples (or not)"""
-    v1 = np.array(dist_stats_ref)
-    v2 = np.array(dist_stats_pred)
-    delta = v1 - v2
-    pdelta = delta / (np.abs(v1) + epsilon)
-    return np.mean(np.abs(pdelta))
+import polars as pl
 
 
 def right_skew(data: np.ndarray):
@@ -22,3 +10,28 @@ def right_skew(data: np.ndarray):
 
 def integer_only(data: np.ndarray):
     return np.allclose(data, np.round(data), rtol=1e-3)
+
+
+def summarize_distribution(data: np.ndarray) -> np.ndarray:
+    return np.array([data.min(), data.max(), data.mean(), right_skew(data), integer_only(data)])
+
+
+def distribution_summary_similarity(
+    summary: np.ndarray, reference: np.ndarray, epsilon: float = 1e-4
+) -> float:
+    """
+    Simple way to compare two distributions based on their summary statistics.
+    """
+    delta = summary - reference
+    pdelta = delta / (np.abs(reference) + epsilon)
+    return np.mean(np.abs(pdelta))
+
+
+def summaries_to_table(summaries: dict[str, np.ndarray]) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "Metric": ["min", "max", "mean", "skew", "integer_only"],
+            **{k: v for k, v in summaries.items()},
+        },
+        schema={"Metric": pl.Utf8, "Before": pl.Float64, "After": pl.Float64},
+    )

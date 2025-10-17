@@ -15,53 +15,36 @@ class MetricSuite(BaseModel, ABC):
 
     kind: str
 
-    ground_truth: TaskAdapter
-    predictions: TaskAdapter
-
     metric_labels: set[str] = Field(default_factory=set)
     use_distributional_metrics: bool = True
 
-    @model_validator(mode="after")
-    def validate_consistency_between_tasks(self) -> "MetricSuite":
-        """
-        Assert the ground truth and predictions are the same type.
-        """
-        if not isinstance(self.ground_truth, type(self.predictions)):
-            raise ValueError("Ground truth and predictions must be the same type")
-        if self.ground_truth.context_groupby_cols != self.predictions.context_groupby_cols:
-            raise ValueError("Ground truth and predictions do not have the same context groupby cols")
-        if self.ground_truth.perturbation_groupby_cols != self.predictions.perturbation_groupby_cols:
-            raise ValueError("Ground truth and predictions do not have the same perturbation groupby cols")
-        return self
+    context_groupby_cols: set[str] = Field(default_factory=set)
+    perturbation_groupby_cols: set[str] | None = None
 
     @model_validator(mode="after")
-    def validate_ground_truth_and_predictions_matching_obs(self) -> "MetricSuite":
+    def validate_no_overlap_between_groupby_cols(self) -> "MetricSuite":
         """
-        Assert the ground truth and predictions are the same type.
+        Assert there is no overlap between the perturbation and context groupby cols.
+
+        We assume the perturbation_groupby_cols are a superset of the context_groupby_cols,
+        but expect the user to only specify the difference.
         """
-        gt = self.ground_truth.get_all_perturbed_obs()["obs_id"].to_list()
-        p = self.predictions.get_all_perturbed_obs()["obs_id"].to_list()
-        if len(gt) != len(p):
-            raise ValueError(
-                "Ground truth and predictions do not have the same number of observations. "
-                f"Ground truth has {len(gt)} observations, predictions has {len(p)}."
-            )
-        if set(gt) != set(p):
-            raise ValueError(
-                "Ground truth and predictions do not have the same observations.\n"
-                f"Ground truth - predictions = {set(gt) - set(p)}.\n"
-                f"Predictions - ground truth = {set(p) - set(gt)}."
-            )
+        if self.perturbation_groupby_cols is None:
+            return self
+
+        intersection = self.perturbation_groupby_cols & self.context_groupby_cols
+        if intersection:
+            raise ValueError(f"Perturbation groupby cols and context groupby cols overlap: {intersection}")
         return self
 
     @property
     def metrics(self) -> dict[str, Callable]:
         return {metric: METRICS[metric] for metric in self.metric_labels}
 
-    def prepare(self) -> None:
-        self.ground_truth.prepare()
-        self.predictions.prepare()
+    def prepare(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> None:
+        ground_truth.prepare()
+        predictions.prepare()
 
     @abstractmethod
-    def evaluate(self) -> pl.DataFrame:
+    def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         pass

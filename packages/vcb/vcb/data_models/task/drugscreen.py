@@ -1,7 +1,8 @@
+from typing import Literal
+
 import numpy as np
 import polars as pl
 from loguru import logger
-from pydantic import Field
 
 from vcb.data_models.task.base import TaskAdapter
 
@@ -102,8 +103,7 @@ class DrugscreenTaskAdapter(TaskAdapter):
     For drugscreen data, we assume that the biological context is the disease model.
     """
 
-    perturbation_groupby_cols: set[str] = Field(default_factory=lambda: {"inchikey", "concentration"})
-    context_groupby_cols: set[str] = Field(default_factory=lambda: {"batch_center", "cell_type"})
+    kind: Literal["drugscreen"] = "drugscreen"
 
     _is_prepared: bool = False
     _filtered_perturbed_obs: pl.DataFrame | None = None

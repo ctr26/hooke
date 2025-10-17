@@ -5,6 +5,7 @@ from pydantic import field_validator
 
 from vcb.data_models.metrics.suite import MetricSuite
 from vcb.data_models.metrics.utils import manual_group_by
+from vcb.data_models.task.base import TaskAdapter
 
 
 class PerturbationEffectPredictionSuite(MetricSuite):
@@ -26,23 +27,35 @@ class PerturbationEffectPredictionSuite(MetricSuite):
                 raise ValueError(f"Metric {metric} is not supported for perturbation effect prediction tasks")
         return v
 
-    def evaluate(self) -> pl.DataFrame:
+    @field_validator("perturbation_groupby_cols")
+    @classmethod
+    def validate_perturbation_groupby_cols(cls, v: set[str] | None) -> set[str] | None:
+        """
+        Assert the perturbation groupby cols are not None.
+        """
+        if v is None:
+            raise ValueError(
+                "Perturbation groupby cols are required for perturbation effect prediction tasks"
+            )
+        return v
+
+    def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
 
         # Groupby context
-        for context in manual_group_by(self.predictions.dataset.obs, self.predictions.context_groupby_cols):
+        for context in manual_group_by(predictions.dataset.obs, self.context_groupby_cols):
             context_predicate = [pl.col(col) == value for col, value in context.items()]
-            context_obs = self.predictions.dataset.obs.filter(*context_predicate)
+            context_obs = predictions.dataset.obs.filter(*context_predicate)
 
             # Groupby metric
-            for group in manual_group_by(context_obs, self.predictions.perturbation_groupby_cols):
+            for group in manual_group_by(context_obs, self.perturbation_groupby_cols):
                 metric_predicate = [pl.col(col) == value for col, value in group.items()]
                 metric_predicate = context_predicate + metric_predicate
 
                 # Get all the data we need from the dataset
-                y_base = self.ground_truth.get_basal_states(*context_predicate)
-                y_true = self.ground_truth.get_perturbed_states(*metric_predicate)
-                y_pred = self.predictions.get_perturbed_states(*metric_predicate)
+                y_base = ground_truth.get_basal_states(*context_predicate)
+                y_true = ground_truth.get_perturbed_states(*metric_predicate)
+                y_pred = predictions.get_perturbed_states(*metric_predicate)
 
                 for label, metric in self.metrics.items():
                     # Skip distributional metrics if we don't want to use them
