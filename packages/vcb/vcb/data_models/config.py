@@ -54,26 +54,6 @@ class EvaluationConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_ground_truth_and_predictions_matching_obs(self) -> "EvaluationConfig":
-        """
-        Assert the ground truth and predictions are the same type.
-        """
-        gt = self.ground_truth.get_all_perturbed_obs()["obs_id"].to_list()
-        p = self.predictions.get_all_perturbed_obs()["obs_id"].to_list()
-        if len(gt) != len(p):
-            raise ValueError(
-                "Ground truth and predictions do not have the same number of observations. "
-                f"Ground truth has {len(gt)} observations, predictions has {len(p)}."
-            )
-        if set(gt) != set(p):
-            raise ValueError(
-                "Ground truth and predictions do not have the same observations.\n"
-                f"Ground truth - predictions = {set(gt) - set(p)}.\n"
-                f"Predictions - ground truth = {set(p) - set(gt)}."
-            )
-        return self
-
-    @model_validator(mode="after")
     def validate_biological_context_in_groupby_cols(self) -> "EvaluationConfig":
         """
         Assert the biological context is in the groupby cols.
@@ -115,6 +95,20 @@ class EvaluationConfig(BaseModel):
             split_indices = fold.test + split.base_states
 
         self.ground_truth.dataset.set_obs_indices(split_indices)
+
+        gt = self.ground_truth.get_all_perturbed_obs()["obs_id"].to_list()
+        p = self.predictions.get_all_perturbed_obs()["obs_id"].to_list()
+        if len(gt) != len(p):
+            raise RuntimeError(
+                "Ground truth and predictions do not have the same number of observations. "
+                f"Ground truth has {len(gt)} observations, predictions has {len(p)}."
+            )
+        if set(gt) != set(p):
+            raise RuntimeError(
+                "Ground truth and predictions do not have the same observations.\n"
+                f"Ground truth - predictions = {set(gt) - set(p)}.\n"
+                f"Predictions - ground truth = {set(p) - set(gt)}."
+            )
 
         # Preprocess the ground truth and predictions
         if self.preprocessing_pipeline is not None:
