@@ -4,8 +4,8 @@ import polars as pl
 from pydantic import field_validator
 
 from vcb.data_models.metrics.suite import MetricSuite
-from vcb.data_models.metrics.utils import manual_group_by
 from vcb.data_models.task.base import TaskAdapter
+from vcb.utils import predicate_group_by
 
 
 class PerturbationEffectPredictionSuite(MetricSuite):
@@ -27,33 +27,25 @@ class PerturbationEffectPredictionSuite(MetricSuite):
                 raise ValueError(f"Metric {metric} is not supported for perturbation effect prediction tasks")
         return v
 
-    @field_validator("perturbation_groupby_cols")
-    @classmethod
-    def validate_perturbation_groupby_cols(cls, v: set[str] | None) -> set[str] | None:
-        """
-        Assert the perturbation groupby cols are not None.
-        """
-        if v is None:
-            raise ValueError(
-                "Perturbation groupby cols are required for perturbation effect prediction tasks"
-            )
-        return v
-
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
 
         # Groupby context
-        for context in manual_group_by(predictions.dataset.obs, self.context_groupby_cols):
-            context_predicate = [pl.col(col) == value for col, value in context.items()]
-            context_obs = predictions.dataset.obs.filter(*context_predicate)
-
+        for batch_context, batch_context_obs, batch_context_predicate in predicate_group_by(
+            predictions.dataset.obs,
+            predictions.context_groupby_cols,
+            # NOTE (cwognum): This may seem like the wrong description, but it's actually correct.
+            # I place this description here so that it's visible in the top-level progress bar.
+            description=f"Computing {self.kind} suite per {predictions.perturbation_groupby_cols}",
+        ):
             # Groupby metric
-            for group in manual_group_by(context_obs, self.perturbation_groupby_cols):
-                metric_predicate = [pl.col(col) == value for col, value in group.items()]
-                metric_predicate = context_predicate + metric_predicate
+            for perturbation, _, perturbation_predicate in predicate_group_by(
+                batch_context_obs, predictions.perturbation_groupby_cols
+            ):
+                metric_predicate = batch_context_predicate + perturbation_predicate
 
                 # Get all the data we need from the dataset
-                y_base = ground_truth.get_basal_states(*context_predicate)
+                y_base = ground_truth.get_basal_states(*batch_context_predicate)
                 y_true = ground_truth.get_perturbed_states(*metric_predicate)
                 y_pred = predictions.get_perturbed_states(*metric_predicate)
 
@@ -74,6 +66,6 @@ class PerturbationEffectPredictionSuite(MetricSuite):
 
                     # Compute score
                     score = metric.fn(**kwargs)
-                    rows.append({"score": score, "metric": label, **context, **group})
+                    rows.append({"score": score, "metric": label, **batch_context, **perturbation})
 
         return pl.DataFrame(rows)

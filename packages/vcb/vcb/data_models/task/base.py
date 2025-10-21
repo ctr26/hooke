@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import polars as pl
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 
@@ -17,6 +17,49 @@ class TaskAdapter(BaseModel, ABC):
     kind: str
 
     dataset: AnnotatedDataMatrix
+
+    batch_groupby_cols: list[str] = Field(default_factory=list)
+    perturbation_groupby_cols: list[str] = Field(default_factory=list)
+    context_groupby_cols: list[str] = Field(default_factory=list)
+
+    @field_validator("batch_groupby_cols", "perturbation_groupby_cols", "context_groupby_cols")
+    def validate_groupby_cols_unique(cls, v: list[str]) -> list[str]:
+        """
+        Assert the groupby cols are unique.
+        """
+        if len(v) != len(set(v)):
+            raise ValueError(f"The groupby cols are not unique: {v}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_context_groupby_cols(self) -> "TaskAdapter":
+        """
+        Assert the context groupby cols are a subset of the biological context.
+        """
+        if not self.dataset.metadata.biological_context <= set(self.context_groupby_cols):
+            raise ValueError("The context groupby cols are not a subset of the biological context:")
+        return self
+
+    @model_validator(mode="after")
+    def validate_no_overlap_between_groupby_cols(self) -> "TaskAdapter":
+        """
+        Assert there is no overlap between the groupby cols.
+        """
+
+        # Assert union is the same length as the sum of the individual groupby cols
+        n_union = len(
+            set(self.perturbation_groupby_cols + self.context_groupby_cols + self.batch_groupby_cols)
+        )
+        n_sum = (
+            len(self.perturbation_groupby_cols)
+            + len(self.context_groupby_cols)
+            + len(self.batch_groupby_cols)
+        )
+        if n_union != n_sum:
+            raise ValueError(
+                f"The groupby cols overlap: Length of union ({n_union}) != Sum of lengths ({n_sum})"
+            )
+        return self
 
     def prepare(self) -> None:
         pass

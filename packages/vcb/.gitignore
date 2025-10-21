@@ -12,3 +12,8 @@ wheels/
 # Pytest-cov
 .coverage
 coverage.xml
+
+
+# Since we often store these results in the working directory, we don't want to commit them
+results/
+splits/

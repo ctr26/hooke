@@ -92,18 +92,10 @@ def tx_evaluate_cli(
             RetrievalSuite(
                 metric_labels={"retrieval_mae", "retrieval_mae_delta", "retrieval_edistance"},
                 use_distributional_metrics=distributional_metrics,
-                context_groupby_cols={*ground_truth.metadata.biological_context, "plate_disease_model"},
-                perturbation_groupby_cols={"inchikey", "concentration"},
             ),
             PerturbationEffectPredictionSuite(
                 metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
                 use_distributional_metrics=distributional_metrics,
-                perturbation_groupby_cols={"inchikey", "concentration"},
-                context_groupby_cols={
-                    *ground_truth.metadata.biological_context,
-                    "plate_disease_model",
-                    "batch_center",
-                },
             ),
         ],
     )

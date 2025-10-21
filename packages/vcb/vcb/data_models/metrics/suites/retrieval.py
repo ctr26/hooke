@@ -4,8 +4,8 @@ import polars as pl
 from pydantic import field_validator
 
 from vcb.data_models.metrics.suite import MetricSuite
-from vcb.data_models.metrics.utils import manual_group_by
 from vcb.data_models.task.base import TaskAdapter
+from vcb.utils import predicate_group_by
 
 
 class RetrievalSuite(MetricSuite):
@@ -31,17 +31,19 @@ class RetrievalSuite(MetricSuite):
         rows = []
 
         # Groupby context
-        for context in manual_group_by(predictions.dataset.obs, self.context_groupby_cols):
-            context_predicate = [pl.col(col) == value for col, value in context.items()]
-
+        for group_label, _, predicate in predicate_group_by(
+            predictions.dataset.obs,
+            predictions.context_groupby_cols,
+            description=f"Computing {self.kind} suite per {predictions.context_groupby_cols}",
+        ):
             # Ground truth
-            y_base = ground_truth.get_basal_states(*context_predicate)
-            y_true = ground_truth.get_perturbed_states(*context_predicate)
-            p_true = ground_truth.get_perturbations(*context_predicate)
+            y_base = ground_truth.get_basal_states(*predicate)
+            y_true = ground_truth.get_perturbed_states(*predicate)
+            p_true = ground_truth.get_perturbations(*predicate)
 
             # Predictions
-            y_pred = predictions.get_perturbed_states(*context_predicate)
-            p_pred = predictions.get_perturbations(*context_predicate)
+            y_pred = predictions.get_perturbed_states(*predicate)
+            p_pred = predictions.get_perturbations(*predicate)
 
             for label, metric in self.metrics.items():
                 if metric.is_distributional and not self.use_distributional_metrics:
@@ -54,6 +56,6 @@ class RetrievalSuite(MetricSuite):
                     p_pred=p_pred,
                     **metric.kwargs,
                 )
-                rows.append({"score": score, "metric": label, **supp, **context})
+                rows.append({"score": score, "metric": label, **supp, **group_label})
 
         return pl.DataFrame(rows)

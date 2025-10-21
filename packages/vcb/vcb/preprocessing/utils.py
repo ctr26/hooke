@@ -13,7 +13,7 @@ def integer_only(data: np.ndarray):
 
 
 def summarize_distribution(data: np.ndarray) -> np.ndarray:
-    return np.array([data.min(), data.max(), data.mean(), right_skew(data), integer_only(data)])
+    return np.array([data.min(), data.max(), data.mean(), np.median(data), integer_only(data)])
 
 
 def distribution_summary_similarity(
@@ -30,7 +30,7 @@ def distribution_summary_similarity(
 def summaries_to_table(summaries: dict[str, np.ndarray]) -> pl.DataFrame:
     return pl.DataFrame(
         {
-            "Metric": ["min", "max", "mean", "skew", "integer_only"],
+            "Metric": ["min", "max", "mean", "median", "integer_only"],
             **{k: v for k, v in summaries.items()},
         },
         schema={"Metric": pl.Utf8, "Before": pl.Float64, "After": pl.Float64},

@@ -53,16 +53,6 @@ class EvaluationConfig(BaseModel):
             raise ValueError("Ground truth and predictions must be the same type")
         return self
 
-    @model_validator(mode="after")
-    def validate_biological_context_in_groupby_cols(self) -> "EvaluationConfig":
-        """
-        Assert the biological context is in the groupby cols.
-        """
-        for suite in self.metric_suites:
-            if not self.ground_truth.dataset.metadata.biological_context <= suite.context_groupby_cols:
-                raise ValueError(f"Biological context is not in the groupby cols for {suite.kind}")
-        return self
-
     # For traceability sake, we'll also save some additional metadata
     @computed_field
     @property

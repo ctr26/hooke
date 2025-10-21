@@ -32,6 +32,7 @@ class AnnotatedDataMatrix(BaseModel):
     zarr_index_column: str | None = None
 
     _cached_features: np.ndarray | None = PrivateAttr(default=None)
+    _cached_var: pl.DataFrame | None = None
     _cached_obs: pl.DataFrame | None = None
     _var_indices: np.ndarray | None = None
     _obs_indices: np.ndarray | None = None
@@ -88,11 +89,15 @@ class AnnotatedDataMatrix(BaseModel):
 
     @property
     def var(self) -> pl.DataFrame:
-        if self.var_path is not None:
+        if self._cached_var is None:
             var = pl.read_parquet(self.var_path)
+
+            # If specified, filter down the variables.
             if self._var_indices is not None:
                 var = var[self._var_indices]
-            return var
+
+            self._cached_var = var
+        return self._cached_var
 
     @property
     def X(self) -> zarr.Array:
@@ -171,6 +176,7 @@ class AnnotatedDataMatrix(BaseModel):
         Invalidate the cached features and obs.
         """
         self._cached_obs = None
+        self._cached_var = None
         self._cached_features = None
 
     def set_var_indices(self, indices: np.ndarray) -> None:

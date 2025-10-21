@@ -3,6 +3,7 @@ from typing import Literal
 import numpy as np
 import polars as pl
 from loguru import logger
+from pydantic import Field
 
 from vcb.data_models.task.base import TaskAdapter
 
@@ -105,6 +106,10 @@ class DrugscreenTaskAdapter(TaskAdapter):
 
     kind: Literal["drugscreen"] = "drugscreen"
 
+    perturbation_groupby_cols: list[str] = Field(default_factory=lambda: ["inchikey", "concentration"])
+    batch_groupby_cols: list[str] = Field(default_factory=lambda: ["batch_center"])
+    context_groupby_cols: list[str] = Field(default_factory=lambda: ["plate_disease_model", "cell_type"])
+
     _is_prepared: bool = False
     _filtered_perturbed_obs: pl.DataFrame | None = None
     _filtered_basal_obs: pl.DataFrame | None = None
@@ -148,8 +153,8 @@ class DrugscreenTaskAdapter(TaskAdapter):
         # Since multiple adapter instances can reference the same dataset,
         # some of the preprocessing here may already have been done, even if _is_prepared is False.
         # Out of precaution, we reset and recompute.
-
         self.dataset._cached_obs = None
+
         obs = self.dataset.obs
         obs = obs.with_row_index("original_index")
         obs = add_compound_perturbation_to_obs(obs)

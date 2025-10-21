@@ -62,13 +62,10 @@ def px_evaluate_cli(
             RetrievalSuite(
                 metric_labels={"retrieval_mae", "retrieval_edistance"},
                 use_distributional_metrics=distributional_metrics,
-                context_groupby_cols={"batch_center", "cell_type"},
             ),
             PerturbationEffectPredictionSuite(
                 metric_labels={"cosine", "mse"},
                 use_distributional_metrics=distributional_metrics,
-                context_groupby_cols={"batch_center", "cell_type"},
-                perturbation_groupby_cols={"inchikey", "concentration"},
             ),
         ],
     )

@@ -39,7 +39,7 @@ class MatchGenesStep(PreprocessingStep):
         self.gene_subset = sorted(list(intersection))
         return self
 
-    def _transform_single(self, data: AnnotatedDataMatrix, gene_id_column: str) -> AnnotatedDataMatrix:
+    def transform_single(self, data: AnnotatedDataMatrix, gene_id_column: str) -> AnnotatedDataMatrix:
         """
         Transform a single data matrix to the gene subset.
         """
@@ -58,8 +58,8 @@ class MatchGenesStep(PreprocessingStep):
         if not self.fitted:
             raise RuntimeError("The gene subset is not fitted. Please call fit() first.")
 
-        ground_truth = self._transform_single(ground_truth, self.ground_truth_gene_id_column)
-        predictions = self._transform_single(predictions, self.predictions_gene_id_column)
+        ground_truth = self.transform_single(ground_truth, self.ground_truth_gene_id_column)
+        predictions = self.transform_single(predictions, self.predictions_gene_id_column)
 
         if len(ground_truth.var) != len(predictions.var):
             raise ValueError("The ground truth and predictions have different numbers of genes.")

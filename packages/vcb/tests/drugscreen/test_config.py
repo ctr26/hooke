@@ -10,14 +10,8 @@ def test_config_serialization(
     tmpdir, mock_drugscreen_dataset, mock_drugscreen_predictions, mock_drugscreen_split_path
 ):
     config = EvaluationConfig(
-        ground_truth=DrugscreenTaskAdapter(
-            dataset=mock_drugscreen_dataset,
-            context_groupby_cols={"batch_center", "cell_type"},
-        ),
-        predictions=DrugscreenTaskAdapter(
-            dataset=mock_drugscreen_predictions,
-            context_groupby_cols={"batch_center", "cell_type"},
-        ),
+        ground_truth=DrugscreenTaskAdapter(dataset=mock_drugscreen_dataset),
+        predictions=DrugscreenTaskAdapter(dataset=mock_drugscreen_predictions),
         split_path=mock_drugscreen_split_path,
         split_index=0,
         use_validation_split=False,
@@ -33,13 +27,10 @@ def test_config_serialization(
             RetrievalSuite(
                 metric_labels={"retrieval_mae", "retrieval_edistance"},
                 use_distributional_metrics=True,
-                context_groupby_cols={"batch_center", "cell_type"},
             ),
             PerturbationEffectPredictionSuite(
                 metric_labels={"cosine", "cosine_delta", "mse", "pearson", "pearson_delta"},
                 use_distributional_metrics=False,
-                context_groupby_cols={"batch_center", "cell_type"},
-                perturbation_groupby_cols={"inchikey", "concentration"},
             ),
         ],
     )
