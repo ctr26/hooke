@@ -30,10 +30,12 @@ class PerturbationEffectPredictionSuite(MetricSuite):
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
 
-        # Groupby context
+        # Groupby context and batch
+        groupby_cols = predictions.batch_groupby_cols + predictions.context_groupby_cols
+
         for batch_context, batch_context_obs, batch_context_predicate in predicate_group_by(
             predictions.dataset.obs,
-            predictions.context_groupby_cols,
+            groupby_cols,
             # NOTE (cwognum): This may seem like the wrong description, but it's actually correct.
             # I place this description here so that it's visible in the top-level progress bar.
             description=f"Computing {self.kind} suite per {predictions.perturbation_groupby_cols}",
