@@ -29,15 +29,13 @@ def tx_evaluate_cli(
     ground_truth_gene_id_column: str | None = "ensembl_gene_id",
     library_size: int | None = None,
     distributional_metrics: bool = True,
-    log1p_transform_predictions: bool = False,
-    rescale_predictions: bool = True,
     use_validation_split: bool = False,
 ):
     """
     Evaluate predictions in Transcriptomics against a ground truth.
 
     Args:
-        predictions_path: Path to the predictions directory.
+        predictions_path: Path to the predictions directory. Predictions should be in log space.
         ground_truth_path: Path to the ground truth directory.
         split_path: Path to the split json file.
         split_idx: Index of the split to evaluate.
@@ -49,12 +47,19 @@ def tx_evaluate_cli(
         ground_truth_gene_id_column: (optional) Column of the ground truth to use for the gene id.
         library_size: (optional) Library size to use for the evaluation (default ground truth median library size).
         distributional_metrics: (optional) Whether to include distributional metrics.
-        log1p_transform_predictions: (optional) Log1p the predictions (default False, assuming this is done).
-        rescale_predictions: (optional) Rescale the predictions to a target library size (default True).
         use_val_split: (optional) Whether to use the validation split instead of the test split (default False).
 
     NOTE (cwognum): For now, this only supports the count space. We don't yet support evaluation in embedding spaces.
     """
+
+    # Parameterization of transformations is dissabled until it is strictly needed
+    # named variables retained for readibility
+    # invert log1p before scaling predictions, i.e. they are in log space
+    predictions_are_in_logspace = True
+    # _do_ scale the library size of predictions to match ground truth or requested value
+    rescale_predictions = True
+    # _do_ log transform ground truth and predictions before final metric calculation
+    evaluate_in_logspace = True
 
     # Load the ground truth.
     ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
@@ -80,11 +85,14 @@ def tx_evaluate_cli(
                     ground_truth_gene_id_column=ground_truth_gene_id_column,
                     predictions_gene_id_column=predictions_gene_id_column,
                 ),
-                InverseLog1pStep(transform_predictions=rescale_predictions, transform_ground_truth=False),
+                InverseLog1pStep(
+                    transform_predictions=predictions_are_in_logspace,
+                    transform_ground_truth=False,
+                ),
                 ScaleCountsStep(library_size=library_size, transform_predictions=rescale_predictions),
                 Log1pStep(
-                    transform_predictions=log1p_transform_predictions or rescale_predictions,
-                    transform_ground_truth=True,
+                    transform_predictions=evaluate_in_logspace,
+                    transform_ground_truth=evaluate_in_logspace,
                 ),
             ]
         ),
