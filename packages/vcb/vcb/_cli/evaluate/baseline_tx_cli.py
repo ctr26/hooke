@@ -121,8 +121,6 @@ def run_baseline_tx_cli(
             predictions_zarr_index_column=None,
             predictions_var_path=predictions_var_path,
             library_size=library_size,
-            log1p_transform_predictions=True,
-            rescale_predictions=True,
             use_validation_split=False,
             distributional_metrics=distributional_metrics,
             predictions_gene_id_column=predictions_gene_id_column,
