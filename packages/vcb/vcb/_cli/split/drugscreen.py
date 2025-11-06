@@ -8,6 +8,7 @@ from sklearn.model_selection import KFold
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.split import Fold, Split
+from vcb._cli.split.utils import log_step
 
 
 def add_disease_model(obs: pl.DataFrame) -> pl.DataFrame:
@@ -40,14 +41,6 @@ def add_compound(obs: pl.DataFrame) -> pl.DataFrame:
             .otherwise(pl.lit(None, dtype=pl.Utf8))
         )
     )
-
-
-def log_step(step: str, count: int) -> None:
-    """
-    Log the summary of the drugscreen split with aligned formatting.
-    """
-    # Format with fixed width for alignment (adjust width as needed)
-    logger.info(f"{step:<35} {count:>8,}")
 
 
 def drugscreen_split_cli(

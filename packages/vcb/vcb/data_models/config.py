@@ -11,13 +11,16 @@ from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
 from vcb.data_models.split import Split
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 from vcb.preprocessing.pipeline import PreprocessingPipeline, TranscriptomicsPreprocessingPipeline
+from vcb.data_models.task.singles import UnseenSingleTaskAdapter
 
 # NOTE (cwognum): Pydantic can't - to the best of my knowledge - automatically infer the subclass on deserialization.
 #  You could, and I have, use something like `BaseClass.__subclasses__()` to get the subclasses, but there is various
 #  edge cases in which this fails. Importantly, you then need to explicitly import all subclasses to ensure they are defined.
 #  If we're doing that anyways, we might as well list them here explicitly.
 
-TASK_ADAPTERS_TYPE = Annotated[Union[DrugscreenTaskAdapter], Field(..., discriminator="kind")]
+TASK_ADAPTERS_TYPE = Annotated[
+    Union[DrugscreenTaskAdapter, UnseenSingleTaskAdapter], Field(..., discriminator="kind")
+]
 
 METRIC_SUITES_TYPE = Annotated[
     Union[PerturbationEffectPredictionSuite, RetrievalSuite], Field(..., discriminator="kind")

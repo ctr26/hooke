@@ -4,6 +4,7 @@ import numpy as np
 import polars as pl
 from loguru import logger
 from pydantic import Field
+from typing import Tuple
 
 from vcb.data_models.task.base import TaskAdapter
 
@@ -106,7 +107,10 @@ class DrugscreenTaskAdapter(TaskAdapter):
 
     kind: Literal["drugscreen"] = "drugscreen"
 
-    perturbation_groupby_cols: list[str] = Field(default_factory=lambda: ["inchikey", "concentration"])
+    perturbation_groupby_cols_types: list[Tuple[str, str]] = Field(
+        default_factory=lambda: [("inchikey", "<U27"), ("concentration", "float")]
+    )
+    perturbation_splitting_col: str = Field(default="inchikey")  # generally we want all doses in same split
     batch_groupby_cols: list[str] = Field(default_factory=lambda: ["batch_center"])
     context_groupby_cols: list[str] = Field(default_factory=lambda: ["plate_disease_model", "cell_type"])
 
@@ -173,10 +177,12 @@ class DrugscreenTaskAdapter(TaskAdapter):
         obs = self.get_all_perturbed_obs().filter(*predictates)
 
         # Get the perturbations and convert to numpy array
-        perturbations = list(obs[["inchikey", "concentration"]].iter_rows())
-        dt = np.dtype([("inchikey", "U27"), ("concentration", float)])
-        perturbations = np.array(perturbations, dtype=dt)
+        sortedcols = sorted(self.perturbation_groupby_cols)
+        sortedtypes = sorted(self.perturbation_groupby_dtype)
+        perturbations = list(obs[sortedcols].iter_rows())
+        dt = np.dtype(sortedtypes)
 
+        perturbations = np.array(perturbations, dtype=dt)
         return perturbations
 
     def get_perturbed_states(self, *predictates: pl.Expr) -> np.ndarray:

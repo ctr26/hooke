@@ -1,10 +1,19 @@
 from abc import ABC, abstractmethod
+from typing import Tuple
 
 import numpy as np
 import polars as pl
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+
+type_map = {
+    "str": str,
+    "float": float,
+    "int": int,
+    "bool": bool,
+    "<U27": "<U27",
+}
 
 
 class TaskAdapter(BaseModel, ABC):
@@ -18,15 +27,43 @@ class TaskAdapter(BaseModel, ABC):
 
     dataset: AnnotatedDataMatrix
 
-    batch_groupby_cols: list[str] = Field(default_factory=list)
-    perturbation_groupby_cols: list[str] = Field(default_factory=list)
-    context_groupby_cols: list[str] = Field(default_factory=list)
+    batch_groupby_cols: list[str] = Field(default_factory=lambda: ["batch_center"])
+    context_groupby_cols: list[str]
+    perturbation_groupby_cols_types: list[Tuple[str, str]]
+    perturbation_splitting_col: str
 
-    @field_validator("batch_groupby_cols", "perturbation_groupby_cols", "context_groupby_cols")
-    def validate_groupby_cols_unique(cls, v: list[str]) -> list[str]:
+    @property
+    def perturbation_length_filter(self) -> pl.Expr:
+        # the return line below will evaluate to True for every row;
+        # the syntax to get there is a demo for a subclass that might want a more precise length filter
+        return pl.col("perturbations").list.len() >= 0
+
+    @property
+    def perturbation_groupby_cols(self) -> list[str]:
+        return [x[0] for x in self.perturbation_groupby_cols_types]
+
+    @property
+    def perturbation_groupby_dtype(self) -> list[Tuple[str, type]]:
+        return [(x[0], type_map[x[1]]) for x in self.perturbation_groupby_cols_types]
+
+    @field_validator("perturbation_groupby_cols_types", mode="after")
+    @classmethod
+    def validate_types_in_typemap(cls, v: list[Tuple[str, str]]) -> list[Tuple[str, str]]:
+        # TODO, this code is never called, figure out why not
+        for _, dtype in v:
+            if dtype not in type_map:
+                raise ValueError(f"Type {dtype} not in type_map")
+        return v
+
+    @field_validator("batch_groupby_cols", "perturbation_groupby_cols_types", "context_groupby_cols")
+    @classmethod
+    def validate_groupby_cols_unique(
+        cls, v: list[str] | list[Tuple[str, str]]
+    ) -> list[str] | list[Tuple[str, str]]:
         """
         Assert the groupby cols are unique.
         """
+        # TODO, this code is never called, figure out why not
         if len(v) != len(set(v)):
             raise ValueError(f"The groupby cols are not unique: {v}")
         return v
