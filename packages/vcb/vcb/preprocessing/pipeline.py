@@ -39,8 +39,7 @@ class PreprocessingPipeline(BaseModel):
     ) -> tuple[AnnotatedDataMatrix, AnnotatedDataMatrix]:
         for step in self.steps:
             step.fit(ground_truth, predictions)
-            ground_truth, predictions = step.transform(ground_truth, predictions)
-        return ground_truth, predictions
+            step.transform(ground_truth, predictions)
 
 
 class TranscriptomicsPreprocessingPipeline(PreprocessingPipeline):
@@ -74,7 +73,7 @@ class TranscriptomicsPreprocessingPipeline(PreprocessingPipeline):
         pr_before = summarize_distribution(predictions.X)
 
         # Apply the transformations
-        ground_truth, predictions = super().transform(ground_truth, predictions)
+        super().transform(ground_truth, predictions)
 
         # We still don't expect negative values
         if ground_truth.X.min() < 0 or predictions.X.min() < 0:
@@ -110,5 +109,3 @@ class TranscriptomicsPreprocessingPipeline(PreprocessingPipeline):
             f"Ground Truth\n{summaries_to_table({'Before': gt_before, 'After': gt_after})}\n\n"
             f"Predictions\n{summaries_to_table({'Before': pr_before, 'After': pr_after})}"
         )
-
-        return ground_truth, predictions

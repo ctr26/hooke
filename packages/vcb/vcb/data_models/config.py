@@ -87,7 +87,7 @@ class EvaluationConfig(BaseModel):
         else:
             split_indices = fold.test + split.base_states
 
-        self.ground_truth.dataset.set_obs_indices(split_indices)
+        self.ground_truth.dataset.filter(obs_indices=split_indices)
 
         gt = self.ground_truth.get_all_perturbed_obs()["obs_id"].to_list()
         p = self.predictions.get_all_perturbed_obs()["obs_id"].to_list()
@@ -105,15 +105,18 @@ class EvaluationConfig(BaseModel):
 
         # Preprocess the ground truth and predictions
         if self.preprocessing_pipeline is not None:
-            self.ground_truth.dataset, self.predictions.dataset = self.preprocessing_pipeline.transform(
+            self.preprocessing_pipeline.transform(
                 ground_truth=self.ground_truth.dataset,
                 predictions=self.predictions.dataset,
             )
 
+        # final task adapter specific preparation
+        self.ground_truth.prepare()
+        self.predictions.prepare()
+
         # Evaluate the predictions
         results = []
         for suite in self.metric_suites:
-            suite.prepare(ground_truth=self.ground_truth, predictions=self.predictions)
             result = suite.evaluate(ground_truth=self.ground_truth, predictions=self.predictions)
             results.append(result)
 

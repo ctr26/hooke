@@ -18,12 +18,8 @@ def test_match_gene_space():
     mock_a.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2", "GENE3", "GENE4"]})
     mock_b.var = pl.DataFrame({"ensembl_gene_id": ["GENE3", "GENE5", "GENE6", "GENE2"]})
 
-    # Track calls to set_var_indices
-    mock_a.set_var_indices = Mock()
-    mock_b.set_var_indices = Mock()
-
     # Call the function
-    result_a, result_b = (
+    (
         MatchGenesStep(
             ground_truth_gene_id_column="ensembl_gene_id",
             predictions_gene_id_column="ensembl_gene_id",
@@ -32,16 +28,12 @@ def test_match_gene_space():
         .transform(mock_a, mock_b)
     )
 
-    # Verify the function returns the same objects
-    assert result_a is mock_a
-    assert result_b is mock_b
-
     # Verify set_var_indices was called with correct indices
     # Expected intersection: ["GENE2", "GENE3"]
     # In genes_a: GENE2 is at index 1, GENE3 is at index 2
     # In genes_b: GENE2 is at index 3, GENE3 is at index 0
-    mock_a.set_var_indices.assert_called_once_with([1, 2])
-    mock_b.set_var_indices.assert_called_once_with([3, 0])
+    mock_a.filter.assert_called_once_with(var_indices=[1, 2])
+    mock_b.filter.assert_called_once_with(var_indices=[3, 0])
 
 
 def test_match_genes_fit_and_transform():
@@ -54,26 +46,20 @@ def test_match_genes_fit_and_transform():
     mock_ground_truth.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2", "GENE3", "GENE4"]})
     mock_predictions.var = pl.DataFrame({"ensembl_gene_id": ["GENE2", "GENE3", "GENE5", "GENE6"]})
 
-    # Track calls to set_var_indices
-    mock_ground_truth.set_var_indices = Mock()
-    mock_predictions.set_var_indices = Mock()
-
     step = MatchGenesStep()
     assert not step.fitted
 
-    fitted_step = step.fit(mock_ground_truth, mock_predictions)
-    assert fitted_step.fitted
-    assert fitted_step.gene_subset == ["GENE2", "GENE3"]
+    step.fit(mock_ground_truth, mock_predictions)
+    assert step.fitted
+    assert step.gene_subset == ["GENE2", "GENE3"]
 
-    result_gt, result_pred = fitted_step.transform(mock_ground_truth, mock_predictions)
-    assert result_gt is mock_ground_truth
-    assert result_pred is mock_predictions
+    step.transform(mock_ground_truth, mock_predictions)
 
     # Verify set_var_indices was called with correct indices
     # GENE2 at index 1, GENE3 at index 2 in ground truth
-    mock_ground_truth.set_var_indices.assert_called_once_with([1, 2])
+    mock_ground_truth.filter.assert_called_once_with(var_indices=[1, 2])
     # GENE2 at index 0, GENE3 at index 1 in predictions
-    mock_predictions.set_var_indices.assert_called_once_with([0, 1])
+    mock_predictions.filter.assert_called_once_with(var_indices=[0, 1])
 
 
 def test_match_genes_different_gene_id_columns():
@@ -86,19 +72,16 @@ def test_match_genes_different_gene_id_columns():
     mock_gt.var = pl.DataFrame({"gene_symbol": ["GENE1", "GENE2", "GENE3"]})
     mock_pred.var = pl.DataFrame({"ensembl_id": ["GENE2", "GENE3", "GENE4"]})
 
-    mock_gt.set_var_indices = Mock()
-    mock_pred.set_var_indices = Mock()
-
     step = MatchGenesStep(ground_truth_gene_id_column="gene_symbol", predictions_gene_id_column="ensembl_id")
 
-    fitted_step = step.fit(mock_gt, mock_pred)
-    assert fitted_step.gene_subset == ["GENE2", "GENE3"]
+    step = step.fit(mock_gt, mock_pred)
+    step.gene_subset == ["GENE2", "GENE3"]
 
-    result_gt, result_pred = fitted_step.transform(mock_gt, mock_pred)
+    step.transform(mock_gt, mock_pred)
     # GENE2 at index 1, GENE3 at index 2 in ground truth
-    mock_gt.set_var_indices.assert_called_once_with([1, 2])
+    mock_gt.filter.assert_called_once_with(var_indices=[1, 2])
     # GENE2 at index 0, GENE3 at index 1 in predictions
-    mock_pred.set_var_indices.assert_called_once_with([0, 1])
+    mock_pred.filter.assert_called_once_with(var_indices=[0, 1])
 
 
 def test_match_genes_no_intersection():
@@ -129,17 +112,14 @@ def test_match_genes_complete_overlap():
     mock_gt.var = pl.DataFrame({"ensembl_gene_id": genes})
     mock_pred.var = pl.DataFrame({"ensembl_gene_id": genes})
 
-    mock_gt.set_var_indices = Mock()
-    mock_pred.set_var_indices = Mock()
-
     step = MatchGenesStep()
-    fitted_step = step.fit(mock_gt, mock_pred)
-    assert fitted_step.gene_subset == genes
+    step.fit(mock_gt, mock_pred)
+    assert step.gene_subset == genes
 
-    result_gt, result_pred = fitted_step.transform(mock_gt, mock_pred)
+    step.transform(mock_gt, mock_pred)
     # All genes should be selected: [0, 1, 2]
-    mock_gt.set_var_indices.assert_called_once_with([0, 1, 2])
-    mock_pred.set_var_indices.assert_called_once_with([0, 1, 2])
+    mock_gt.filter.assert_called_once_with(var_indices=[0, 1, 2])
+    mock_pred.filter.assert_called_once_with(var_indices=[0, 1, 2])
 
 
 def test_match_genes_with_none_values():
@@ -152,19 +132,16 @@ def test_match_genes_with_none_values():
     mock_gt.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", None, "GENE2"]})
     mock_pred.var = pl.DataFrame({"ensembl_gene_id": ["GENE2", "GENE3", None]})
 
-    mock_gt.set_var_indices = Mock()
-    mock_pred.set_var_indices = Mock()
-
     step = MatchGenesStep()
-    fitted_step = step.fit(mock_gt, mock_pred)
+    step.fit(mock_gt, mock_pred)
     # Only GENE2 should be in intersection (None values filtered out)
-    assert fitted_step.gene_subset == ["GENE2"]
+    assert step.gene_subset == ["GENE2"]
 
-    result_gt, result_pred = fitted_step.transform(mock_gt, mock_pred)
+    step.transform(mock_gt, mock_pred)
     # GENE2 at index 2 in ground truth
-    mock_gt.set_var_indices.assert_called_once_with([2])
+    mock_gt.filter.assert_called_once_with(var_indices=[2])
     # GENE2 at index 0 in predictions
-    mock_pred.set_var_indices.assert_called_once_with([0])
+    mock_pred.filter.assert_called_once_with(var_indices=[0])
 
 
 def test_match_genes_not_fitted_error():
@@ -189,14 +166,14 @@ def test_match_genes_different_gene_counts_error():
     mock_pred.var = pl.DataFrame({"ensembl_gene_id": ["GENE2", "GENE3"]})
 
     # Mock set_var_indices to simulate different final gene counts
-    def mock_set_var_indices_gt(indices):
+    def mock_set_var_indices_gt(var_indices):
         mock_gt.var = pl.DataFrame({"ensembl_gene_id": ["GENE2"]})  # 1 gene
 
-    def mock_set_var_indices_pred(indices):
+    def mock_set_var_indices_pred(var_indices):
         mock_pred.var = pl.DataFrame({"ensembl_gene_id": ["GENE2", "GENE3"]})  # 2 genes
 
-    mock_gt.set_var_indices = Mock(side_effect=mock_set_var_indices_gt)
-    mock_pred.set_var_indices = Mock(side_effect=mock_set_var_indices_pred)
+    mock_gt.filter = Mock(side_effect=mock_set_var_indices_gt)
+    mock_pred.filter = Mock(side_effect=mock_set_var_indices_pred)
 
     step = MatchGenesStep()
     fitted_step = step.fit(mock_gt, mock_pred)

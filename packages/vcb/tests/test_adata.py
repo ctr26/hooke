@@ -36,10 +36,10 @@ def anndata():
         yield AnnotatedDataMatrix(obs_path=obs_path, var_path=var_path, features_path=features_path)
 
 
-def test_obs_indices_sync(anndata):
+def test_obs_filter(anndata):
     """Test that X and obs stay in sync when obs_indices change."""
     # Filter to first 3 observations
-    anndata.set_obs_indices(np.array([0, 1, 2]))
+    anndata.filter(obs_indices=np.array([0, 1, 2]))
 
     obs = anndata.obs
     X = anndata.X
@@ -57,10 +57,10 @@ def test_obs_indices_sync(anndata):
     assert np.array_equal(X[2], [2, 3, 4, 5, 6, 7, 8, 9, 10, 11])  # cell_2
 
 
-def test_var_indices_sync(anndata):
-    """Test that X is filtered when var_indices change."""
+def test_var_filter(anndata):
+    """Test that X and var are filtered together"""
     # Filter to first 5 genes
-    anndata.set_var_indices(np.array([0, 1, 2, 3, 4]))
+    anndata.filter(var_indices=np.array([0, 1, 2, 3, 4]))
 
     obs = anndata.obs
     X = anndata.X
@@ -77,10 +77,12 @@ def test_var_indices_sync(anndata):
     assert np.array_equal(X[4], [4, 5, 6, 7, 8])  # cell_4: first 5 genes
 
 
-def test_combined_indices_sync(anndata):
+def test_combined_filter(anndata):
     """Test that both obs and var indices work together."""
-    anndata.set_obs_indices(np.array([0, 2, 4]))  # 3 cells
-    anndata.set_var_indices(np.array([0, 5]))  # 2 genes
+    anndata.filter(
+        obs_indices=np.array([0, 2, 4]),  # 3 cells
+        var_indices=np.array([0, 5]),
+    )  # 2 genes
 
     obs = anndata.obs
     X = anndata.X
@@ -95,37 +97,16 @@ def test_combined_indices_sync(anndata):
     assert np.array_equal(X[2], [4, 9])  # cell_4: genes 0 and 5
 
 
-def test_cache_invalidation(anndata):
-    """Test that cache is invalidated when indices change."""
-    # Populate cache
-    _ = anndata.obs
-    _ = anndata.X
+def test_reject_invalid_shape(anndata):
+    """Test that setters reject invalid anndata shape combos"""
+    with pytest.raises(ValueError):
+        anndata.X = anndata.X[:-1]
 
-    assert anndata._cached_obs is not None
-    assert anndata._cached_features is not None
+    with pytest.raises(ValueError):
+        anndata.X = anndata.X[:, :-2]
 
-    # Change indices
-    anndata.set_obs_indices(np.array([0, 1]))
+    with pytest.raises(ValueError):
+        anndata.var = anndata.var[2:]
 
-    # Cache should be invalidated
-    assert anndata._cached_obs is None
-    assert anndata._cached_features is None
-
-
-def test_obs_indices_sorting(anndata):
-    """Test that obs indices are automatically sorted."""
-    anndata.set_obs_indices(np.array([4, 0, 2]))
-
-    # Should be sorted
-    assert np.array_equal(anndata._obs_indices, np.array([0, 2, 4]))
-
-    # Should filter correctly
-    obs = anndata.obs
-    X = anndata.X
-    assert len(obs) == 3
-    assert obs["cell_id"].to_list() == ["cell_0", "cell_2", "cell_4"]
-
-    # Check that X content matches the sorted order
-    assert np.array_equal(X[0], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])  # cell_0
-    assert np.array_equal(X[1], [2, 3, 4, 5, 6, 7, 8, 9, 10, 11])  # cell_2
-    assert np.array_equal(X[2], [4, 5, 6, 7, 8, 9, 10, 11, 12, 13])  # cell_4
+    with pytest.raises(ValueError):
+        anndata.obs = pl.concat([anndata.obs, anndata.obs])

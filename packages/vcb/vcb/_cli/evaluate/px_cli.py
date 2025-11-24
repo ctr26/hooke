@@ -20,7 +20,7 @@ def px_evaluate_cli(
     save_destination: Path,
     predictions_features_layer: str,
     predictions_zarr_index_column: str,
-    predictions_var_path: Path | None = None,
+    predictions_var_path: Path | None,
     distributional_metrics: bool = True,
     use_validation_split: bool = False,
 ):
@@ -75,7 +75,6 @@ def px_evaluate_cli(
     save_destination.mkdir(parents=True, exist_ok=True)
     results.write_parquet(save_destination / "results.parquet")
     with open(save_destination / "config.json", "w") as f:
-        # TODO (cwognum): This is not a perfect serialization, because we don't persist which dataset subclass was used.
         f.write(config.model_dump_json(indent=4))
 
     # Summarize the results

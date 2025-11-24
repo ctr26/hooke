@@ -57,7 +57,8 @@ def add_compound_perturbation_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
     """
     Add the compound perturbation to the observations, including the inchikey and concentration.
     """
-
+    # make sure ordering of obs is not changed in this function
+    obs = obs.with_row_index("function_tmp_idx")
     # Split into drugscreen queries and non-drugscreen queries
     mask = pl.col("drugscreen_query") & pl.col("perturbations").list.len().eq(2)
     drugscreen_obs = obs.filter(mask)
@@ -95,7 +96,7 @@ def add_compound_perturbation_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
             "Some observations were not drugscreen queries, or did not have two perturbations. They were skipped."
         )
 
-    return result
+    return result.sort("function_tmp_idx").drop("function_tmp_idx")
 
 
 class DrugscreenTaskAdapter(TaskAdapter):
@@ -114,7 +115,6 @@ class DrugscreenTaskAdapter(TaskAdapter):
     batch_groupby_cols: list[str] = Field(default_factory=lambda: ["batch_center"])
     context_groupby_cols: list[str] = Field(default_factory=lambda: ["plate_disease_model", "cell_type"])
 
-    _is_prepared: bool = False
     _filtered_perturbed_obs: pl.DataFrame | None = None
     _filtered_basal_obs: pl.DataFrame | None = None
 
@@ -148,23 +148,20 @@ class DrugscreenTaskAdapter(TaskAdapter):
         """
         Any (costly) operations that need to be done once on the dataset should be done here.
         """
-        if self._is_prepared:
-            return
+        if self.dataset._obs_is_prepared:
+            # temp solution to avoid changes to mutable dataset that can overwrite each other
+            # or otherwise lead to cryptic behavior
+            raise ValueError("can't call prepare on a prepared dataset and be confident in results")
 
         # Check that the disease model is consistent
         check_disease_model_consistency(self.dataset.obs)
-
-        # Since multiple adapter instances can reference the same dataset,
-        # some of the preprocessing here may already have been done, even if _is_prepared is False.
-        # Out of precaution, we reset and recompute.
-        self.dataset._cached_obs = None
 
         obs = self.dataset.obs
         obs = obs.with_row_index("original_index")
         obs = add_compound_perturbation_to_obs(obs)
         self.dataset.obs = obs
 
-        self._is_prepared = True
+        self.dataset._obs_is_prepared = True
         self._filtered_perturbed_obs = None
         self._filtered_basal_obs = None
 

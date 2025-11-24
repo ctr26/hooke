@@ -45,7 +45,7 @@ class MatchGenesStep(PreprocessingStep):
         """
         labels = get_gene_labels(data, gene_id_column)
         indices = [labels.index(label) for label in self.gene_subset]
-        data.set_var_indices(indices)
+        data.filter(var_indices=indices)
         logger.info(f"Matched gene space: From {len(labels)} genes to {len(indices)} genes")
         return data
 
@@ -58,10 +58,8 @@ class MatchGenesStep(PreprocessingStep):
         if not self.fitted:
             raise RuntimeError("The gene subset is not fitted. Please call fit() first.")
 
-        ground_truth = self.transform_single(ground_truth, self.ground_truth_gene_id_column)
-        predictions = self.transform_single(predictions, self.predictions_gene_id_column)
+        self.transform_single(ground_truth, self.ground_truth_gene_id_column)
+        self.transform_single(predictions, self.predictions_gene_id_column)
 
         if len(ground_truth.var) != len(predictions.var):
             raise ValueError("The ground truth and predictions have different numbers of genes.")
-
-        return ground_truth, predictions

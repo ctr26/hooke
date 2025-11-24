@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_v
 
 from vcb.data_models.dataset.metadata import DatasetMetadata
 
+from typing import Any
+
 
 class AnnotatedDataMatrix(BaseModel):
     """
@@ -31,13 +33,34 @@ class AnnotatedDataMatrix(BaseModel):
     features_layer: str | None = None
     zarr_index_column: str | None = None
 
+    # parameterizing mostly for legibility
+    _var_dim: int | None = None
+
+    # flag to throw explicit error on potential double call to prepare in TaskAdapter
+    # that uses AnnotatedDataMatrix dataset
+    _obs_is_prepared: bool = False
+
     _cached_features: np.ndarray | None = PrivateAttr(default=None)
-    _cached_var: pl.DataFrame | None = None
-    _cached_obs: pl.DataFrame | None = None
-    _var_indices: np.ndarray | None = None
-    _obs_indices: np.ndarray | None = None
+    _cached_var: pl.DataFrame | None = PrivateAttr(default=None)
+    _cached_obs: pl.DataFrame | None = PrivateAttr(default=None)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    def model_post_init(self, __context: Any) -> None:
+        """Loads in data from assigned paths."""
+        obs = pl.read_parquet(self.obs_path)
+        var = pl.read_parquet(self.var_path)
+        X = self.load_x()
+        self._var_dim = X.ndim - 1
+
+        # file corresponding to each row in the obs file
+        # the zarr_index_column is necessary as writing is parallized and order not guaranteed for predictions
+        if self.zarr_index_column is not None:
+            obs_indices = obs[self.zarr_index_column].to_numpy()
+            X = X[obs_indices]
+
+        # set obs, var, and x to class instance
+        self.update(obs=obs, var=var, X=X)
 
     @field_validator("var_path", "obs_path", "features_path", "metadata_path")
     def validate_path_exists(cls, v: Path) -> Path:
@@ -77,84 +100,84 @@ class AnnotatedDataMatrix(BaseModel):
 
     @property
     def obs(self) -> pl.DataFrame:
-        if self._cached_obs is None:
-            obs = pl.read_parquet(self.obs_path)
-
-            # If specified, filter down the observations.
-            if self._obs_indices is not None:
-                obs = obs[self._obs_indices]
-
-            self._cached_obs = obs
         return self._cached_obs
 
     @property
     def var(self) -> pl.DataFrame:
-        if self._cached_var is None:
-            var = pl.read_parquet(self.var_path)
-
-            # If specified, filter down the variables.
-            if self._var_indices is not None:
-                var = var[self._var_indices]
-
-            self._cached_var = var
         return self._cached_var
 
     @property
     def X(self) -> zarr.Array:
-        """
-        Returns the features.
-
-        Let's make this more robust once data actually no longer fits in memory.
-        """
-        if self._cached_features is None:
-            logger.info(f"Loading {self.features_path} into memory. This may take a while.")
-
-            # Load the Zarr archive, can be a group or an array
-            X = zarr.open(self.features_path)
-
-            if isinstance(X, zarr.Group):
-                if self.features_layer is None:
-                    raise ValueError(
-                        "features_layer is not set, and the features_path is a Zarr group. "
-                        "Please set features_layer to the name of the array to load the features from."
-                    )
-                X = X[self.features_layer]
-
-            if self.zarr_index_column is not None:
-                # For predictions, we need to explicitly match observations to features.
-                # We do this using the zarr_index_column to reorder the features.
-                # We do not need to worry about the `_obs_indices` here, because `self.obs` is already filtered.
-                obs_indices = self.obs[self.zarr_index_column].to_numpy()
-            elif self._obs_indices is not None:
-                # Otherwise, if `_obs_indices` is set, we use it to filter down the features.
-                obs_indices = self._obs_indices
-            else:
-                # Otherwise, we load all features.
-                obs_indices = slice(None)
-
-            # Load the features from the Zarr file to a NumPy array This assumes all features fit in memory.
-            # This may not always be the case, and defeats the purpose of using Zarr in the first place,
-            # but we'll cross that bridge when we get to it.
-            if self._var_indices is not None:
-                self._cached_features = X.oindex[obs_indices, self._var_indices]
-            else:
-                self._cached_features = X.oindex[obs_indices, :]
-
-        # collapse patch embeddings if present
-        # assumes last two dimensions are the patch and embedding dimensions
-        if len(self._cached_features.shape) > 2:
-            logger.warning(f"Collapsing patch embeddings. Input shape: {self._cached_features.shape}")
-            self._cached_features = self._cached_features.mean(axis=-2)
-
         return self._cached_features
 
     @X.setter
     def X(self, features: np.ndarray) -> None:
-        self._cached_features = features
+        self.update(X=features)
 
     @obs.setter
     def obs(self, obs: pl.DataFrame) -> None:
-        self._cached_obs = obs
+        self.update(obs=obs)
+
+    @var.setter
+    def var(self, var: pl.DataFrame) -> None:
+        self.update(var=var)
+
+    def update(self, obs=None, var=None, X=None) -> None:
+        """
+        primary setter for anndata objects, including dimension match checks
+
+        Args:
+            obs (polars.DataFrame): The new observations, None to keep existing.
+            var (polars.DataFrame): The new variables, None to keep existing.
+            X (np.ndarray): The new features, None to keep existing.
+        """
+        # determine the resulting dimensions if this is executed
+        new_obs_len = obs.shape[0] if obs is not None else self.obs.shape[0]
+        new_var_len = var.shape[0] if var is not None else self.var.shape[0]
+        new_x_shape = X.shape if X is not None else self.X.shape
+
+        # if dimensions are valid, set the new values
+        if len(new_x_shape) - 1 != self._var_dim:
+            raise ValueError(
+                f"update to X would change dimensions from {self._var_dim + 1} to {len(new_x_shape)}"
+            )
+
+        if (new_obs_len, new_var_len) == (new_x_shape[0], new_x_shape[self._var_dim]):
+            if obs is not None:
+                self._cached_obs = obs
+            if var is not None:
+                self._cached_var = var
+            if X is not None:
+                self._cached_features = X
+        else:
+            # else, report dimension mismatch, and hint how to set when changing a dimension
+            raise ValueError(
+                f"invalid shape for anndata: obs = {new_obs_len}, var = {new_var_len}, "
+                f"but (obs, var) from X = {new_x_shape}; "
+                "use `update` method directly to set contingent elements of obs, var, X simultaneously"
+            )
+
+    def filter(self, obs_indices=None, var_indices=None):
+        """filters whole anndata along obs and/or var dimensions"""
+        X = self.X
+
+        if obs_indices is not None:
+            obs = self.obs[obs_indices]
+            X = X[obs_indices]
+        else:
+            obs = None
+
+        if var_indices is not None:
+            var = self.var[var_indices]
+            # var dim is generally the last, only 1 or 2 for foreseeable future
+            if self._var_dim != 1:
+                raise NotImplementedError("X dimensions != 2 are not currently implemented")
+
+            X = X[:, var_indices]
+        else:
+            var = None
+
+        self.update(X=X, obs=obs, var=var)
 
     @computed_field
     @property
@@ -171,26 +194,31 @@ class AnnotatedDataMatrix(BaseModel):
             return None
         return self.metadata.dataset_id
 
-    def invalidate_cache(self) -> None:
-        """
-        Invalidate the cached features and obs.
-        """
-        self._cached_obs = None
-        self._cached_var = None
-        self._cached_features = None
+    def load_x(self):
+        """Reads X features from zarr file, collapsing middle dimension if applicable"""
+        logger.info(f"Loading {self.features_path} into memory. This may take a while.")
 
-    def set_var_indices(self, indices: np.ndarray) -> None:
-        """
-        Mask the features along the var dimension.
-        Also invalidates the cached features, if any.
-        """
-        self._var_indices = np.sort(indices)
-        self.invalidate_cache()
+        # Load the Zarr archive, can be a group or an array
+        X = zarr.open(self.features_path)
 
-    def set_obs_indices(self, indices: np.ndarray) -> None:
-        """
-        Mask the features along the obs dimension.
-        Also invalidates the cached features, if any.
-        """
-        self._obs_indices = np.sort(indices)
-        self.invalidate_cache()
+        if isinstance(X, zarr.Group):
+            if self.features_layer is None:
+                raise ValueError(
+                    "features_layer is not set, and the features_path is a Zarr group. "
+                    "Please set features_layer to the name of the array to load the features from."
+                )
+            X = X[self.features_layer]
+
+        X = X[:]  # actual, slow read in
+
+        # collapse patch embeddings if present
+        # assumes last two dimensions are the patch and embedding dimensions
+        if X.ndim == 3:
+            old_shape = X.shape
+            X = X.mean(axis=-2)
+            logger.warning(f"Collapsing patch embeddings. Input shape: {old_shape}, output shape: {X.shape}")
+
+        elif X.ndim != 2:  # 2 is expected, with no action required, everything else unexpected
+            raise ValueError(f"Unexpected shape {X.shape} does not have length in [2, 3]")
+
+        return X

@@ -74,8 +74,6 @@ class ScaleCountsStep(PreprocessingStep):
 
         # Transform the data
         if self.transform_ground_truth:
-            ground_truth = self._transform_single(ground_truth)
+            self._transform_single(ground_truth)
         if self.transform_predictions:
-            predictions = self._transform_single(predictions)
-
-        return ground_truth, predictions
+            self._transform_single(predictions)

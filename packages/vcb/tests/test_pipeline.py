@@ -1,7 +1,10 @@
-from unittest.mock import Mock
+import pytest
 
 import numpy as np
 import polars as pl
+import tempfile
+import zarr
+from pathlib import Path
 
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.preprocessing.pipeline import PreprocessingPipeline
@@ -10,49 +13,66 @@ from vcb.preprocessing.steps.match_genes import MatchGenesStep
 from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
 
 
-def test_pipeline_transformation_order():
-    """Test that the order of transformations makes sense."""
+@pytest.fixture
+def gt_and_pred():
+    """Create a gt and pred AnnotatedDataMatrices for testing indexing."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+
+        # ground truth
+        obs_path = temp_path / "obs_gt.parquet"
+        var_path = temp_path / "var_gt.parquet"
+        features_path = temp_path / "features_gt.zarr"
+
+        obs_data = pl.DataFrame({"obs_id": [f"obs_{i}" for i in range(2)]})
+        obs_data.write_parquet(obs_path)
+
+        var_data = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2", "GENE3"]})
+        var_data.write_parquet(var_path)
+
+        features = np.array([[30, 70, 10], [60, 140, 10]])
+
+        zarr.save(features_path, features)
+
+        # predictions
+        obs_path_p = temp_path / "obs_p.parquet"
+        var_path_p = temp_path / "var_p.parquet"
+        features_path_p = temp_path / "features_p.zarr"
+
+        obs_data_p = pl.DataFrame({"obs_id": [f"obs_{i}" for i in range(2)]})
+        obs_data_p.write_parquet(obs_path_p)
+
+        var_data_p = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2"]})
+        var_data_p.write_parquet(var_path_p)
+
+        features_p = np.array([[20, 30], [40, 60]])
+        zarr.save(features_path_p, features_p)
+
+        out = (
+            AnnotatedDataMatrix(obs_path=obs_path, var_path=var_path, features_path=features_path),
+            AnnotatedDataMatrix(obs_path=obs_path_p, var_path=var_path_p, features_path=features_path_p),
+        )
+        yield out
+
+
+def test_pipeline_order_can_work(gt_and_pred):
+    """Test that transformation pipeline works when the order of transformations makes sense."""
 
     # Create mock AnnotatedDataMatrix objects with simple, interpretable data
-    mock_gt = Mock(spec=AnnotatedDataMatrix)
-    mock_pred = Mock(spec=AnnotatedDataMatrix)
-
-    mock_gt.X = np.array([[30, 70, 10], [60, 140, 10]])
-    mock_gt.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2", "GENE3"]})
-
-    # Mock set_var_indices to actually filter the data
-    def mock_gt_set_var_indices(indices):
-        mock_gt.X = mock_gt.X[:, indices]
-        mock_gt.var = mock_gt.var[indices]
-
-    mock_gt.set_var_indices = Mock(side_effect=mock_gt_set_var_indices)
-
-    mock_pred.X = np.array([[20, 30], [40, 60]])
-    mock_pred.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2"]})
-
-    # Mock set_var_indices to actually filter the data
-    def mock_pred_set_var_indices(indices):
-        mock_pred.X = mock_pred.X[:, indices]
-        mock_pred.var = mock_pred.var[indices]
-
-    mock_pred.set_var_indices = Mock(side_effect=mock_pred_set_var_indices)
+    mock_gt, mock_pred = gt_and_pred
 
     # Create pipeline with steps in logical order: match genes -> scale -> log1p
     pipeline = PreprocessingPipeline(
         steps=[
             MatchGenesStep(),
-            ScaleCountsStep(transform_ground_truth=True, transform_predictions=True, target_library_size=150),
+            ScaleCountsStep(transform_ground_truth=True, transform_predictions=True, library_size=150),
         ]
     )
 
     # Transform the data
-    result_gt, result_pred = pipeline.transform(mock_gt, mock_pred)
-    assert np.array_equal(result_gt.X, np.array([[45, 105], [45, 105]]))
-    assert np.array_equal(result_pred.X, np.array([[60, 90], [60, 90]]))
-
-    # Verify the pipeline returns the same objects (in-place transformations)
-    assert result_gt is mock_gt
-    assert result_pred is mock_pred
+    pipeline.transform(mock_gt, mock_pred)
+    assert np.array_equal(mock_gt.X, np.array([[45, 105], [45, 105]]))
+    assert np.array_equal(mock_pred.X, np.array([[60, 90], [60, 90]]))
 
 
 def test_pipeline_serialization_deserialization(tmpdir):

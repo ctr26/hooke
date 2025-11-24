@@ -37,26 +37,24 @@ def test_scale_counts_fit_and_transform():
     step = ScaleCountsStep(transform_ground_truth=True, transform_predictions=True)
     assert not step.fitted
 
-    fitted_step = step.fit(mock_ground_truth, mock_predictions)
-    assert fitted_step.fitted
-    assert fitted_step.desired_library_size == 2000
+    step.fit(mock_ground_truth, mock_predictions)
+    assert step.fitted
+    assert step.desired_library_size == 2000
 
-    result_gt, result_pred = fitted_step.transform(mock_ground_truth, mock_predictions)
-    assert result_gt is mock_ground_truth
-    assert result_pred is mock_predictions
+    step.transform(mock_ground_truth, mock_predictions)
 
     # Verify ground truth transformation
     # Original GT sums: [1000, 2000, 3000]
     # After scaling to 2000: [2000, 2000, 2000]
     expected_gt_sums = np.array([2000, 2000, 2000])
-    actual_gt_sums = np.sum(result_gt.X, axis=1)
+    actual_gt_sums = np.sum(mock_ground_truth.X, axis=1)
     np.testing.assert_array_almost_equal(actual_gt_sums, expected_gt_sums)
 
     # Verify predictions transformation
     # Original pred sums: [500, 1500, 2500]
     # After scaling to 2000: [2000, 2000, 2000]
     expected_pred_sums = np.array([2000, 2000, 2000])
-    actual_pred_sums = np.sum(result_pred.X, axis=1)
+    actual_pred_sums = np.sum(mock_predictions.X, axis=1)
     np.testing.assert_array_almost_equal(actual_pred_sums, expected_pred_sums)
 
 
@@ -80,15 +78,14 @@ def test_scale_counts_with_predefined_library_size():
     assert step.fitted
     assert step.desired_library_size == 1000
 
-    fitted_step = step.fit(mock_gt, mock_pred)
-    assert fitted_step is step
-    assert fitted_step.desired_library_size == 1000
+    step.fit(mock_gt, mock_pred)
+    assert step.desired_library_size == 1000
 
-    result_gt, result_pred = fitted_step.transform(mock_gt, mock_pred)
+    step.transform(mock_gt, mock_pred)
 
     expected_sums = np.array([1000, 1000])
-    np.testing.assert_array_almost_equal(np.sum(result_gt.X, axis=1), expected_sums)
-    np.testing.assert_array_almost_equal(np.sum(result_pred.X, axis=1), expected_sums)
+    np.testing.assert_array_almost_equal(np.sum(mock_gt.X, axis=1), expected_sums)
+    np.testing.assert_array_almost_equal(np.sum(mock_pred.X, axis=1), expected_sums)
 
 
 def test_scale_counts_transform_flags():
@@ -103,10 +100,10 @@ def test_scale_counts_transform_flags():
     mock_pred.X = test_data.copy()
 
     step = ScaleCountsStep(library_size=1000, transform_ground_truth=True, transform_predictions=False)
-    result_gt, result_pred = step.transform(mock_gt, mock_pred)
+    step.transform(mock_gt, mock_pred)
 
-    assert np.sum(result_gt.X) == 1000
-    assert np.sum(result_pred.X) == 600
+    assert np.sum(mock_gt.X) == 1000
+    assert np.sum(mock_pred.X) == 600
 
 
 def test_scale_counts_validation():

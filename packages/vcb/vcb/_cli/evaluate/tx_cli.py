@@ -115,7 +115,6 @@ def tx_evaluate_cli(
     save_destination.mkdir(parents=True, exist_ok=True)
     results.write_parquet(save_destination / "results.parquet")
     with open(save_destination / "config.json", "w") as f:
-        # TODO (cwognum): This is not a perfect serialization, because we don't persist which dataset subclass was used.
         f.write(config.model_dump_json(indent=4))
 
     # Summarize the results

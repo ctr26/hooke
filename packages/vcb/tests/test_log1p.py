@@ -21,15 +21,11 @@ def test_log1p_transform():
 
     step = Log1pStep(transform_ground_truth=True, transform_predictions=True)
 
-    result_gt, result_pred = step.transform(mock_ground_truth, mock_predictions)
-
-    # Verify the same objects are returned
-    assert result_gt is mock_ground_truth
-    assert result_pred is mock_predictions
+    step.transform(mock_ground_truth, mock_predictions)
 
     # Verify log1p transformation was applied
-    np.testing.assert_array_almost_equal(result_gt.X, np.log1p(test_data_gt))
-    np.testing.assert_array_almost_equal(result_pred.X, np.log1p(test_data_pred))
+    np.testing.assert_array_almost_equal(mock_ground_truth.X, np.log1p(test_data_gt))
+    np.testing.assert_array_almost_equal(mock_predictions.X, np.log1p(test_data_pred))
 
 
 def test_log1p_transform_flags():
@@ -45,11 +41,11 @@ def test_log1p_transform_flags():
 
     # Only transform ground truth
     step = Log1pStep(transform_ground_truth=True, transform_predictions=False)
-    result_gt, result_pred = step.transform(mock_gt, mock_pred)
+    step.transform(mock_gt, mock_pred)
 
     # Ground truth should be transformed, predictions should remain unchanged
-    np.testing.assert_array_almost_equal(result_gt.X, np.log1p(test_data))
-    np.testing.assert_array_equal(result_pred.X, test_data)
+    np.testing.assert_array_almost_equal(mock_gt.X, np.log1p(test_data))
+    np.testing.assert_array_equal(mock_pred.X, test_data)
 
 
 def test_inverse_log1p_transform():
@@ -67,18 +63,14 @@ def test_inverse_log1p_transform():
 
     step = InverseLog1pStep(transform_ground_truth=True, transform_predictions=True)
 
-    result_gt, result_pred = step.transform(mock_ground_truth, mock_predictions)
-
-    # Verify the same objects are returned
-    assert result_gt is mock_ground_truth
-    assert result_pred is mock_predictions
+    step.transform(mock_ground_truth, mock_predictions)
 
     # Verify inverse log1p transformation was applied
     expected_gt = np.exp(test_data_gt) - 1
     expected_pred = np.exp(test_data_pred) - 1
 
-    np.testing.assert_array_almost_equal(result_gt.X, expected_gt)
-    np.testing.assert_array_almost_equal(result_pred.X, expected_pred)
+    np.testing.assert_array_almost_equal(mock_ground_truth.X, expected_gt)
+    np.testing.assert_array_almost_equal(mock_predictions.X, expected_pred)
 
 
 def test_inverse_log1p_transform_flags():
@@ -94,11 +86,11 @@ def test_inverse_log1p_transform_flags():
 
     # Only transform predictions (default behavior)
     step = InverseLog1pStep(transform_ground_truth=False, transform_predictions=True)
-    result_gt, result_pred = step.transform(mock_gt, mock_pred)
+    step.transform(mock_gt, mock_pred)
 
     # Ground truth should remain unchanged, predictions should be transformed
-    np.testing.assert_array_equal(result_gt.X, test_data)
-    np.testing.assert_array_almost_equal(result_pred.X, np.exp(test_data) - 1)
+    np.testing.assert_array_equal(mock_gt.X, test_data)
+    np.testing.assert_array_almost_equal(mock_pred.X, np.exp(test_data) - 1)
 
 
 def test_log1p_inverse_roundtrip():
@@ -114,12 +106,15 @@ def test_log1p_inverse_roundtrip():
 
     # Apply log1p transformation
     log1p_step = Log1pStep(transform_ground_truth=True, transform_predictions=True)
-    result_gt, result_pred = log1p_step.transform(mock_gt, mock_pred)
+    log1p_step.transform(mock_gt, mock_pred)
+    # should be different from the original data here
+    assert not np.allclose(mock_gt.X, original_data)
+    assert not np.allclose(mock_pred.X, original_data)
 
     # Apply inverse log1p transformation
     inverse_step = InverseLog1pStep(transform_ground_truth=True, transform_predictions=True)
-    final_gt, final_pred = inverse_step.transform(result_gt, result_pred)
+    inverse_step.transform(mock_gt, mock_pred)
 
     # Should be close to original data (within numerical precision)
-    np.testing.assert_array_almost_equal(final_gt.X, original_data)
-    np.testing.assert_array_almost_equal(final_pred.X, original_data)
+    np.testing.assert_array_almost_equal(mock_gt.X, original_data)
+    np.testing.assert_array_almost_equal(mock_pred.X, original_data)

@@ -22,10 +22,6 @@ class MetricSuite(BaseModel, ABC):
     def metrics(self) -> dict[str, Callable]:
         return {metric: METRICS[metric] for metric in self.metric_labels}
 
-    def prepare(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> None:
-        ground_truth.prepare()
-        predictions.prepare()
-
     @abstractmethod
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         pass

@@ -66,7 +66,6 @@ class UnseenSingleTaskAdapter(TaskAdapter):
         self.dataset._cached_obs = None
 
         obs = self.dataset.obs
-        obs = obs.with_row_index("original_index")
         # assert single perts only
         if not obs.filter(pl.col("perturbations").list.len().eq(1)).shape[0] == obs.shape[0]:
             raise ValueError("Only single genetic perturbations are supported")
