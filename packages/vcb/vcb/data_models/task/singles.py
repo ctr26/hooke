@@ -6,9 +6,9 @@ from typing import Literal, Tuple
 from vcb.data_models.task.base import TaskAdapter
 
 
-class UnseenSingleTaskAdapter(TaskAdapter):
+class SinglesTaskAdapter(TaskAdapter):
     """
-    A dataset for unseen perturbations.
+    A dataset for single perturbations.
 
     Args:
         perturbation_groupby_cols_types: The columns to group by for the perturbations.
@@ -30,7 +30,6 @@ class UnseenSingleTaskAdapter(TaskAdapter):
     context_groupby_cols: list[str] = Field(default_factory=lambda: ["cell_line"])
     perturbation_splitting_col: str = Field(default="ensembl_gene_id")
 
-    _is_prepared: bool = False
     _filtered_perturbed_obs: pl.DataFrame | None = None
     _filtered_basal_obs: pl.DataFrame | None = None
 
@@ -56,16 +55,17 @@ class UnseenSingleTaskAdapter(TaskAdapter):
         """
         Any (costly) operations that need to be done once on the dataset should be done here.
         """
-        if self._is_prepared:
-            return
+        if self.dataset._obs_is_prepared:
+            # temp solution to avoid changes to mutable dataset that can overwrite each other
+            # or otherwise lead to cryptic behavior
+            raise ValueError("can't call prepare on a prepared dataset and be confident in results")
 
         # Since multiple adapter instances can reference the same dataset,
         # some of the preprocessing here may already have been done, even if _is_prepared is False.
         # Out of precaution, we reset and recompute.
 
-        self.dataset._cached_obs = None
-
         obs = self.dataset.obs
+        obs = obs.with_row_index("original_index")
         # assert single perts only
         if not obs.filter(pl.col("perturbations").list.len().eq(1)).shape[0] == obs.shape[0]:
             raise ValueError("Only single genetic perturbations are supported")
@@ -76,7 +76,7 @@ class UnseenSingleTaskAdapter(TaskAdapter):
         )
         self.dataset.obs = obs
 
-        self._is_prepared = True
+        self.dataset._obs_is_prepared = True
         self._filtered_perturbed_obs = None
         self._filtered_basal_obs = None
 

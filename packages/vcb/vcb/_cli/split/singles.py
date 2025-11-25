@@ -8,7 +8,7 @@ from sklearn.model_selection import KFold
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.split import Fold, Split
-from vcb.data_models.task.singles import UnseenSingleTaskAdapter
+from vcb.data_models.task.singles import SinglesTaskAdapter
 from vcb._cli.split.utils import log_step, POS_CONTROL_FILTER
 
 
@@ -28,7 +28,7 @@ def singles_split_cli(
     # Load the dataset
     dataset = AnnotatedDataMatrix(**DatasetDirectory(root=dataset_dir).model_dump())
 
-    task_adapter = UnseenSingleTaskAdapter(dataset=dataset)
+    task_adapter = SinglesTaskAdapter(dataset=dataset)
     # Preprocess the observations
     task_adapter.prepare()
     original = task_adapter.dataset.obs

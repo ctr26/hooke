@@ -4,19 +4,17 @@ from vcb._cli.evaluate.baseline_px_cli import run_baseline_px_cli
 from vcb._cli.evaluate.baseline_tx_cli import run_baseline_tx_cli
 from vcb._cli.evaluate.px_cli import px_evaluate_cli
 from vcb._cli.evaluate.tx_cli import tx_evaluate_cli
-from vcb._cli.evaluate.arc import arc_evaluate_cli
 from vcb._cli.split.drugscreen import drugscreen_split_cli
 from vcb._cli.split.singles import singles_split_cli
 
 # CLI entrypoint
-app = typer.Typer(pretty_exceptions_enable=False)
-pretty_exceptions_enable = True
+pretty_exceptions_enable = False
+app = typer.Typer(pretty_exceptions_enable=pretty_exceptions_enable)
 
 # Subapp: predictions
 predictions_app = typer.Typer(pretty_exceptions_enable=pretty_exceptions_enable)
 predictions_app.command("tx")(tx_evaluate_cli)
 predictions_app.command("px")(px_evaluate_cli)
-predictions_app.command("arc")(arc_evaluate_cli)
 
 # Subapp: baselines
 baseline_app = typer.Typer(pretty_exceptions_enable=pretty_exceptions_enable)

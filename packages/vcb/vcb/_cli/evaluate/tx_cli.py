@@ -2,14 +2,17 @@ from pathlib import Path
 
 import polars as pl
 from loguru import logger
+from pydantic import TypeAdapter
 
-from vcb.data_models.config import EvaluationConfig
+import typer
+from typing_extensions import Annotated
+
+from vcb.data_models.config import EvaluationConfig, TASK_ADAPTERS_TYPE
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
-from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 from vcb.preprocessing.pipeline import TranscriptomicsPreprocessingPipeline
 from vcb.preprocessing.steps.log1p import InverseLog1pStep, Log1pStep
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
@@ -17,19 +20,49 @@ from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
 
 
 def tx_evaluate_cli(
-    predictions_path: Path,
-    ground_truth_path: Path,
-    split_path: Path,
-    split_idx: int,
-    save_destination: Path,
-    predictions_features_layer: str,
-    predictions_zarr_index_column: str,
-    predictions_var_path: Path,
-    predictions_gene_id_column: str | None = "ensembl_gene_id",
-    ground_truth_gene_id_column: str | None = "ensembl_gene_id",
-    library_size: int | None = None,
-    distributional_metrics: bool = True,
-    use_validation_split: bool = False,
+    predictions_path: Annotated[
+        Path, typer.Option(..., "--predictions-path", "-p", help="path to the predictions directory")
+    ],
+    ground_truth_path: Annotated[
+        Path, typer.Option(..., "--ground-truth-path", "-t", help="path to the ground truth directory")
+    ],
+    split_path: Annotated[Path, typer.Option(..., "--split-path", "-s", help="path to the split json file")],
+    save_destination: Annotated[
+        Path, typer.Option(..., "--save-destination", "-o", help="path to where results should be saved")
+    ],
+    predictions_var_path: Annotated[
+        Path,
+        typer.Option(..., "--predictions-var-path", "-v", help="path to the var file for the predictions"),
+    ],
+    predictions_zarr_index_column: Annotated[
+        str,
+        typer.Option(
+            help="column of the predictions that corresponds to the features/predictions zarr index"
+        ),
+    ] = "zarr_index_generated_raw_counts",
+    task_adapter: Annotated[str, typer.Option(help="task adapter subclass, in snake case")] = "drugscreen",
+    predictions_features_layer: Annotated[
+        str, typer.Option(help="layer of the features in the zarr file to use for the predictions")
+    ] = None,
+    split_idx: Annotated[int, typer.Option(help="index of the split to evaluate")] = 0,
+    predictions_gene_id_column: Annotated[
+        str, typer.Option(help="column of the predictions to use for the ensembl gene id")
+    ] = "ensembl_gene_id",
+    ground_truth_gene_id_column: Annotated[
+        str, typer.Option(help="column of the ground truth to use for the ensembl gene id")
+    ] = "ensembl_gene_id",
+    library_size: Annotated[
+        int, typer.Option(help="library size to use for the evaluation (default ground truth median)")
+    ] = None,
+    distributional_metrics: Annotated[
+        bool, typer.Option(help="whether to include distributional metrics (exclude to speed up evaluation)")
+    ] = True,
+    use_validation_split: Annotated[
+        bool,
+        typer.Option(
+            help="whether to use the validation split instead of the test split (use to compare evaluation and fine tuning 1:1)"
+        ),
+    ] = False,
 ):
     """
     Evaluate predictions in Transcriptomics against a ground truth.
@@ -38,11 +71,12 @@ def tx_evaluate_cli(
         predictions_path: Path to the predictions directory. Predictions should be in log space.
         ground_truth_path: Path to the ground truth directory.
         split_path: Path to the split json file.
-        split_idx: Index of the split to evaluate.
         save_destination: Path to where results should be saved.
-        predictions_features_layer: Layer of the features to use for the predictions.
-        predictions_zarr_index_column: Column of the predictions to use for the zarr index.
         predictions_var_path: Path to the var file for the predictions.
+        predictions_zarr_index_column: Column of the predictions to use for the zarr index.
+        task_adapter: Task adapter subclass, in snake case (e.g. "drugscreen", "singles").
+        predictions_features_layer: Layer of the features to use for the predictions.
+        split_idx: Index of the split to evaluate.
         predictions_gene_id_column: (optional) Column of the predictions to use for the gene id.
         ground_truth_gene_id_column: (optional) Column of the ground truth to use for the gene id.
         library_size: (optional) Library size to use for the evaluation (default ground truth median library size).
@@ -73,9 +107,12 @@ def tx_evaluate_cli(
         zarr_index_column=predictions_zarr_index_column,
     )
 
+    # TaskAdapterClass = key_to_task_adapter_class(task_adapter)
+    type_adapter = TypeAdapter(TASK_ADAPTERS_TYPE)
+
     config = EvaluationConfig(
-        ground_truth=DrugscreenTaskAdapter(dataset=ground_truth),
-        predictions=DrugscreenTaskAdapter(dataset=predictions),
+        ground_truth=type_adapter.validate_python({"kind": task_adapter, "dataset": ground_truth}),
+        predictions=type_adapter.validate_python({"kind": task_adapter, "dataset": predictions}),
         split_path=split_path,
         split_index=split_idx,
         use_validation_split=use_validation_split,
