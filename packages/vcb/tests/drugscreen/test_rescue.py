@@ -2,6 +2,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from vcb.data_models.task.drugscreen import add_compound_perturbation_to_obs
 from vcb.metrics.drugscreen.prometheus import embed_in_prometheus_space
 from vcb.metrics.drugscreen.sampling import (
     compute_glyph_sample_size,
@@ -104,7 +105,7 @@ def test_compute_glyph_sample_size(replicate_counts, expected_mode):
             "perturbations": perturbations,
         }
     )
-
+    obs = add_compound_perturbation_to_obs(obs)
     result = compute_glyph_sample_size(obs)
     assert result == expected_mode
     assert isinstance(result, int)

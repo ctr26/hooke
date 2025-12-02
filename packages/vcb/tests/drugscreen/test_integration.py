@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import zarr
 
-from tests.utils import assert_perfect_performance, assert_imperfect_performance
+from tests.utils import assert_imperfect_performance, assert_perfect_performance
 from vcb._cli.evaluate.px_cli import px_evaluate_cli
 from vcb._cli.evaluate.tx_cli import tx_evaluate_cli
 
@@ -32,7 +32,7 @@ def test_evaluate_tx_cli(
     assert_perfect_performance(
         results,
         correlation_metrics=["cosine", "pearson", "pearson_delta", "cosine_delta"],
-        retrieval_metrics=["retrieval_mae", "retrieval_mae_delta", "retrieval_edistance"],
+        retrieval_metrics=["retrieval_mae", "retrieval_edistance"],
         error_metrics=["mse"],
     )
 
@@ -87,7 +87,7 @@ def test_rescale_tx_cli(
     assert_perfect_performance(
         results,
         correlation_metrics=["cosine", "pearson", "pearson_delta", "cosine_delta"],
-        retrieval_metrics=["retrieval_mae", "retrieval_mae_delta", "retrieval_edistance"],
+        retrieval_metrics=["retrieval_mae", "retrieval_edistance"],
         error_metrics=["mse"],
     )
 

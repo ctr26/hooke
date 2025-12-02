@@ -3,7 +3,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-from loguru import logger
+from tqdm import tqdm
 
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
@@ -32,20 +32,33 @@ def rescue_screen_analysis(
     Given drugscreen data, scores the ability of a compound to revert a disease state to a healthy state.
     """
 
-    data = SynchronizedDataset(obs=data.obs, X=data.X)
+    data = SynchronizedDataset(obs=data.obs.clone(), X=data.X.copy())
 
     # Step 0: We do the analysis per experiment.
-    for (experiment,), experiment_data in data.group_by("experiment_label"):
-        logger.info(f"Using experiment: {experiment}. Selected {len(experiment_data.obs)} observations.")
-
+    for (experiment,), experiment_data in tqdm(
+        data.group_by("experiment_label"),
+        desc="Performing rescue screen analysis per experiment",
+        total=data.obs["experiment_label"].n_unique(),
+        leave=False,
+    ):
         # Step 1: Determine the glyph sample size
         glyph_sample_size = compute_glyph_sample_size(experiment_data.obs)
 
         # Step 2: Remove outliers from the control and disease model.
         control = experiment_data.filter(pl.col("is_negative_control"))
+        if len(control) == 0:
+            raise RuntimeError(
+                f"No control data found for experiment {experiment}. "
+                "Did you include the negative controls as part of the predictions?"
+            )
         control.filter(isolation_outlier_mask(control.X))
 
         disease_model = experiment_data.filter(pl.col("is_base_state"))
+        if len(disease_model) == 0:
+            raise RuntimeError(
+                f"No disease model data found for experiment {experiment}. "
+                "Did you include the base states as part of the predictions?"
+            )
         disease_model.filter(isolation_outlier_mask(disease_model.X))
 
         # Step 3: Data transformation using PCA Whitening
@@ -62,8 +75,6 @@ def rescue_screen_analysis(
 
         control.X = embed_in_prometheus_space(control.X, control_center, disease_model_center)
         disease_model.X = embed_in_prometheus_space(disease_model.X, control_center, disease_model_center)
-
-        drugscreen.obs = add_compound_perturbation_to_obs(drugscreen.obs)
         drugscreen.X = embed_in_prometheus_space(drugscreen.X, control_center, disease_model_center)
 
         # Step 5: Aggregate treatment data
@@ -156,4 +167,5 @@ if __name__ == "__main__":
     #   Especially the compounds `REC-0064744` & `REC-0001788` are interesting.
     path = "/rxrx/data/valence/internal_benchmarking/context_vcds1/dart_example__v1_0"
     dataset = AnnotatedDataMatrix(**DatasetDirectory(root=path).model_dump())
+    dataset.obs = add_compound_perturbation_to_obs(dataset.obs)
     next(rescue_screen_analysis(dataset, plot_destination=Path("."), plot_hit_threshold=0.75))

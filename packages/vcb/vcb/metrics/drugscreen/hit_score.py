@@ -17,7 +17,6 @@ def compute_hit_scores(
     The precise logic behind the below mathematics seems to be lost to history, but it will create these rectangles
     with rounded corners, centered around the origin.
     """
-
     projection = treatment_data[:, 0]
     rejection = treatment_data[:, 1]
 

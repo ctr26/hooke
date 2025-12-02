@@ -34,9 +34,7 @@ class PreprocessingPipeline(BaseModel):
         ]
     ]
 
-    def transform(
-        self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix
-    ) -> tuple[AnnotatedDataMatrix, AnnotatedDataMatrix]:
+    def transform(self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix):
         for step in self.steps:
             step.fit(ground_truth, predictions)
             step.transform(ground_truth, predictions)
@@ -52,9 +50,7 @@ class TranscriptomicsPreprocessingPipeline(PreprocessingPipeline):
 
     kind: Literal["transcriptomics"] = "transcriptomics"
 
-    def transform(
-        self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix
-    ) -> tuple[AnnotatedDataMatrix, AnnotatedDataMatrix]:
+    def transform(self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix):
         # for the ground truth, because we expect raw count data, we will flag non-integers; or a lack of notable skew
         # for skew it's an imprecise science, given that datasets vary _a lot_ by sequencing type and specialization of cell type
         if not integer_only(ground_truth.X):

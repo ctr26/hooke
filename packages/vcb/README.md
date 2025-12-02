@@ -50,8 +50,6 @@ classDiagram
         + prepare(ground_truth, predictions)
         + evaluate(ground_truth, predictions)
     }
-    class Metric
-    class MetricInfo
     class TaskAdapter {
         <<abstract>>
         dataset : AnnotatedDataMatrix
@@ -96,8 +94,6 @@ classDiagram
     EvaluationConfig --> MetricSuite
     EvaluationConfig --> PreprocessingPipeline
     
-    MetricSuite --> Metric
-    Metric --> MetricInfo 
     Split --> Fold
     PreprocessingPipeline  --> PreprocessingStep
     TaskAdapter --> AnnotatedDataMatrix    
@@ -107,7 +103,7 @@ The above overview presents the main classes.
 
 - To add a new task, implement a new `TaskAdapter`.
 - To add a new preprocessing step, implement a new `PreprocessingStep`.
-- To add a new metric, add an entry to `vcb.metrics.METRICS`.
+- To add a new metric, add an entry to the relevant metric suite or implement a new suite.
 - To add a new baseline, implement a `BaseBaseline` and add an entry to `vcb.baselines.BASELINE`.
 
 To run a new experiment with existing pieces, define a new `EvaluationConfig`.

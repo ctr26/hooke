@@ -3,7 +3,6 @@ import polars as pl
 from loguru import logger
 from sklearn.utils.extmath import _approximate_mode
 
-from vcb.data_models.task.drugscreen import add_compound_perturbation_to_obs
 from vcb.metrics.drugscreen.utils import SynchronizedDataset
 
 
@@ -21,7 +20,6 @@ def compute_glyph_sample_size(obs: pl.DataFrame) -> int:
     comes into play when there are multiple group sizes of exactly the same size.
     """
     obs = obs.filter(pl.col("drugscreen_query"))
-    obs = add_compound_perturbation_to_obs(obs)
 
     # NOTE (alisandra): I'm not 100% on if the grouping should be by "experiment_label" or "plate_disease_model"...
     #   I will have to dig in more to exactly how they're designing things.

@@ -2,16 +2,17 @@ import datetime
 import subprocess
 from pathlib import Path
 from typing import Annotated, List, Union
+
 import polars as pl
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
+from vcb.data_models.metrics.suites.phenorescue import PhenorescueSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
 from vcb.data_models.split import Split
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
-from vcb.preprocessing.pipeline import PreprocessingPipeline, TranscriptomicsPreprocessingPipeline
 from vcb.data_models.task.singles import SinglesTaskAdapter
-
+from vcb.preprocessing.pipeline import PreprocessingPipeline, TranscriptomicsPreprocessingPipeline
 
 # NOTE (cwognum): Pydantic can't - to the best of my knowledge - automatically infer the subclass on deserialization.
 #  You could, and I have, use something like `BaseClass.__subclasses__()` to get the subclasses, but there is various
@@ -22,7 +23,8 @@ TASK_ADAPTERS_TYPE = Annotated[
 ]
 
 METRIC_SUITES_TYPE = Annotated[
-    Union[PerturbationEffectPredictionSuite, RetrievalSuite], Field(..., discriminator="kind")
+    Union[PerturbationEffectPredictionSuite, RetrievalSuite, PhenorescueSuite],
+    Field(..., discriminator="kind"),
 ]
 
 PREPROCESSING_PIPELINE_TYPE = Annotated[
@@ -81,10 +83,11 @@ class EvaluationConfig(BaseModel):
         split = Split.from_json(self.split_path)
         fold = split.folds[self.split_index]
 
+        split_indices = split.base_states + split.controls
         if self.use_validation_split:
-            split_indices = fold.validation + split.base_states
+            split_indices += fold.validation
         else:
-            split_indices = fold.test + split.base_states
+            split_indices += fold.test
 
         self.ground_truth.dataset.filter(obs_indices=split_indices)
 

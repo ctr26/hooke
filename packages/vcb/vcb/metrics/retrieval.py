@@ -43,23 +43,12 @@ def calculate_mae_retrieval(
     p_true: np.ndarray,
     p_pred: np.ndarray,
     y_base: np.ndarray | None = None,
-    use_deltas: bool = False,
 ) -> tuple[float, dict]:
     # Get the groups to compare
     unique_groups = np.intersect1d(np.unique(p_true), np.unique(p_pred))
 
     group_means_pred = {}
     group_means_truth = {}
-
-    if use_deltas:
-        # TODO (cwognum): Since we subtract a constant vector, computing retrieval with or without deltas should be the same.
-        #   This is not what we want. We need to change how we compute the deltas here (i.e. how do we pair base and perturbed samples?)
-        y_base_mean = np.mean(y_base, axis=0)
-        samples_true = y_true - y_base_mean
-        samples_pred = y_pred - y_base_mean
-    else:
-        samples_true = y_true
-        samples_pred = y_pred
 
     for group in unique_groups:
         # Get mask for this group
@@ -70,10 +59,10 @@ def calculate_mae_retrieval(
         group_key = tuple(group)
 
         # Compute mean sample for each group
-        pred_samples = samples_pred[pred_mask]
+        pred_samples = y_pred[pred_mask]
         group_means_pred[group_key] = np.mean(pred_samples, axis=0)
 
-        truth_samples = samples_true[truth_mask]
+        truth_samples = y_true[truth_mask]
         group_means_truth[group_key] = np.mean(truth_samples, axis=0)
 
     # Fully vectorized computation of similarity matrix
@@ -85,7 +74,7 @@ def calculate_mae_retrieval(
     truth_expanded = truth_samples_matrix[np.newaxis, :, :]
 
     distances = np.mean(np.abs(pred_expanded - truth_expanded), axis=2)
-    stats = calculate_grouping_stats(samples_true, p_true, unique_groups)
+    stats = calculate_grouping_stats(y_true, p_true, unique_groups)
     return from_distances_to_retrieval_score(distances), stats
 
 

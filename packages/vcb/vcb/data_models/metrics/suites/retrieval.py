@@ -1,11 +1,20 @@
-from typing import Literal
+from typing import ClassVar, Literal
 
 import polars as pl
-from pydantic import field_validator
 
+from vcb.data_models.metrics.metric_info import MinimalMetricInfo
 from vcb.data_models.metrics.suite import MetricSuite
 from vcb.data_models.task.base import TaskAdapter
+from vcb.metrics.retrieval import calculate_edistance_retrieval, calculate_mae_retrieval
 from vcb.utils import predicate_group_by
+
+
+class RetrievalMetricInfo(MinimalMetricInfo):
+    """
+    Retrieval metric metadata.
+    """
+
+    is_distributional: bool = False
 
 
 class RetrievalSuite(MetricSuite):
@@ -15,17 +24,12 @@ class RetrievalSuite(MetricSuite):
 
     kind: Literal["retrieval"] = "retrieval"
 
-    @field_validator("metric_labels")
-    @classmethod
-    def validate_metrics_allowlist(cls, v: set[str]) -> set[str]:
-        """
-        Assert all metrics are in the metric_labels.
-        """
-        allowlist = ["retrieval_mae", "retrieval_mae_delta", "retrieval_edistance"]
-        for metric in v:
-            if metric not in allowlist:
-                raise ValueError(f"Metric {metric} is not supported for retrieval tasks")
-        return v
+    use_distributional_metrics: bool = True
+
+    _all_supported_metrics: ClassVar[dict[str, RetrievalMetricInfo]] = {
+        "retrieval_mae": RetrievalMetricInfo(fn=calculate_mae_retrieval),
+        "retrieval_edistance": RetrievalMetricInfo(fn=calculate_edistance_retrieval, is_distributional=True),
+    }
 
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
@@ -48,6 +52,7 @@ class RetrievalSuite(MetricSuite):
             for label, metric in self.metrics.items():
                 if metric.is_distributional and not self.use_distributional_metrics:
                     continue
+
                 score, supp = metric.fn(
                     y_pred=y_pred,
                     y_true=y_true,

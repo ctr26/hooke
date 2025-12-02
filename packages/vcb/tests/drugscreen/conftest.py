@@ -14,10 +14,51 @@ from vcb.data_models.dataset.predictions import PredictionPaths
 from vcb.data_models.split import Fold, Split
 
 
+def _get_mocked_features(arr: zarr.Array, compounds: list[str], n_control: int, n_disease: int):
+    rng = np.random.RandomState(0)
+    features = []
+    for _ in compounds:
+        features.append(rng.normal(size=128, loc=0.5, scale=0.1))
+    for _ in range(n_control):
+        features.append(rng.normal(size=128, loc=0.1, scale=0.1))
+    for _ in range(n_disease):
+        features.append(rng.normal(size=128, loc=0.9, scale=0.1))
+    arr[:] = np.vstack(features)
+    return arr
+
+
+def _get_mocked_obs(compounds: list[str], n_control: int, n_disease: int):
+    n_drugscreen = len(compounds)
+    n = n_drugscreen + n_control + n_disease
+
+    perturbations = []
+    for compound in compounds:
+        perturbations.append(mock_drugscreen_compound_perturbation(compound))
+    for _ in range(n_control):
+        perturbations.append([])
+    for _ in range(n_disease):
+        perturbations.append(mock_drugscreen_genetic_perturbation())
+
+    obs = pl.DataFrame(
+        {
+            "perturbations": perturbations,
+            "obs_id": list(range(n)),
+            "batch_center": ["plate_1"] * n,
+            "plate_disease_model": ["ENSG000000000000000000"] * n,
+            "is_base_state": [False] * (n_drugscreen + n_control) + [True] * n_disease,
+            "is_negative_control": [False] * n_drugscreen + [True] * n_control + [False] * n_disease,
+            "drugscreen_query": [True] * n_drugscreen + [False] * (n_control + n_disease),
+            "cell_type": ["HUVEC"] * n,
+            "experiment_label": ["exp1"] * n,
+        }
+    )
+    return obs
+
+
 @pytest.fixture(scope="function")
 def mock_drugscreen_predictions_path(tmpdir):
     """
-    Create minimally, mocked prediction with just a single datapoint.
+    Create minimally, mocked predictions.
     """
     dst = tmpdir.mkdir("predictions__test__v1_0")
     features_path = str(dst.join("features.zarr"))
@@ -26,27 +67,14 @@ def mock_drugscreen_predictions_path(tmpdir):
 
     # Create the features
     root = zarr.open(features_path, mode="w")
-    arr = root.create_array(name="predictions", shape=(2, 128), dtype=np.float32)
-    arr[:] = np.arange(2 * 128).reshape(2, 128) * 10
+    arr = root.create_array(name="predictions", shape=(100, 128), dtype=np.float32)
+    _get_mocked_features(arr, compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
 
     # Create the var
     mock_transcriptomics_var(128).write_parquet(var_path)
 
     # Create the obs
-    obs = pl.DataFrame(
-        {
-            "perturbations": [
-                mock_drugscreen_compound_perturbation("A"),
-                mock_drugscreen_compound_perturbation("B"),
-            ],
-            "obs_id": [0, 1],
-            "batch_center": ["plate_1", "plate_1"],
-            "plate_disease_model": ["ENSG000000000000000000", "ENSG000000000000000000"],
-            "is_base_state": [False, False],
-            "drugscreen_query": [True, True],
-            "cell_type": ["HUVEC", "HUVEC"],
-        }
-    )
+    obs = _get_mocked_obs(compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
     obs.write_parquet(obs_path)
 
     return str(dst)
@@ -69,34 +97,14 @@ def mock_drugscreen_dataset_path(tmpdir):
 
     # Create the features
     # For a dataset, we just create a Zarr array without group structure.
-    arr = zarr.create_array(store=features_path, shape=(4, 128), dtype=np.float32)
-    arr[:] = np.arange(4 * 128).reshape(4, 128) * 10
+    arr = zarr.create_array(store=features_path, shape=(100, 128), dtype=np.float32)
+    _get_mocked_features(arr, compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
 
     # Create the var
     mock_transcriptomics_var(128).write_parquet(var_path)
 
     # Create the obs
-    obs = pl.DataFrame(
-        {
-            "perturbations": [
-                mock_drugscreen_compound_perturbation("A"),
-                mock_drugscreen_compound_perturbation("B"),
-                mock_drugscreen_genetic_perturbation(),
-                mock_drugscreen_genetic_perturbation(),
-            ],
-            "obs_id": [0, 1, 2, 3],
-            "batch_center": ["plate_1", "plate_1", "plate_1", "plate_1"],
-            "plate_disease_model": [
-                "ENSG000000000000000000",
-                "ENSG000000000000000000",
-                "ENSG000000000000000000",
-                "ENSG000000000000000000",
-            ],
-            "is_base_state": [False, False, True, True],
-            "drugscreen_query": [True, True, False, False],
-            "cell_type": ["HUVEC", "HUVEC", "HUVEC", "HUVEC"],
-        }
-    )
+    obs = _get_mocked_obs(compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
     obs.write_parquet(obs_path)
 
     # A dataset also needs metadata, which predictions do not need.
@@ -114,9 +122,9 @@ def mock_drugscreen_split_path(tmpdir):
         version=1,
         splitting_level="random",
         splitting_strategy="random",
-        controls=[],
-        base_states=[2, 3],
-        folds=[Fold(outer_fold=0, inner_fold=0, finetune=[], test=[0, 1], validation=[])],
+        base_states=list(range(50, 75)),
+        controls=list(range(75, 100)),
+        folds=[Fold(outer_fold=0, inner_fold=0, finetune=[], test=list(range(50)), validation=[])],
     )
     p = tmpdir.mkdir("split").join("split.json")
     with open(p, "w") as f:

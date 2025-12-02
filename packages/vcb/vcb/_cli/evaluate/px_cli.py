@@ -1,18 +1,43 @@
 from pathlib import Path
 
 import polars as pl
+import typer
 from loguru import logger
 from pydantic import TypeAdapter
-
-import typer
 from typing_extensions import Annotated
 
-from vcb.data_models.config import EvaluationConfig, TASK_ADAPTERS_TYPE
+from vcb.data_models.config import TASK_ADAPTERS_TYPE, EvaluationConfig
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
+from vcb.data_models.metrics.suite import MetricSuite
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
+from vcb.data_models.metrics.suites.phenorescue import PhenorescueSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
+
+
+def get_metric_suites_for_adapter(
+    adapter_kind: str, distributional_metrics: bool = True, save_destination: Path | None = None
+) -> list[MetricSuite]:
+    suites = [
+        RetrievalSuite(
+            metric_labels={"retrieval_mae", "retrieval_edistance"},
+            use_distributional_metrics=distributional_metrics,
+        ),
+        PerturbationEffectPredictionSuite(
+            metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
+            use_distributional_metrics=distributional_metrics,
+        ),
+    ]
+
+    if adapter_kind == "drugscreen":
+        rescue_suite = PhenorescueSuite(
+            metric_labels={"hit_score_error", "hit_classification", "hit_ranking"},
+            plot_destination=save_destination / "phenorescue" if save_destination is not None else None,
+        )
+        suites.append(rescue_suite)
+
+    return suites
 
 
 def px_evaluate_cli(
@@ -89,16 +114,11 @@ def px_evaluate_cli(
         split_path=split_path,
         split_index=split_idx,
         use_validation_split=use_validation_split,
-        metric_suites=[
-            RetrievalSuite(
-                metric_labels={"retrieval_mae", "retrieval_edistance"},
-                use_distributional_metrics=distributional_metrics,
-            ),
-            PerturbationEffectPredictionSuite(
-                metric_labels={"cosine", "mse"},
-                use_distributional_metrics=distributional_metrics,
-            ),
-        ],
+        metric_suites=get_metric_suites_for_adapter(
+            task_adapter,
+            distributional_metrics,
+            save_destination,
+        ),
     )
     results = config.execute()
 

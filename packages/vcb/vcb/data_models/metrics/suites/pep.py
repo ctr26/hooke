@@ -1,11 +1,22 @@
-from typing import Literal
+from typing import ClassVar, Literal
 
 import polars as pl
-from pydantic import field_validator
 
+from vcb.data_models.metrics.metric_info import MinimalMetricInfo
 from vcb.data_models.metrics.suite import MetricSuite
 from vcb.data_models.task.base import TaskAdapter
+from vcb.metrics.distributional.mmd import compute_e_distance
+from vcb.metrics.simple import cosine, cosine_delta, mse, pearson, pearson_delta
 from vcb.utils import predicate_group_by
+
+
+class PEPMetricInfo(MinimalMetricInfo):
+    """
+    Perturbation effect prediction metric metadata.
+    """
+
+    is_distributional: bool = False
+    is_delta_metric: bool = False
 
 
 class PerturbationEffectPredictionSuite(MetricSuite):
@@ -15,17 +26,16 @@ class PerturbationEffectPredictionSuite(MetricSuite):
 
     kind: Literal["perturbation_effect_prediction"] = "perturbation_effect_prediction"
 
-    @field_validator("metric_labels")
-    @classmethod
-    def validate_metrics_allowlist(cls, v: set[str]) -> set[str]:
-        """
-        Assert all metrics are in the metric_labels.
-        """
-        allowlist = ["mse", "pearson", "cosine", "pearson_delta", "cosine_delta"]
-        for metric in v:
-            if metric not in allowlist:
-                raise ValueError(f"Metric {metric} is not supported for perturbation effect prediction tasks")
-        return v
+    use_distributional_metrics: bool = True
+
+    _all_supported_metrics: ClassVar[dict[str, PEPMetricInfo]] = {
+        "edistance": PEPMetricInfo(fn=compute_e_distance, is_distributional=True),
+        "mse": PEPMetricInfo(fn=mse),
+        "pearson": PEPMetricInfo(fn=pearson),
+        "cosine": PEPMetricInfo(fn=cosine),
+        "pearson_delta": PEPMetricInfo(fn=pearson_delta, is_delta_metric=True),
+        "cosine_delta": PEPMetricInfo(fn=cosine_delta, is_delta_metric=True),
+    }
 
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
@@ -52,7 +62,6 @@ class PerturbationEffectPredictionSuite(MetricSuite):
                 y_pred = predictions.get_perturbed_states(*metric_predicate)
 
                 for label, metric in self.metrics.items():
-                    # Skip distributional metrics if we don't want to use them
                     if metric.is_distributional and not self.use_distributional_metrics:
                         continue
 

@@ -1,13 +1,12 @@
 from pathlib import Path
 
 import polars as pl
+import typer
 from loguru import logger
 from pydantic import TypeAdapter
-
-import typer
 from typing_extensions import Annotated
 
-from vcb.data_models.config import EvaluationConfig, TASK_ADAPTERS_TYPE
+from vcb.data_models.config import TASK_ADAPTERS_TYPE, EvaluationConfig
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
@@ -135,7 +134,7 @@ def tx_evaluate_cli(
         ),
         metric_suites=[
             RetrievalSuite(
-                metric_labels={"retrieval_mae", "retrieval_mae_delta", "retrieval_edistance"},
+                metric_labels={"retrieval_mae", "retrieval_edistance"},
                 use_distributional_metrics=distributional_metrics,
             ),
             PerturbationEffectPredictionSuite(
