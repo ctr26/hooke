@@ -9,7 +9,7 @@ from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.task.drugscreen import add_compound_perturbation_to_obs
 from vcb.metrics.drugscreen.hit_score import aggregate_hit_scores_per_compound, compute_hit_scores
-from vcb.metrics.drugscreen.preprocessing import isolation_outlier_mask, pcaw_transform_data
+from vcb.metrics.drugscreen.preprocessing import isolation_outlier_mask
 from vcb.metrics.drugscreen.prometheus import embed_in_prometheus_space, prometheus_plot
 from vcb.metrics.drugscreen.sampling import (
     aggregate_treatment_data,
@@ -18,6 +18,7 @@ from vcb.metrics.drugscreen.sampling import (
     sample_and_aggregate,
 )
 from vcb.metrics.drugscreen.utils import SynchronizedDataset
+from vcb.metrics.utils.transforms import pcaw_transform_data
 
 
 def rescue_screen_analysis(

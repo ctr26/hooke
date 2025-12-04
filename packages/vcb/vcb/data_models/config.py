@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, computed_field, model_validator
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
 from vcb.data_models.metrics.suites.phenorescue import PhenorescueSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
+from vcb.data_models.metrics.suites.virtual_map import VirtualMapSuite
 from vcb.data_models.split import Split
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 from vcb.data_models.task.singles import SinglesTaskAdapter
@@ -23,7 +24,7 @@ TASK_ADAPTERS_TYPE = Annotated[
 ]
 
 METRIC_SUITES_TYPE = Annotated[
-    Union[PerturbationEffectPredictionSuite, RetrievalSuite, PhenorescueSuite],
+    Union[PerturbationEffectPredictionSuite, RetrievalSuite, PhenorescueSuite, VirtualMapSuite],
     Field(..., discriminator="kind"),
 ]
 

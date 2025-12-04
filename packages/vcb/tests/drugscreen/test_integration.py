@@ -28,6 +28,7 @@ def test_evaluate_tx_cli(
         predictions_features_layer="predictions",
         predictions_var_path=Path(mock_drugscreen_predictions_path) / "var.parquet",
         predictions_zarr_index_column=None,
+        task_id="phenorescue",
     )
     assert_perfect_performance(
         results,
@@ -48,6 +49,7 @@ def test_evaluate_tx_cli(
         predictions_features_layer="predictions",
         predictions_var_path=Path(mock_drugscreen_predictions_path) / "var.parquet",
         predictions_zarr_index_column=None,
+        task_id="phenorescue",
     )
     assert_imperfect_performance(
         results,
@@ -83,6 +85,7 @@ def test_rescale_tx_cli(
         predictions_features_layer="predictions",
         predictions_var_path=Path(mock_drugscreen_predictions_path) / "var.parquet",
         predictions_zarr_index_column=None,
+        task_id="phenorescue",
     )
     assert_perfect_performance(
         results,
@@ -107,6 +110,7 @@ def test_evaluate_px_cli(
         predictions_features_layer="predictions",
         predictions_var_path=Path(mock_drugscreen_predictions_path) / "var.parquet",
         predictions_zarr_index_column=None,
+        task_id="phenorescue",
     )
     assert_perfect_performance(
         results,

@@ -1,9 +1,28 @@
+from typing import Literal, Tuple
+
 import numpy as np
 import polars as pl
 from pydantic import Field
-from typing import Literal, Tuple
 
 from vcb.data_models.task.base import TaskAdapter
+
+
+def add_single_perturbation_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
+    """
+    Add the single perturbation to the observations.
+    """
+    # assert single perts only
+    singles_and_empties = obs.filter(pl.col("perturbations").list.len().le(1))
+    if not singles_and_empties.shape[0] == obs.shape[0]:
+        raise ValueError(
+            f"Expected all observations to be singles, but singles comprised "
+            f"{singles_and_empties.shape[0]} / {obs.shape[0]} of the observations."
+        )
+    return (
+        obs.with_columns(pl.col("perturbations").alias("pert_ex_un"))
+        .explode("pert_ex_un")
+        .unnest("pert_ex_un")
+    )
 
 
 class SinglesTaskAdapter(TaskAdapter):
@@ -25,19 +44,17 @@ class SinglesTaskAdapter(TaskAdapter):
 
     batch_groupby_cols: list[str] = Field(default_factory=lambda: ["batch_center"])
     perturbation_groupby_cols_types: list[Tuple[str, str]] = Field(
-        default_factory=lambda: [("ensembl_gene_id", "<U27")]
+        default_factory=lambda: [("inchikey", "<U27"), ("concentration", "float")]
     )
-    context_groupby_cols: list[str] = Field(default_factory=lambda: ["cell_line"])
-    perturbation_splitting_col: str = Field(default="ensembl_gene_id")
+    context_groupby_cols: list[str] = Field(default_factory=lambda: ["cell_type"])
+    perturbation_splitting_col: str = Field(default="inchikey")
 
     _filtered_perturbed_obs: pl.DataFrame | None = None
     _filtered_basal_obs: pl.DataFrame | None = None
 
     @property
     def perturbation_length_filter(self) -> pl.Expr:
-        # note that this acts _after_ prepare has been called
-        # which in this subclass already asserts that the perturbations are length = 1
-        return pl.lit(True)
+        return pl.col("perturbations").list.len().le(1)
 
     def get_all_perturbed_obs(self) -> pl.DataFrame:
         if self._filtered_perturbed_obs is None:
@@ -66,14 +83,7 @@ class SinglesTaskAdapter(TaskAdapter):
 
         obs = self.dataset.obs
         obs = obs.with_row_index("original_index")
-        # assert single perts only
-        if not obs.filter(pl.col("perturbations").list.len().eq(1)).shape[0] == obs.shape[0]:
-            raise ValueError("Only single genetic perturbations are supported")
-        obs = (
-            obs.with_columns(pl.col("perturbations").alias("pert_ex_un"))
-            .explode("pert_ex_un")
-            .unnest("pert_ex_un")
-        )
+        obs = add_single_perturbation_to_obs(obs)
         self.dataset.obs = obs
 
         self.dataset._obs_is_prepared = True

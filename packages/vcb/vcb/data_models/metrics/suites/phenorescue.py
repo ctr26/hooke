@@ -30,6 +30,9 @@ class PhenorescueSuite(MetricSuite):
         "hit_classification": MinimalMetricInfo(fn=hit_classification),
     }
 
+    def _maybe_get_subdir(self, subdir: str) -> Path | None:
+        return self.plot_destination / subdir if self.plot_destination is not None else None
+
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
 
@@ -44,9 +47,7 @@ class PhenorescueSuite(MetricSuite):
         logger.info("Computing the hit scores for the ground truth...")
         for experiment, hit_scores, _ in rescue_screen_analysis(
             ground_truth.dataset,
-            plot_destination=self.plot_destination / "predicted"
-            if self.plot_destination is not None
-            else None,
+            plot_destination=self._maybe_get_subdir("ground_truth"),
             plot_hit_threshold=self.plot_hit_threshold,
         ):
             y_true[experiment] = hit_scores
@@ -59,7 +60,7 @@ class PhenorescueSuite(MetricSuite):
         logger.info("Computing the hit scores for the predictions...")
         for experiment, hit_scores, _ in rescue_screen_analysis(
             predictions.dataset,
-            plot_destination=self.plot_destination / "real" if self.plot_destination is not None else None,
+            plot_destination=self._maybe_get_subdir("predicted"),
             plot_hit_threshold=self.plot_hit_threshold,
         ):
             y_pred[experiment] = hit_scores

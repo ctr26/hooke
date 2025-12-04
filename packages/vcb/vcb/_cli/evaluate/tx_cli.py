@@ -10,12 +10,46 @@ from vcb.data_models.config import TASK_ADAPTERS_TYPE, EvaluationConfig
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
+from vcb.data_models.metrics.suite import MetricSuite
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
+from vcb.data_models.metrics.suites.phenorescue import PhenorescueSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
+from vcb.data_models.metrics.suites.virtual_map import VirtualMapSuite
 from vcb.preprocessing.pipeline import TranscriptomicsPreprocessingPipeline
 from vcb.preprocessing.steps.log1p import InverseLog1pStep, Log1pStep
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
 from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
+
+
+def get_metric_suites_for_task_id(
+    task_id: str, distributional_metrics: bool, save_destination: Path
+) -> list[MetricSuite]:
+    suites = [
+        RetrievalSuite(
+            metric_labels={"retrieval_mae", "retrieval_edistance"},
+            use_distributional_metrics=distributional_metrics,
+        ),
+        PerturbationEffectPredictionSuite(
+            metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
+            use_distributional_metrics=distributional_metrics,
+        ),
+    ]
+
+    if task_id == "phenorescue":
+        rescue_suite = PhenorescueSuite(
+            metric_labels={"hit_score_error", "hit_classification", "hit_ranking"},
+            plot_destination=save_destination / "phenorescue",
+        )
+        suites.append(rescue_suite)
+
+    elif task_id == "virtual_map":
+        virtual_map_suite = VirtualMapSuite(
+            metric_labels={"map_mse"},
+            plot_destination=save_destination / "virtual_map",
+        )
+        suites.append(virtual_map_suite)
+
+    return suites
 
 
 def tx_evaluate_cli(
@@ -33,13 +67,13 @@ def tx_evaluate_cli(
         Path,
         typer.Option(..., "--predictions-var-path", "-v", help="path to the var file for the predictions"),
     ],
+    task_id: Annotated[str, typer.Option(help="The task id. Either 'phenorescue' or 'virtual_map")],
     predictions_zarr_index_column: Annotated[
         str,
         typer.Option(
             help="column of the predictions that corresponds to the features/predictions zarr index"
         ),
     ] = "zarr_index_generated_raw_counts",
-    task_adapter: Annotated[str, typer.Option(help="task adapter subclass, in snake case")] = "drugscreen",
     predictions_features_layer: Annotated[
         str, typer.Option(help="layer of the features in the zarr file to use for the predictions")
     ] = None,
@@ -109,6 +143,13 @@ def tx_evaluate_cli(
     # TaskAdapterClass = key_to_task_adapter_class(task_adapter)
     type_adapter = TypeAdapter(TASK_ADAPTERS_TYPE)
 
+    if task_id == "phenorescue":
+        task_adapter = "drugscreen"
+    elif task_id == "virtual_map":
+        task_adapter = "singles"
+    else:
+        raise ValueError(f"Unknown task id: {task_id}")
+
     config = EvaluationConfig(
         ground_truth=type_adapter.validate_python({"kind": task_adapter, "dataset": ground_truth}),
         predictions=type_adapter.validate_python({"kind": task_adapter, "dataset": predictions}),
@@ -132,16 +173,11 @@ def tx_evaluate_cli(
                 ),
             ]
         ),
-        metric_suites=[
-            RetrievalSuite(
-                metric_labels={"retrieval_mae", "retrieval_edistance"},
-                use_distributional_metrics=distributional_metrics,
-            ),
-            PerturbationEffectPredictionSuite(
-                metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
-                use_distributional_metrics=distributional_metrics,
-            ),
-        ],
+        metric_suites=get_metric_suites_for_task_id(
+            task_id,
+            distributional_metrics,
+            save_destination,
+        ),
     )
 
     # Evaluate

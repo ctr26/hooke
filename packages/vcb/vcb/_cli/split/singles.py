@@ -5,11 +5,11 @@ import polars as pl
 from loguru import logger
 from sklearn.model_selection import KFold
 
+from vcb._cli.split.utils import POS_CONTROL_FILTER, log_step
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.split import Fold, Split
 from vcb.data_models.task.singles import SinglesTaskAdapter
-from vcb._cli.split.utils import log_step, POS_CONTROL_FILTER
 
 
 def singles_split_cli(
@@ -24,6 +24,8 @@ def singles_split_cli(
     """
     Split a singles dataset into train, validation and test sets.
     """
+
+    logger.critical("This has not been tested and will likely not work. Thread with caution.")
 
     # Load the dataset
     dataset = AnnotatedDataMatrix(**DatasetDirectory(root=dataset_dir).model_dump())

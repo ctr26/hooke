@@ -18,11 +18,11 @@ def _get_mocked_features(arr: zarr.Array, compounds: list[str], n_control: int, 
     rng = np.random.RandomState(0)
     features = []
     for _ in compounds:
-        features.append(rng.normal(size=128, loc=0.5, scale=0.1))
+        features.append(rng.normal(size=128, loc=10.5, scale=0.1))
     for _ in range(n_control):
-        features.append(rng.normal(size=128, loc=0.1, scale=0.1))
+        features.append(rng.normal(size=128, loc=10.1, scale=0.1))
     for _ in range(n_disease):
-        features.append(rng.normal(size=128, loc=0.9, scale=0.1))
+        features.append(rng.normal(size=128, loc=10.9, scale=0.1))
     arr[:] = np.vstack(features)
     return arr
 

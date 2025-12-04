@@ -1,6 +1,7 @@
 from typing import ClassVar, Literal
 
 import polars as pl
+from loguru import logger
 
 from vcb.data_models.metrics.metric_info import MinimalMetricInfo
 from vcb.data_models.metrics.suite import MetricSuite
@@ -44,6 +45,16 @@ class RetrievalSuite(MetricSuite):
             y_base = ground_truth.get_basal_states(*predicate)
             y_true = ground_truth.get_perturbed_states(*predicate)
             p_true = ground_truth.get_perturbations(*predicate)
+
+            # It can happen that there is no ground truth perturbational data for a given context.
+            # For example, when generalizing across cell types.
+
+            # The group_by will still return empty contexts,
+            # since we'll still have that context as part of the base states or controls.
+
+            if len(y_true) == 0:
+                logger.info(f"No ground truth perturbational data for {group_label}. Skipping!")
+                continue
 
             # Predictions
             y_pred = predictions.get_perturbed_states(*predicate)

@@ -73,8 +73,12 @@ class TaskAdapter(BaseModel, ABC):
         """
         Assert the context groupby cols are a subset of the biological context.
         """
-        if not self.dataset.metadata.biological_context <= set(self.context_groupby_cols):
-            raise ValueError("The context groupby cols are not a subset of the biological context:")
+        context_groupby_cols = set(self.context_groupby_cols)
+        if not self.dataset.metadata.biological_context <= context_groupby_cols:
+            raise ValueError(
+                "The following columns are in the biological context but not in the context groupby cols: "
+                f"{self.dataset.metadata.biological_context - context_groupby_cols}"
+            )
         return self
 
     @model_validator(mode="after")
