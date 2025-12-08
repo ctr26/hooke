@@ -1,8 +1,11 @@
 from pathlib import Path
+from typing import Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
+from loguru import logger
+from sklearn.decomposition import PCA
 from tqdm import tqdm
 
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
@@ -28,12 +31,26 @@ def rescue_screen_analysis(
     n_standard_deviations_threshold: int = 10,
     random_state: int = 0,
     n_glyphs_for_clouds: int = 1000,
+    embedding: Literal["pca"] | None = None,
+    embedding_kwargs: dict | None = None,
 ):
     """
     Given drugscreen data, scores the ability of a compound to revert a disease state to a healthy state.
     """
 
     data = SynchronizedDataset(obs=data.obs.clone(), X=data.X.copy())
+
+    if embedding_kwargs is None:
+        embedding_kwargs = {}
+    if "random_state" not in embedding_kwargs:
+        embedding_kwargs["random_state"] = random_state
+
+    # TODO (cwognum): Would love to incorporate TxAM here!
+    if embedding == "pca":
+        logger.info(f"Embedding the data using PCA with {embedding_kwargs}...")
+        data.X = PCA(**embedding_kwargs).fit_transform(data.X)
+    elif embedding is not None:
+        raise ValueError(f"Unsupported embedding: {embedding}")
 
     # Step 0: We do the analysis per experiment.
     for (experiment,), experiment_data in tqdm(
@@ -52,7 +69,7 @@ def rescue_screen_analysis(
                 f"No control data found for experiment {experiment}. "
                 "Did you include the negative controls as part of the predictions?"
             )
-        control.filter(isolation_outlier_mask(control.X))
+        control.filter(isolation_outlier_mask(control.X, random_state=random_state))
 
         disease_model = experiment_data.filter(pl.col("is_base_state"))
         if len(disease_model) == 0:
@@ -60,16 +77,25 @@ def rescue_screen_analysis(
                 f"No disease model data found for experiment {experiment}. "
                 "Did you include the base states as part of the predictions?"
             )
-        disease_model.filter(isolation_outlier_mask(disease_model.X))
+        disease_model.filter(isolation_outlier_mask(disease_model.X, random_state=random_state))
 
         # Step 3: Data transformation using PCA Whitening
         experiment_data = control.join(disease_model).join(experiment_data.filter(pl.col("drugscreen_query")))
-        experiment_data = pcaw_transform_data(experiment_data)
+        experiment_data = pcaw_transform_data(experiment_data, random_state=random_state)
 
         # Step 4: Embed in Prometheus space
         control = experiment_data.filter(pl.col("is_negative_control"))
         disease_model = experiment_data.filter(pl.col("is_base_state"))
         drugscreen = experiment_data.filter(pl.col("drugscreen_query"))
+
+        if len(drugscreen) == 0:
+            # Because we subset the dataset to the test set, therecan be experiments for which we have no perturbed observations.
+            # The group_by will still iterate over these as they occur in the base states and controls.
+            logger.info(
+                f"No drugscreen data found for experiment {experiment}. "
+                "This is expected for some experiments."
+            )
+            continue
 
         control_center = control.X.mean(axis=0)
         disease_model_center = disease_model.X.mean(axis=0)
@@ -134,8 +160,8 @@ def rescue_screen_analysis(
             drugscreen_xy_plot = drugscreen_xy
             drugscreen_labels_plot = drugscreen_labels
 
+            # Filter the compounds to show in the plot.
             if plot_hit_threshold is not None:
-                # Filter the compounds to show in the plot.
                 indices = [
                     idx
                     for idx, (inchikey, _) in enumerate(drugscreen_labels)
@@ -156,6 +182,7 @@ def rescue_screen_analysis(
 
             fig.tight_layout()
             fig.savefig(plot_destination / f"rescue_screen_{experiment}.jpg")
+            plt.close(fig)
 
         # Step 9: Return the hit scores
         yield experiment, compound_level_hit_scores, perturbation_level_hit_scores

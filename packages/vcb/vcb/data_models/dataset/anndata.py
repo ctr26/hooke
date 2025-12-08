@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -7,8 +8,6 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator, model_validator
 
 from vcb.data_models.dataset.metadata import DatasetMetadata
-
-from typing import Any
 
 
 class AnnotatedDataMatrix(BaseModel):
@@ -27,7 +26,7 @@ class AnnotatedDataMatrix(BaseModel):
 
     obs_path: Path
     features_path: Path
-    var_path: Path | None = None
+    var_path: Path
     metadata_path: Path | None = None
 
     features_layer: str | None = None
@@ -62,8 +61,14 @@ class AnnotatedDataMatrix(BaseModel):
         # set obs, var, and x to class instance
         self.update(obs=obs, var=var, X=X)
 
-    @field_validator("var_path", "obs_path", "features_path", "metadata_path")
+    @field_validator("var_path", "obs_path", "features_path")
     def validate_path_exists(cls, v: Path) -> Path:
+        if not v.exists():
+            raise ValueError(f"{v} does not exist")
+        return v
+
+    @field_validator("metadata_path")
+    def validate_optional_path_exists(cls, v: Path) -> Path:
         if v is not None and not v.exists():
             raise ValueError(f"{v} does not exist")
         return v

@@ -39,6 +39,9 @@ def get_metric_suites_for_task_id(
         rescue_suite = PhenorescueSuite(
             metric_labels={"hit_score_error", "hit_classification", "hit_ranking"},
             plot_destination=save_destination / "phenorescue",
+            embedding="pca",
+            embedding_kwargs={"n_components": 128},
+            plot_hit_threshold=None,
         )
         suites.append(rescue_suite)
 
@@ -96,6 +99,12 @@ def tx_evaluate_cli(
             help="whether to use the validation split instead of the test split (use to compare evaluation and fine tuning 1:1)"
         ),
     ] = False,
+    copy_base_states_and_controls: Annotated[
+        bool,
+        typer.Option(
+            help="whether to copy the base states and controls from the ground truth to the predictions"
+        ),
+    ] = True,
 ):
     """
     Evaluate predictions in Transcriptomics against a ground truth.
@@ -115,6 +124,7 @@ def tx_evaluate_cli(
         library_size: (optional) Library size to use for the evaluation (default ground truth median library size).
         distributional_metrics: (optional) Whether to include distributional metrics.
         use_validation_split: (optional) Whether to use the validation split instead of the test split (default False).
+        copy_base_states_and_controls: Whether to copy the base states and controls from the ground truth to the predictions.
 
     NOTE (cwognum): For now, this only supports the count space. We don't yet support evaluation in embedding spaces.
     """
@@ -178,6 +188,7 @@ def tx_evaluate_cli(
             distributional_metrics,
             save_destination,
         ),
+        copy_base_states_and_controls=copy_base_states_and_controls,
     )
 
     # Evaluate

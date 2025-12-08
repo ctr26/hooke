@@ -83,6 +83,12 @@ def px_evaluate_cli(
             help="whether to use the validation split instead of the test split (use to compare evaluation and fine tuning 1:1)"
         ),
     ] = False,
+    copy_base_states_and_controls: Annotated[
+        bool,
+        typer.Option(
+            help="whether to copy the base states and controls from the ground truth to the predictions"
+        ),
+    ] = True,
 ):
     """
     Evaluate predictions in Phenomics against a ground truth.
@@ -99,6 +105,7 @@ def px_evaluate_cli(
         split_idx: Index of the split to evaluate.
         distributional_metrics: Whether to include distributional metrics (exclude to speed up evaluation).
         use_validation_split: Whether to use the validation split instead of the test split (default False).
+        copy_base_states_and_controls: Whether to copy the base states and controls from the ground truth to the predictions.
     """
 
     # Load the ground truth.
@@ -134,6 +141,7 @@ def px_evaluate_cli(
             distributional_metrics,
             save_destination,
         ),
+        copy_base_states_and_controls=copy_base_states_and_controls,
     )
     results = config.execute()
 

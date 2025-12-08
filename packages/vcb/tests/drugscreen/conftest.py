@@ -18,11 +18,11 @@ def _get_mocked_features(arr: zarr.Array, compounds: list[str], n_control: int, 
     rng = np.random.RandomState(0)
     features = []
     for _ in compounds:
-        features.append(rng.normal(size=128, loc=10.5, scale=0.1))
+        features.append(rng.normal(size=1024, loc=10.5, scale=0.1))
     for _ in range(n_control):
-        features.append(rng.normal(size=128, loc=10.1, scale=0.1))
+        features.append(rng.normal(size=1024, loc=10.1, scale=0.1))
     for _ in range(n_disease):
-        features.append(rng.normal(size=128, loc=10.9, scale=0.1))
+        features.append(rng.normal(size=1024, loc=10.9, scale=0.1))
     arr[:] = np.vstack(features)
     return arr
 
@@ -67,14 +67,14 @@ def mock_drugscreen_predictions_path(tmpdir):
 
     # Create the features
     root = zarr.open(features_path, mode="w")
-    arr = root.create_array(name="predictions", shape=(100, 128), dtype=np.float32)
-    _get_mocked_features(arr, compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
+    arr = root.create_array(name="predictions", shape=(1000, 1024), dtype=np.float32)
+    _get_mocked_features(arr, compounds=["A"] * 250 + ["B"] * 250, n_control=250, n_disease=250)
 
     # Create the var
-    mock_transcriptomics_var(128).write_parquet(var_path)
+    mock_transcriptomics_var(1024).write_parquet(var_path)
 
     # Create the obs
-    obs = _get_mocked_obs(compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
+    obs = _get_mocked_obs(compounds=["A"] * 250 + ["B"] * 250, n_control=250, n_disease=250)
     obs.write_parquet(obs_path)
 
     return str(dst)
@@ -97,14 +97,14 @@ def mock_drugscreen_dataset_path(tmpdir):
 
     # Create the features
     # For a dataset, we just create a Zarr array without group structure.
-    arr = zarr.create_array(store=features_path, shape=(100, 128), dtype=np.float32)
-    _get_mocked_features(arr, compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
+    arr = zarr.create_array(store=features_path, shape=(1000, 1024), dtype=np.float32)
+    _get_mocked_features(arr, compounds=["A"] * 250 + ["B"] * 250, n_control=250, n_disease=250)
 
     # Create the var
-    mock_transcriptomics_var(128).write_parquet(var_path)
+    mock_transcriptomics_var(1024).write_parquet(var_path)
 
     # Create the obs
-    obs = _get_mocked_obs(compounds=["A"] * 25 + ["B"] * 25, n_control=25, n_disease=25)
+    obs = _get_mocked_obs(compounds=["A"] * 250 + ["B"] * 250, n_control=250, n_disease=250)
     obs.write_parquet(obs_path)
 
     # A dataset also needs metadata, which predictions do not need.
@@ -122,9 +122,9 @@ def mock_drugscreen_split_path(tmpdir):
         version=1,
         splitting_level="random",
         splitting_strategy="random",
-        base_states=list(range(50, 75)),
-        controls=list(range(75, 100)),
-        folds=[Fold(outer_fold=0, inner_fold=0, finetune=[], test=list(range(50)), validation=[])],
+        base_states=list(range(500, 750)),
+        controls=list(range(750, 1000)),
+        folds=[Fold(outer_fold=0, inner_fold=0, finetune=[], test=list(range(500)), validation=[])],
     )
     p = tmpdir.mkdir("split").join("split.json")
     with open(p, "w") as f:

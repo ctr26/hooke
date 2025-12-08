@@ -58,7 +58,9 @@ def center_scale_transform(data: SynchronizedDataset, groupby_columns: list[str]
     return data
 
 
-def pca_transform(data: SynchronizedDataset, n_components: int | float = 0.999) -> SynchronizedDataset:
+def pca_transform(
+    data: SynchronizedDataset, n_components: int | float = 0.999, random_state: int | None = None
+) -> SynchronizedDataset:
     """
     PCA transform of the data.
 
@@ -69,7 +71,7 @@ def pca_transform(data: SynchronizedDataset, n_components: int | float = 0.999) 
     if len(fit_data) == 0:
         raise RuntimeError("No negative controls found in group")
 
-    pca = PCA(n_components=n_components)
+    pca = PCA(n_components=n_components, random_state=random_state)
     pca.fit(fit_data.X)
 
     n_samples = fit_data.X.shape[0]
@@ -92,7 +94,7 @@ def pca_transform(data: SynchronizedDataset, n_components: int | float = 0.999) 
 
 
 def pcaw_transform_data(
-    data: SynchronizedDataset, groupby_columns: list[str] | None = None
+    data: SynchronizedDataset, groupby_columns: list[str] | None = None, random_state: int | None = None
 ) -> SynchronizedDataset:
     """
     Transform the data using PCA Whitening.
@@ -101,6 +103,6 @@ def pcaw_transform_data(
         groupby_columns = ["batch_center"]
 
     data = center_scale_transform(data, groupby_columns)
-    data = pca_transform(data)
+    data = pca_transform(data, random_state=random_state)
     data = center_scale_transform(data, groupby_columns)
     return data

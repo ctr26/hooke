@@ -19,9 +19,15 @@ class PredictionPaths(BaseModel):
     @computed_field
     @property
     def obs_path(self) -> Path:
-        return self.root / "obs.parquet"
+        path = self.root / "obs.parquet"
+        if not path.exists():
+            raise ValueError(f"obs.parquet not found at {path}")
+        return path
 
     @computed_field
     @property
     def features_path(self) -> Path:
-        return self.root / "features.zarr"
+        path = self.root / "features.zarr"
+        if not path.exists():
+            raise ValueError(f"features.zarr not found at {path}")
+        return path

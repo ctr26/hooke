@@ -3,7 +3,9 @@ import subprocess
 from pathlib import Path
 from typing import Annotated, List, Union
 
+import numpy as np
 import polars as pl
+from loguru import logger
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
@@ -47,6 +49,8 @@ class EvaluationConfig(BaseModel):
 
     preprocessing_pipeline: PREPROCESSING_PIPELINE_TYPE | None = None
 
+    copy_base_states_and_controls: bool = True
+
     metric_suites: List[METRIC_SUITES_TYPE]
 
     @model_validator(mode="after")
@@ -84,11 +88,11 @@ class EvaluationConfig(BaseModel):
         split = Split.from_json(self.split_path)
         fold = split.folds[self.split_index]
 
-        split_indices = split.base_states + split.controls
+        base_ctrl_indices = split.base_states + split.controls
         if self.use_validation_split:
-            split_indices += fold.validation
+            split_indices = base_ctrl_indices + fold.validation
         else:
-            split_indices += fold.test
+            split_indices = base_ctrl_indices + fold.test
 
         self.ground_truth.dataset.filter(obs_indices=split_indices)
 
@@ -111,6 +115,36 @@ class EvaluationConfig(BaseModel):
             self.preprocessing_pipeline.transform(
                 ground_truth=self.ground_truth.dataset,
                 predictions=self.predictions.dataset,
+            )
+
+        if self.copy_base_states_and_controls:
+            # Since the ground truth has already been filtered,
+            # we need to find the index in the filtered dataset
+            # for each of the indices in the original dataset.
+            # Luckily, we know that all base states and control are contiguous and at the start.
+            n_base_ctrl = len(base_ctrl_indices)
+
+            gt_X_base_ctrl = self.ground_truth.dataset.X[:n_base_ctrl]
+            gt_obs_base_ctrl = self.ground_truth.dataset.obs[:n_base_ctrl]
+
+            p_X = self.predictions.dataset.X
+            p_obs = self.predictions.dataset.obs
+
+            intersection = set(p_obs.columns) & set(gt_obs_base_ctrl.columns)
+            logger.warning(
+                "Extending the predictions with the base states and controls from the ground truth. "
+                f"For simplicity, we only keep the {len(intersection)} columns that overlap between the predictions and the ground truth! "
+                f"Starting with {len(p_obs.columns)} columns for the predictions and {len(gt_obs_base_ctrl.columns)} columns for the ground truth. "
+                "This should be ok when used within vcb, if you run into issue please double check!"
+            )
+
+            # Extend the predictions with the base states and controls
+            self.predictions.dataset.update(
+                obs=pl.concat(
+                    [p_obs.select(intersection), gt_obs_base_ctrl.select(intersection)],
+                    how="vertical_relaxed",
+                ),
+                X=np.concatenate([p_X, gt_X_base_ctrl], axis=0),
             )
 
         # final task adapter specific preparation

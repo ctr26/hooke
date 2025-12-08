@@ -67,16 +67,6 @@ class VirtualMapSuite(MetricSuite):
         else:
             raise ValueError(f"Unknown perturbation type: {pert_type}")
 
-        pred_maps = {}
-        logger.info("Computing the predicted map...")
-        for mapmat, cell_type, perturbations in map_building_pipeline(
-            predictions.dataset,
-            perturbation_groupby_columns=[map_pert_col],
-            plot_destination=self._maybe_get_subdir("predicted"),
-            cell_type_subset=cell_types,
-        ):
-            pred_maps[cell_type] = (mapmat, perturbations)
-
         # TODO (cwognum): This probably could be cached. No need to recompute it every time.
         true_maps = {}
         logger.info("Computing the ground truth map...")
@@ -84,10 +74,23 @@ class VirtualMapSuite(MetricSuite):
             ground_truth.dataset,
             perturbation_groupby_columns=[map_pert_col],
             plot_destination=self._maybe_get_subdir("ground_truth"),
-            cell_type_subset=list(pred_maps.keys()),
-            perturbation_order=pred_maps[cell_type][1],
+            cell_type_subset=cell_types,
         ):
             true_maps[cell_type] = (mapmat, perturbations)
+
+        pred_maps = {}
+        logger.info("Computing the predicted map...")
+        for cell_type in cell_types:
+            mapmat, cell_type, perturbations = next(
+                map_building_pipeline(
+                    predictions.dataset,
+                    perturbation_groupby_columns=[map_pert_col],
+                    plot_destination=self._maybe_get_subdir("predicted"),
+                    cell_type_subset=[cell_type],
+                    perturbation_order=true_maps[cell_type][1],
+                )
+            )
+            pred_maps[cell_type] = (mapmat, perturbations)
 
         for cell_type, (true_map, true_perturbations) in true_maps.items():
             pred_map, pred_perturbations = pred_maps[cell_type]

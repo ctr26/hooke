@@ -4,6 +4,7 @@ from typing import ClassVar, Literal
 import numpy as np
 import polars as pl
 from loguru import logger
+from pydantic import Field
 from tqdm import tqdm
 
 from vcb.data_models.metrics.metric_info import MinimalMetricInfo
@@ -21,8 +22,13 @@ class PhenorescueSuite(MetricSuite):
 
     kind: Literal["phenorescue"] = "phenorescue"
 
+    embedding: Literal["pca"] | None = None
+    embedding_kwargs: dict = Field(default_factory=dict)
+
     plot_destination: Path | None = None
-    plot_hit_threshold: float = 0.75
+    plot_hit_threshold: float | None = 0.5
+
+    random_state: int = 42
 
     _all_supported_metrics: ClassVar[dict[str, MinimalMetricInfo]] = {
         "hit_score_error": MinimalMetricInfo(fn=hit_score_error),
@@ -49,6 +55,9 @@ class PhenorescueSuite(MetricSuite):
             ground_truth.dataset,
             plot_destination=self._maybe_get_subdir("ground_truth"),
             plot_hit_threshold=self.plot_hit_threshold,
+            embedding=self.embedding,
+            embedding_kwargs=self.embedding_kwargs,
+            random_state=self.random_state,
         ):
             y_true[experiment] = hit_scores
 
@@ -62,6 +71,9 @@ class PhenorescueSuite(MetricSuite):
             predictions.dataset,
             plot_destination=self._maybe_get_subdir("predicted"),
             plot_hit_threshold=self.plot_hit_threshold,
+            embedding=self.embedding,
+            embedding_kwargs=self.embedding_kwargs,
+            random_state=self.random_state,
         ):
             y_pred[experiment] = hit_scores
 
