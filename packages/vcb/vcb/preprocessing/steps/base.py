@@ -20,9 +20,7 @@ class PreprocessingStep(BaseModel, ABC):
         return self
 
     @abstractmethod
-    def transform(
-        self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix
-    ) -> tuple[AnnotatedDataMatrix, AnnotatedDataMatrix]:
+    def transform(self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix):
         """
         Transform the preprocessing step.
         """

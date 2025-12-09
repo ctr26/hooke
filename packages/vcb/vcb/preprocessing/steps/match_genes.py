@@ -39,7 +39,7 @@ class MatchGenesStep(PreprocessingStep):
         self.gene_subset = sorted(list(intersection))
         return self
 
-    def transform_single(self, data: AnnotatedDataMatrix, gene_id_column: str) -> AnnotatedDataMatrix:
+    def transform_single(self, data: AnnotatedDataMatrix, gene_id_column: str):
         """
         Transform a single data matrix to the gene subset.
         """
@@ -47,11 +47,8 @@ class MatchGenesStep(PreprocessingStep):
         indices = [labels.index(label) for label in self.gene_subset]
         data.filter(var_indices=indices)
         logger.info(f"Matched gene space: From {len(labels)} genes to {len(indices)} genes")
-        return data
 
-    def transform(
-        self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix
-    ) -> tuple[AnnotatedDataMatrix, AnnotatedDataMatrix]:
+    def transform(self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix):
         """
         Match the gene space of the data matrices to the gene subset.
         """

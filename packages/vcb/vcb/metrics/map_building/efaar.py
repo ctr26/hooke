@@ -137,6 +137,9 @@ def map_building_pipeline(
             plot_destination.mkdir(parents=True, exist_ok=True)
 
             fig, ax = plt.subplots(figsize=(12, 10))
+
+            # Fun fact: "vlag" is the Dutch word for "flag", which, like the color palette, is red-white-blue.
+            # Aren't you happy about that tidbit of information? No? Oh... Okay, moving on...
             cmap = sns.color_palette("vlag", as_cmap=True)
             sns.heatmap(mapmat, ax=ax, cmap=cmap, vmin=-1, vmax=1)
 

@@ -120,7 +120,6 @@ def px_evaluate_cli(
         zarr_index_column=predictions_zarr_index_column,
     )
 
-    # TaskAdapterClass = key_to_task_adapter_class(task_adapter)
     type_adapter = TypeAdapter(TASK_ADAPTERS_TYPE)
 
     if task_id == "phenorescue":

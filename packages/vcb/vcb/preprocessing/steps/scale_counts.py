@@ -53,27 +53,24 @@ class ScaleCountsStep(PreprocessingStep):
         logger.info(f"Fitted desired library size to {self.desired_library_size} from ground truth")
         return self
 
-    def _transform_single(self, data: AnnotatedDataMatrix) -> AnnotatedDataMatrix:
+    def transform_single(self, data: AnnotatedDataMatrix):
         """
         Transform a single data matrix to the desired library size.
         """
-        d = data.X.copy()
-        d = d / np.sum(d, axis=1, keepdims=True)
-        d = d * self.desired_library_size
-        data.X = d
-        return data
-
-    def transform(
-        self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix
-    ) -> tuple[AnnotatedDataMatrix, AnnotatedDataMatrix]:
         if not self.fitted:
             raise RuntimeError(
                 "The desired library size is not set. "
                 "Please call fit() first or set the library_size property."
             )
 
+        d = data.X.copy()
+        d = d / np.sum(d, axis=1, keepdims=True)
+        d = d * self.desired_library_size
+        data.X = d
+
+    def transform(self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix):
         # Transform the data
         if self.transform_ground_truth:
-            self._transform_single(ground_truth)
+            self.transform_single(ground_truth)
         if self.transform_predictions:
-            self._transform_single(predictions)
+            self.transform_single(predictions)

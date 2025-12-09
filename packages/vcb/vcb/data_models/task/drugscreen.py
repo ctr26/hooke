@@ -1,10 +1,9 @@
-from typing import Literal
+from typing import Literal, Tuple
 
 import numpy as np
 import polars as pl
 from loguru import logger
 from pydantic import Field
-from typing import Tuple
 
 from vcb.data_models.task.base import TaskAdapter
 
