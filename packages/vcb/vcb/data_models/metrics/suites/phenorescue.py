@@ -50,8 +50,9 @@ class PhenorescueSuite(MetricSuite):
         # Get the hit scores for the ground truth
         # TODO (cwognum): Cache this. No need to recompute it every time.
         y_true = {}
+        plot_compounds = {}
         logger.info("Computing the hit scores for the ground truth...")
-        for experiment, hit_scores, _ in rescue_screen_analysis(
+        for experiment, hit_scores, _, exp_plot_compounds in rescue_screen_analysis(
             ground_truth.dataset,
             plot_destination=self._maybe_get_subdir("ground_truth"),
             plot_hit_threshold=self.plot_hit_threshold,
@@ -60,6 +61,7 @@ class PhenorescueSuite(MetricSuite):
             random_state=self.random_state,
         ):
             y_true[experiment] = hit_scores
+            plot_compounds[experiment] = exp_plot_compounds
 
         # Get the hit scores for the predictions
         # NOTE (cwognum): For this to work, the predictions need to specify the negative controls and base states as well.
@@ -67,10 +69,10 @@ class PhenorescueSuite(MetricSuite):
         #   We should thus provide the flexibility to specify the negative controls and base states in the predictions.
         y_pred = {}
         logger.info("Computing the hit scores for the predictions...")
-        for experiment, hit_scores, _ in rescue_screen_analysis(
+        for experiment, hit_scores, _, _ in rescue_screen_analysis(
             predictions.dataset,
             plot_destination=self._maybe_get_subdir("predicted"),
-            plot_hit_threshold=self.plot_hit_threshold,
+            plot_compounds=plot_compounds,
             embedding=self.embedding,
             embedding_kwargs=self.embedding_kwargs,
             random_state=self.random_state,

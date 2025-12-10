@@ -28,6 +28,7 @@ def rescue_screen_analysis(
     data: AnnotatedDataMatrix,
     plot_destination: Path | None = None,
     plot_hit_threshold: float | None = None,
+    plot_compounds: dict[str, list[str]] | None = None,
     n_standard_deviations_threshold: int = 10,
     random_state: int = 0,
     n_glyphs_for_clouds: int = 1000,
@@ -161,7 +162,29 @@ def rescue_screen_analysis(
             drugscreen_labels_plot = drugscreen_labels
 
             # Filter the compounds to show in the plot.
-            if plot_hit_threshold is not None:
+            if plot_compounds is not None:
+                indices = [
+                    idx
+                    for idx, (inchikey, _) in enumerate(drugscreen_labels)
+                    if inchikey in plot_compounds[experiment]
+                ]
+                drugscreen_xy_plot = drugscreen_xy_plot[indices]
+                drugscreen_labels_plot = [drugscreen_labels[i] for i in indices]
+
+                if plot_hit_threshold is not None:
+                    logger.warning(
+                        "plot_compounds takes precedence over plot_hit_threshold. Ignoring plot_hit_threshold."
+                    )
+
+                expected = set(plot_compounds[experiment])
+                found = set([inchikey for inchikey, _ in drugscreen_labels_plot])
+                if expected != found:
+                    logger.warning(
+                        f"Not all plot_compounds are present in the drugscreen labels. "
+                        f"Expected: {len(expected)}, Found: {len(found)}. Difference: {expected - found}"
+                    )
+
+            elif plot_hit_threshold is not None:
                 indices = [
                     idx
                     for idx, (inchikey, _) in enumerate(drugscreen_labels)
@@ -179,13 +202,25 @@ def rescue_screen_analysis(
                 n_standard_deviations_threshold=n_standard_deviations_threshold,
                 ax=ax,
             )
+            title = f"Prometheus Plot for Experiment {experiment}"
+            if plot_compounds is not None:
+                selected = set([inchikey for inchikey, _ in drugscreen_labels_plot])
+                title += f" (Plotting a subset of {len(selected)} compounds)"
+            elif plot_hit_threshold is not None:
+                title += f" (Plotting compounds with hit score >= {plot_hit_threshold})"
+            ax.set_title(title)
 
             fig.tight_layout()
             fig.savefig(plot_destination / f"rescue_screen_{experiment}.jpg")
             plt.close(fig)
 
         # Step 9: Return the hit scores
-        yield experiment, compound_level_hit_scores, perturbation_level_hit_scores
+        yield (
+            experiment,
+            compound_level_hit_scores,
+            perturbation_level_hit_scores,
+            [inchikey for inchikey, _ in drugscreen_labels_plot],
+        )
 
 
 if __name__ == "__main__":

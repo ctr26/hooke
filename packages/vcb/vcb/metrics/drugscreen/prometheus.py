@@ -64,8 +64,22 @@ def prometheus_plot(
         _, ax = plt.subplots(figsize=(10, 10))
 
     # Plot the disease model and healthy data clouds.
-    ax = sns.scatterplot(x=disease_model_xy[:, 0], y=disease_model_xy[:, 1], alpha=0.25, color="red")
-    ax = sns.scatterplot(x=control_xy[:, 0], y=control_xy[:, 1], alpha=0.25, color="green", ax=ax)
+    ax = sns.scatterplot(
+        x=disease_model_xy[:, 0],
+        y=disease_model_xy[:, 1],
+        alpha=0.25,
+        color="red",
+        label="Disease State",
+    )
+
+    ax = sns.scatterplot(
+        x=control_xy[:, 0],
+        y=control_xy[:, 1],
+        alpha=0.25,
+        color="green",
+        label="Healthy State",
+        ax=ax,
+    )
 
     # Plot treatment data.
     # For each compound, this is a "curve" of points corresponding to different doses.
@@ -110,8 +124,8 @@ def prometheus_plot(
 
     # Basic labeling and styling.
     ax.grid()
-    ax.set_ylabel("Side Effect Score Median", fontsize=12, fontweight="bold")
-    ax.set_xlabel("Disease Score Median", fontsize=12, fontweight="bold")
+    ax.set_ylabel("Side Effect Score", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Disease Score", fontsize=12, fontweight="bold")
     ax.set_title("Prometheus Plot", fontsize=14, fontweight="bold")
 
     # Set the axis limits.
@@ -119,4 +133,8 @@ def prometheus_plot(
     y_max = y_mean + n_standard_deviations_threshold * 2 * y_std
     ax.set_ylim(y_min, y_max)
     ax.set_xlim(-1, 2)
+
+    # Add legend
+    ax.legend()
+
     return ax

@@ -135,7 +135,7 @@ class EvaluationConfig(BaseModel):
                 "Extending the predictions with the base states and controls from the ground truth. "
                 f"For simplicity, we only keep the {len(intersection)} columns that overlap between the predictions and the ground truth! "
                 f"Starting with {len(p_obs.columns)} columns for the predictions and {len(gt_obs_base_ctrl.columns)} columns for the ground truth. "
-                "This should be ok when used within vcb, if you run into issue please double check!"
+                "This should be ok when used within vcb, but if you run into issues, please double check this part."
             )
 
             # Extend the predictions with the base states and controls
