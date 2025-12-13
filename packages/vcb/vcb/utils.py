@@ -3,6 +3,11 @@ from typing import Iterator
 import polars as pl
 from tqdm import tqdm
 
+try:
+    import txam
+except ImportError:
+    txam = None
+
 
 def predicate_group_by(
     df: pl.DataFrame, cols: set[str], description: str = ""
@@ -18,3 +23,7 @@ def predicate_group_by(
         group = df.filter(*predicate)
         label = {cols[idx]: value[idx] for idx in range(len(cols))}
         yield label, group, predicate
+
+
+def is_txam_installed() -> bool:
+    return txam is not None

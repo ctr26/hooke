@@ -49,24 +49,15 @@ class SinglesTaskAdapter(TaskAdapter):
     context_groupby_cols: list[str] = Field(default_factory=lambda: ["cell_type"])
     perturbation_splitting_col: str = Field(default="inchikey")
 
-    _filtered_perturbed_obs: pl.DataFrame | None = None
-    _filtered_basal_obs: pl.DataFrame | None = None
-
     @property
     def perturbation_length_filter(self) -> pl.Expr:
         return pl.col("perturbations").list.len().le(1)
 
     def get_all_perturbed_obs(self) -> pl.DataFrame:
-        if self._filtered_perturbed_obs is None:
-            self._filtered_perturbed_obs = self.dataset.obs.filter(~pl.col("is_negative_control"))
-
-        return self._filtered_perturbed_obs
+        return self.dataset.obs.filter(~pl.col("is_negative_control"))
 
     def get_all_basal_obs(self) -> pl.DataFrame:
-        if self._filtered_basal_obs is None:
-            self._filtered_basal_obs = self.dataset.obs.filter(pl.col("is_negative_control"))
-
-        return self._filtered_basal_obs
+        return self.dataset.obs.filter(pl.col("is_negative_control"))
 
     def prepare(self) -> None:
         """
@@ -87,8 +78,6 @@ class SinglesTaskAdapter(TaskAdapter):
         self.dataset.obs = obs
 
         self.dataset._obs_is_prepared = True
-        self._filtered_perturbed_obs = None
-        self._filtered_basal_obs = None
 
     def get_basal_states(self, *predictates: pl.Expr) -> np.ndarray:
         obs = self.get_all_basal_obs().filter(*predictates)

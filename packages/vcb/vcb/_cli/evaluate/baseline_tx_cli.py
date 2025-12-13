@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 from vcb._cli.evaluate.tx_cli import tx_evaluate_cli
 from vcb.baselines import BASELINES
 from vcb.data_models.config import TASK_ADAPTERS_TYPE
-from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.data_models.dataset.anndata import TxAnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.split import Split
 from vcb.preprocessing.steps.log1p import Log1pStep
@@ -77,7 +77,7 @@ def run_baseline_tx_cli(
 
     # Load the ground truth dataset.
     ground_truth_paths = DatasetDirectory(root=ground_truth_path).model_dump()
-    ground_truth = AnnotatedDataMatrix(**ground_truth_paths)
+    ground_truth = TxAnnotatedDataMatrix(**ground_truth_paths, var_gene_id_column=ground_truth_gene_id_column)
 
     # Subset the genes.
     # NOTE (cwognum): This assumes the ground truth genes are a superset of the prediction genes.
@@ -88,7 +88,7 @@ def run_baseline_tx_cli(
         .to_list()
     )
 
-    MatchGenesStep(gene_subset=gene_subset).transform_single(ground_truth, ground_truth_gene_id_column)
+    MatchGenesStep(gene_subset=gene_subset).transform_single(ground_truth)
     ScaleCountsStep(library_size=library_size).transform_single(ground_truth)
     Log1pStep().transform_single(ground_truth)
 

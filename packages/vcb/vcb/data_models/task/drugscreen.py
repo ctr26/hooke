@@ -114,34 +114,23 @@ class DrugscreenTaskAdapter(TaskAdapter):
     batch_groupby_cols: list[str] = Field(default_factory=lambda: ["batch_center"])
     context_groupby_cols: list[str] = Field(default_factory=lambda: ["plate_disease_model", "cell_type"])
 
-    _filtered_perturbed_obs: pl.DataFrame | None = None
-    _filtered_basal_obs: pl.DataFrame | None = None
-
     def get_all_perturbed_obs(self) -> pl.DataFrame:
-        if self._filtered_perturbed_obs is None:
-            obs = self.dataset.obs
-            obs = obs.filter(pl.col("drugscreen_query"))
+        obs = self.dataset.obs
+        obs = obs.filter(pl.col("drugscreen_query"))
 
-            mask = pl.col("perturbations").list.len().eq(2)
-            skipped = obs.filter(~mask)
-            if len(skipped) > 0:
-                logger.warning(
-                    f"Some observations had more than two perturbations. They were skipped.\n"
-                    f"Path: {self.dataset.obs_path}\n"
-                    f"IDs: {skipped['obs_id'].to_list()}"
-                )
+        mask = pl.col("perturbations").list.len().eq(2)
+        skipped = obs.filter(~mask)
+        if len(skipped) > 0:
+            logger.warning(
+                f"Some observations had more than two perturbations. They were skipped.\n"
+                f"Path: {self.dataset.obs_path}\n"
+                f"IDs: {skipped['obs_id'].to_list()}"
+            )
 
-            obs = obs.filter(mask)
-
-            self._filtered_perturbed_obs = obs
-
-        return self._filtered_perturbed_obs
+        return obs.filter(mask)
 
     def get_all_basal_obs(self) -> pl.DataFrame:
-        if self._filtered_basal_obs is None:
-            obs = self.dataset.obs.filter(pl.col("is_base_state"))
-            self._filtered_basal_obs = obs
-        return self._filtered_basal_obs
+        return self.dataset.obs.filter(pl.col("is_base_state"))
 
     def prepare(self) -> None:
         """
@@ -161,8 +150,6 @@ class DrugscreenTaskAdapter(TaskAdapter):
         self.dataset.obs = obs
 
         self.dataset._obs_is_prepared = True
-        self._filtered_perturbed_obs = None
-        self._filtered_basal_obs = None
 
     def get_basal_states(self, *predictates: pl.Expr) -> np.ndarray:
         obs = self.get_all_basal_obs().filter(*predictates)

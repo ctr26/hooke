@@ -3,7 +3,7 @@ from typing import Annotated, List, Literal, Union
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.data_models.dataset.anndata import AnnotatedDataMatrix, TxAnnotatedDataMatrix
 from vcb.preprocessing.steps.log1p import InverseLog1pStep, Log1pStep
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
 from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
@@ -50,7 +50,7 @@ class TranscriptomicsPreprocessingPipeline(PreprocessingPipeline):
 
     kind: Literal["transcriptomics"] = "transcriptomics"
 
-    def transform(self, ground_truth: AnnotatedDataMatrix, predictions: AnnotatedDataMatrix):
+    def transform(self, ground_truth: TxAnnotatedDataMatrix, predictions: TxAnnotatedDataMatrix):
         # for the ground truth, because we expect raw count data, we will flag non-integers; or a lack of notable skew
         # for skew it's an imprecise science, given that datasets vary _a lot_ by sequencing type and specialization of cell type
         if not integer_only(ground_truth.X):

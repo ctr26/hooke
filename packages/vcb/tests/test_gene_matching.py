@@ -3,7 +3,7 @@ from unittest.mock import Mock
 import polars as pl
 import pytest
 
-from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.data_models.dataset.anndata import TxAnnotatedDataMatrix
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
 
 
@@ -11,22 +11,17 @@ def test_match_gene_space():
     """Test that match_gene_space correctly finds intersection of genes and sets indices."""
 
     # Create mock AnnotatedDataMatrix objects
-    mock_a = Mock(spec=AnnotatedDataMatrix)
-    mock_b = Mock(spec=AnnotatedDataMatrix)
+    mock_a = Mock(spec=TxAnnotatedDataMatrix)
+    mock_b = Mock(spec=TxAnnotatedDataMatrix)
 
     # Set up the var property to return our test data
     mock_a.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2", "GENE3", "GENE4"]})
     mock_b.var = pl.DataFrame({"ensembl_gene_id": ["GENE3", "GENE5", "GENE6", "GENE2"]})
+    mock_a.gene_ids = ["GENE1", "GENE2", "GENE3", "GENE4"]
+    mock_b.gene_ids = ["GENE3", "GENE5", "GENE6", "GENE2"]
 
     # Call the function
-    (
-        MatchGenesStep(
-            ground_truth_gene_id_column="ensembl_gene_id",
-            predictions_gene_id_column="ensembl_gene_id",
-        )
-        .fit(mock_a, mock_b)
-        .transform(mock_a, mock_b)
-    )
+    (MatchGenesStep().fit(mock_a, mock_b).transform(mock_a, mock_b))
 
     # Verify set_var_indices was called with correct indices
     # Expected intersection: ["GENE2", "GENE3"]
@@ -39,12 +34,14 @@ def test_match_gene_space():
 def test_match_genes_fit_and_transform():
     """Test that MatchGenesStep correctly fits gene intersection and transforms data."""
 
-    mock_ground_truth = Mock(spec=AnnotatedDataMatrix)
-    mock_predictions = Mock(spec=AnnotatedDataMatrix)
+    mock_ground_truth = Mock(spec=TxAnnotatedDataMatrix)
+    mock_predictions = Mock(spec=TxAnnotatedDataMatrix)
 
     # Set up gene data with some overlap
     mock_ground_truth.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2", "GENE3", "GENE4"]})
-    mock_predictions.var = pl.DataFrame({"ensembl_gene_id": ["GENE2", "GENE3", "GENE5", "GENE6"]})
+    mock_predictions.var = pl.DataFrame({"ensembl_gene_id": ["GENE3", "GENE5", "GENE6", "GENE2"]})
+    mock_ground_truth.gene_ids = ["GENE1", "GENE2", "GENE3", "GENE4"]
+    mock_predictions.gene_ids = ["GENE2", "GENE3", "GENE5", "GENE6"]
 
     step = MatchGenesStep()
     assert not step.fitted
@@ -65,12 +62,14 @@ def test_match_genes_fit_and_transform():
 def test_match_genes_different_gene_id_columns():
     """Test that MatchGenesStep works with different gene ID column names."""
 
-    mock_gt = Mock(spec=AnnotatedDataMatrix)
-    mock_pred = Mock(spec=AnnotatedDataMatrix)
+    mock_gt = Mock(spec=TxAnnotatedDataMatrix)
+    mock_pred = Mock(spec=TxAnnotatedDataMatrix)
 
     # Use different column names
     mock_gt.var = pl.DataFrame({"gene_symbol": ["GENE1", "GENE2", "GENE3"]})
     mock_pred.var = pl.DataFrame({"ensembl_id": ["GENE2", "GENE3", "GENE4"]})
+    mock_gt.gene_ids = ["GENE1", "GENE2", "GENE3"]
+    mock_pred.gene_ids = ["GENE2", "GENE3", "GENE4"]
 
     step = MatchGenesStep(ground_truth_gene_id_column="gene_symbol", predictions_gene_id_column="ensembl_id")
 
@@ -87,12 +86,14 @@ def test_match_genes_different_gene_id_columns():
 def test_match_genes_no_intersection():
     """Test that MatchGenesStep handles case with no gene intersection."""
 
-    mock_gt = Mock(spec=AnnotatedDataMatrix)
-    mock_pred = Mock(spec=AnnotatedDataMatrix)
+    mock_gt = Mock(spec=TxAnnotatedDataMatrix)
+    mock_pred = Mock(spec=TxAnnotatedDataMatrix)
 
     # No overlapping genes
     mock_gt.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2"]})
     mock_pred.var = pl.DataFrame({"ensembl_gene_id": ["GENE3", "GENE4"]})
+    mock_gt.gene_ids = ["GENE1", "GENE2"]
+    mock_pred.gene_ids = ["GENE3", "GENE4"]
 
     step = MatchGenesStep()
     fitted_step = step.fit(mock_gt, mock_pred)
@@ -104,13 +105,15 @@ def test_match_genes_no_intersection():
 def test_match_genes_complete_overlap():
     """Test that MatchGenesStep handles case with complete gene overlap."""
 
-    mock_gt = Mock(spec=AnnotatedDataMatrix)
-    mock_pred = Mock(spec=AnnotatedDataMatrix)
+    mock_gt = Mock(spec=TxAnnotatedDataMatrix)
+    mock_pred = Mock(spec=TxAnnotatedDataMatrix)
 
     # Identical gene sets
     genes = ["GENE1", "GENE2", "GENE3"]
     mock_gt.var = pl.DataFrame({"ensembl_gene_id": genes})
     mock_pred.var = pl.DataFrame({"ensembl_gene_id": genes})
+    mock_gt.gene_ids = genes
+    mock_pred.gene_ids = genes
 
     step = MatchGenesStep()
     step.fit(mock_gt, mock_pred)
@@ -125,12 +128,14 @@ def test_match_genes_complete_overlap():
 def test_match_genes_with_none_values():
     """Test that MatchGenesStep handles None values in gene IDs."""
 
-    mock_gt = Mock(spec=AnnotatedDataMatrix)
-    mock_pred = Mock(spec=AnnotatedDataMatrix)
+    mock_gt = Mock(spec=TxAnnotatedDataMatrix)
+    mock_pred = Mock(spec=TxAnnotatedDataMatrix)
 
     # Include None values that should be filtered out
     mock_gt.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", None, "GENE2"]})
     mock_pred.var = pl.DataFrame({"ensembl_gene_id": ["GENE2", "GENE3", None]})
+    mock_gt.gene_ids = ["GENE1", None, "GENE2"]
+    mock_pred.gene_ids = ["GENE2", "GENE3", None]
 
     step = MatchGenesStep()
     step.fit(mock_gt, mock_pred)
@@ -148,8 +153,8 @@ def test_match_genes_not_fitted_error():
     """Test that transform raises error when not fitted."""
 
     step = MatchGenesStep()
-    mock_gt = Mock(spec=AnnotatedDataMatrix)
-    mock_pred = Mock(spec=AnnotatedDataMatrix)
+    mock_gt = Mock(spec=TxAnnotatedDataMatrix)
+    mock_pred = Mock(spec=TxAnnotatedDataMatrix)
 
     with pytest.raises(RuntimeError, match="The gene subset is not fitted"):
         step.transform(mock_gt, mock_pred)
@@ -158,12 +163,14 @@ def test_match_genes_not_fitted_error():
 def test_match_genes_different_gene_counts_error():
     """Test that transform raises error when datasets have different gene counts after matching."""
 
-    mock_gt = Mock(spec=AnnotatedDataMatrix)
-    mock_pred = Mock(spec=AnnotatedDataMatrix)
+    mock_gt = Mock(spec=TxAnnotatedDataMatrix)
+    mock_pred = Mock(spec=TxAnnotatedDataMatrix)
 
     # Set up overlapping genes
     mock_gt.var = pl.DataFrame({"ensembl_gene_id": ["GENE1", "GENE2"]})
     mock_pred.var = pl.DataFrame({"ensembl_gene_id": ["GENE2", "GENE3"]})
+    mock_gt.gene_ids = ["GENE1", "GENE2"]
+    mock_pred.gene_ids = ["GENE2", "GENE3"]
 
     # Mock set_var_indices to simulate different final gene counts
     def mock_set_var_indices_gt(var_indices):

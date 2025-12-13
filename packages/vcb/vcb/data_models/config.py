@@ -146,6 +146,14 @@ class EvaluationConfig(BaseModel):
                 ),
                 X=np.concatenate([p_X, gt_X_base_ctrl], axis=0),
             )
+        # Sort the ground truth and predictions by their obs id.
+        # For most tasks, this shouldn't matter.
+        self.ground_truth.dataset.filter(
+            obs_indices=self.ground_truth.dataset.obs["obs_id"].arg_sort().to_list()
+        )
+        self.predictions.dataset.filter(
+            obs_indices=self.predictions.dataset.obs["obs_id"].arg_sort().to_list()
+        )
 
         # final task adapter specific preparation
         self.ground_truth.prepare()

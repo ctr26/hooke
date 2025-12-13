@@ -7,7 +7,7 @@ from pydantic import TypeAdapter
 from typing_extensions import Annotated
 
 from vcb.data_models.config import TASK_ADAPTERS_TYPE, EvaluationConfig
-from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.data_models.dataset.anndata import TxAnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.dataset.predictions import PredictionPaths
 from vcb.data_models.metrics.suite import MetricSuite
@@ -19,6 +19,7 @@ from vcb.preprocessing.pipeline import TranscriptomicsPreprocessingPipeline
 from vcb.preprocessing.steps.log1p import InverseLog1pStep, Log1pStep
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
 from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
+from vcb.utils import is_txam_installed
 
 
 def get_metric_suites_for_task_id(
@@ -36,11 +37,18 @@ def get_metric_suites_for_task_id(
     ]
 
     if task_id == "phenorescue":
+        if is_txam_installed():
+            embedding = "txam"
+            embedding_kwargs = {}
+        else:
+            embedding = "pca"
+            embedding_kwargs = {"n_components": 128}
+
         rescue_suite = PhenorescueSuite(
             metric_labels={"hit_score_error", "hit_classification", "hit_ranking"},
             plot_destination=save_destination / "phenorescue",
-            embedding="pca",
-            embedding_kwargs={"n_components": 128},
+            embedding=embedding,
+            embedding_kwargs=embedding_kwargs,
             plot_hit_threshold=None,
         )
         suites.append(rescue_suite)
@@ -139,15 +147,19 @@ def tx_evaluate_cli(
     evaluate_in_logspace = True
 
     # Load the ground truth.
-    ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
+    ground_truth = TxAnnotatedDataMatrix(
+        **DatasetDirectory(root=ground_truth_path).model_dump(),
+        var_gene_id_column=ground_truth_gene_id_column,
+    )
 
     # Load the predictions.
-    predictions = AnnotatedDataMatrix(
+    predictions = TxAnnotatedDataMatrix(
         **PredictionPaths(root=predictions_path).model_dump(),
         var_path=predictions_var_path,
         metadata_path=ground_truth.metadata_path,
         features_layer=predictions_features_layer,
         zarr_index_column=predictions_zarr_index_column,
+        var_gene_id_column=predictions_gene_id_column,
     )
 
     type_adapter = TypeAdapter(TASK_ADAPTERS_TYPE)
@@ -167,10 +179,7 @@ def tx_evaluate_cli(
         use_validation_split=use_validation_split,
         preprocessing_pipeline=TranscriptomicsPreprocessingPipeline(
             steps=[
-                MatchGenesStep(
-                    ground_truth_gene_id_column=ground_truth_gene_id_column,
-                    predictions_gene_id_column=predictions_gene_id_column,
-                ),
+                MatchGenesStep(),
                 InverseLog1pStep(
                     transform_predictions=predictions_are_in_logspace,
                     transform_ground_truth=False,

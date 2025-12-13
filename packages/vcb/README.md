@@ -9,6 +9,12 @@ We recommend using [`uv`](https://docs.astral.sh/uv/).
 uv sync
 ```
 
+> [!WARNING]
+> If the installation hangs on resolving the dependencies, make sure you are authenticated to Github
+> using SSH (i.e. `ssh-add`). We're installling from a private repository, and `uv` doesn't support other authentication method, 
+> nor does it throw an error message in case authentication details are missing. It rather just gets stuck!
+> See also [this Github issue](https://github.com/astral-sh/uv/issues/3783).
+
 ## Usage
 
 Installing this package makes a CLI command available.

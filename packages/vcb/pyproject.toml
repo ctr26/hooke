@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "loguru>=0.7.3",
     "matplotlib>=3.10.7",
+    "numpy>=1.26.4",
     "polars>=1.33.0",
     "pydantic>=2.11.7",
     "scikit-learn>=1.7.1",
@@ -44,9 +45,18 @@ dev = [
 [project.scripts]
 vcb = "vcb.cli:app"
 
+[project.optional-dependencies]
+txam = [
+    "txam",
+    "torch",
+]
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "--verbose --durations=10 --cov=vcb --cov-fail-under=50 --cov-report xml --cov-report term-missing"
 testpaths = ["tests"]
 pythonpath = "."
 filterwarnings = ["ignore::DeprecationWarning:jupyter_client.connect.*:"]
+
+[tool.uv.sources]
+txam = { git = "ssh://git@github.com/valence-labs/txam-inference" }

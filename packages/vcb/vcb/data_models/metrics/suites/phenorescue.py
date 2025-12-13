@@ -22,7 +22,7 @@ class PhenorescueSuite(MetricSuite):
 
     kind: Literal["phenorescue"] = "phenorescue"
 
-    embedding: Literal["pca"] | None = None
+    embedding: Literal["txam", "pca"] | None = None
     embedding_kwargs: dict = Field(default_factory=dict)
 
     plot_destination: Path | None = None

@@ -8,7 +8,8 @@ from loguru import logger
 from sklearn.decomposition import PCA
 from tqdm import tqdm
 
-from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.constants import TXAM_MODEL_PATH
+from vcb.data_models.dataset.anndata import AnnotatedDataMatrix, TxAnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.task.drugscreen import add_compound_perturbation_to_obs
 from vcb.metrics.drugscreen.hit_score import aggregate_hit_scores_per_compound, compute_hit_scores
@@ -22,34 +23,61 @@ from vcb.metrics.drugscreen.sampling import (
 )
 from vcb.metrics.drugscreen.utils import SynchronizedDataset
 from vcb.metrics.utils.transforms import pcaw_transform_data
+from vcb.utils import is_txam_installed
 
 
 def rescue_screen_analysis(
-    data: AnnotatedDataMatrix,
+    dataset: AnnotatedDataMatrix,
     plot_destination: Path | None = None,
     plot_hit_threshold: float | None = None,
     plot_compounds: dict[str, list[str]] | None = None,
     n_standard_deviations_threshold: int = 10,
     random_state: int = 0,
     n_glyphs_for_clouds: int = 1000,
-    embedding: Literal["pca"] | None = None,
+    embedding: Literal["txam", "pca"] | None = None,
     embedding_kwargs: dict | None = None,
 ):
     """
     Given drugscreen data, scores the ability of a compound to revert a disease state to a healthy state.
     """
 
-    data = SynchronizedDataset(obs=data.obs.clone(), X=data.X.copy())
+    data = SynchronizedDataset(obs=dataset.obs.clone(), X=dataset.X.copy())
 
     if embedding_kwargs is None:
         embedding_kwargs = {}
-    if "random_state" not in embedding_kwargs:
-        embedding_kwargs["random_state"] = random_state
 
-    # TODO (cwognum): Would love to incorporate TxAM here!
     if embedding == "pca":
-        logger.info(f"Embedding the data using PCA with {embedding_kwargs}...")
-        data.X = PCA(**embedding_kwargs).fit_transform(data.X)
+        if "random_state" not in embedding_kwargs:
+            embedding_kwargs["random_state"] = random_state
+
+        controls = data.filter(pl.col("is_negative_control"))
+        disease_models = data.filter(pl.col("is_base_state"))
+        fit_data = controls.join(disease_models)
+
+        data.X = PCA(**embedding_kwargs).fit(fit_data.X).transform(data.X)
+
+        logger.info(f"Embedding the data using PCA with {embedding_kwargs} to shape {data.X.shape}.")
+
+    elif embedding == "txam":
+        if not isinstance(dataset, TxAnnotatedDataMatrix):
+            raise TypeError("TxAM embeddings are only supported for TxAnnotatedDataMatrix datasets.")
+        if not is_txam_installed():
+            raise ImportError(
+                "Please install the optional txam dependency to use TxAM embeddings using `uv sync --extra txam`."
+            )
+
+        import torch
+        from txam import TxAMEncoder
+
+        if "model_path" not in embedding_kwargs:
+            embedding_kwargs["model_path"] = TXAM_MODEL_PATH
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = TxAMEncoder.from_pretrained(embedding_kwargs["model_path"], device=device)
+        data.X = model.encode(data.X, gene_names=dataset.gene_ids)
+
+        logger.info(f"Embedding the data using TxAM with {embedding_kwargs} to shape {data.X.shape}.")
+
     elif embedding is not None:
         raise ValueError(f"Unsupported embedding: {embedding}")
 
@@ -70,7 +98,7 @@ def rescue_screen_analysis(
                 f"No control data found for experiment {experiment}. "
                 "Did you include the negative controls as part of the predictions?"
             )
-        control.filter(isolation_outlier_mask(control.X, random_state=random_state))
+        control = control.filter(isolation_outlier_mask(control.X, random_state=random_state))
 
         disease_model = experiment_data.filter(pl.col("is_base_state"))
         if len(disease_model) == 0:
@@ -78,7 +106,9 @@ def rescue_screen_analysis(
                 f"No disease model data found for experiment {experiment}. "
                 "Did you include the base states as part of the predictions?"
             )
-        disease_model.filter(isolation_outlier_mask(disease_model.X, random_state=random_state))
+        disease_model = disease_model.filter(
+            isolation_outlier_mask(disease_model.X, random_state=random_state)
+        )
 
         # Step 3: Data transformation using PCA Whitening
         experiment_data = control.join(disease_model).join(experiment_data.filter(pl.col("drugscreen_query")))

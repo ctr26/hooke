@@ -227,3 +227,15 @@ class AnnotatedDataMatrix(BaseModel):
             raise ValueError(f"Unexpected shape {X.shape} does not have length in [2, 3]")
 
         return X
+
+
+class TxAnnotatedDataMatrix(AnnotatedDataMatrix):
+    """
+    An annotated data matrix for transcriptomics data.
+    """
+
+    var_gene_id_column: str = "ensembl_gene_id"
+
+    @property
+    def gene_ids(self) -> list[str]:
+        return self.var[self.var_gene_id_column].to_list()

@@ -1,12 +1,12 @@
-import pytest
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import polars as pl
-import tempfile
+import pytest
 import zarr
-from pathlib import Path
 
-from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
+from vcb.data_models.dataset.anndata import TxAnnotatedDataMatrix
 from vcb.preprocessing.pipeline import PreprocessingPipeline
 from vcb.preprocessing.steps.log1p import Log1pStep
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
@@ -49,8 +49,18 @@ def gt_and_pred():
         zarr.save(features_path_p, features_p)
 
         out = (
-            AnnotatedDataMatrix(obs_path=obs_path, var_path=var_path, features_path=features_path),
-            AnnotatedDataMatrix(obs_path=obs_path_p, var_path=var_path_p, features_path=features_path_p),
+            TxAnnotatedDataMatrix(
+                obs_path=obs_path,
+                var_path=var_path,
+                features_path=features_path,
+                var_gene_id_column="ensembl_gene_id",
+            ),
+            TxAnnotatedDataMatrix(
+                obs_path=obs_path_p,
+                var_path=var_path_p,
+                features_path=features_path_p,
+                var_gene_id_column="ensembl_gene_id",
+            ),
         )
         yield out
 
