@@ -14,6 +14,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision.utils import save_image
 from tqdm import tqdm
 
+from adaptor import DataFrameTokenizer
 from dataset import CellPaintConverter, StabilityCPEncoder
 from model import DiTWrapper
 from utils.distributed import Distributed, rank_zero
@@ -46,6 +47,7 @@ class TrainState:
     ema: KarrasEMA  # EMA wrapper around DiT model
     opt: torch.optim.Optimizer
     global_step: int
+    tokenizer: DataFrameTokenizer  # Tokenizer for conditioning factors
 
     def _to_dict(self) -> dict:
         return {
@@ -53,6 +55,7 @@ class TrainState:
             "ddp": self.ddp.state_dict(),
             "ema": self.ema.state_dict(),
             "opt": self.opt.state_dict(),
+            "tokenizer": self.tokenizer.state_dict(),
         }
 
     @rank_zero()
@@ -64,11 +67,13 @@ class TrainState:
         os.rename(temp_path, path)
 
     def load_ckpt(self, path: str, device: torch.device) -> None:
-        state = torch.load(path, weights_only=True, map_location=device)
+        state = torch.load(path, weights_only=False, map_location=device)
         self.global_step = state["global_step"]
         self.ddp.load_state_dict(state["ddp"])
         self.ema.load_state_dict(state["ema"])
         self.opt.load_state_dict(state["opt"])
+        if "tokenizer" in state:
+            self.tokenizer = DataFrameTokenizer.from_state_dict(state["tokenizer"])
 
     def save_latest_ckpt(self, dir: str) -> None:
         path = os.path.join(dir, f"step_{self.global_step}.ckpt")
@@ -94,19 +99,23 @@ class TrainState:
 @ornamentalist.configure()
 def guided_prediction(
     model: DiTWrapper,
-    x, t, z, y, e, c,
+    x,
+    t,
+    meta: dict[str, torch.Tensor],
     cfg: float = ornamentalist.Configurable[1.0],
 ) -> torch.Tensor:  # fmt: off
     if t.ndim == 0:  # the ODE solver gives scalar t
         t = t.expand(x.shape[0])
 
     if cfg == 0.0:  # unconditional
-        return model(x=x, t=t, z=z, y=None, e=e, c=c)
+        force_drop = torch.ones(x.shape[0], device=x.device, dtype=torch.long)
+        return model(x=x, t=t, meta=meta, force_drop_rec_conc=force_drop)
     if cfg == 1.0:  # conditional
-        return model(x=x, t=t, z=z, y=y, e=e, c=c)
+        return model(x=x, t=t, meta=meta, force_drop_rec_conc=None)
 
-    pred_cond = model(x=x, t=t, z=z, y=y, e=e, c=c)
-    pred_null = model(x=x, t=t, z=z, y=None, e=e, c=c)
+    pred_cond = model(x=x, t=t, meta=meta, force_drop_rec_conc=None)
+    force_drop = torch.ones(x.shape[0], device=x.device, dtype=torch.long)
+    pred_null = model(x=x, t=t, meta=meta, force_drop_rec_conc=force_drop)
     return pred_null + cfg * (pred_cond - pred_null)
 
 
@@ -114,10 +123,7 @@ def guided_prediction(
 def generate(
     model: DiTWrapper,  # DiT, maps x,cond -> velocity
     x0: torch.Tensor,  # shape (B, C, H, W), sampled from N(0, I)
-    y1: torch.Tensor,  # shape (B,) - perturbation condition
-    z1: torch.Tensor,  # shape (B,) - zoom condition
-    e1: torch.Tensor,  # shape (B,) - experiment condition
-    c1: torch.Tensor,  # shape (B,) - cell type condition
+    meta1: dict[str, torch.Tensor],
 ) -> tuple[torch.Tensor, int]:
     """Generate a sample with the dopri5 probability flow ODE solver."""
     nfe = 0  # NB, if using guidance, the true nfe is this * 2
@@ -125,7 +131,7 @@ def generate(
     def forward_fn(t, x):
         nonlocal nfe
         nfe += 1
-        return guided_prediction(model, x=x, t=t, z=z1, y=y1, e=e1, c=c1)
+        return guided_prediction(model, x=x, t=t, meta=meta1)
 
     traj = torchdiffeq.odeint(
         forward_fn,
@@ -143,18 +149,15 @@ def compute_loss(
     model: DDP,  # DDP wrapper around DiT, maps t,x,y,z,e,c -> velocity
     x0: torch.Tensor,  # shape (B, C, H, W), sampled from source distribution
     x1: torch.Tensor,  # shape (B, C, H, W), sampled from target distribution
-    y1: torch.Tensor,  # shape (B,) - [0,perturbations)
-    z1: torch.Tensor,  # shape (B,) - zoom condition
-    e1: torch.Tensor,  # shape (B,) - experiment condition
-    c1: torch.Tensor,  # shape (B,) - cell type condition
+    meta1: dict[str, torch.Tensor],
 ) -> torch.Tensor:
-    t = torch.rand_like(y1, dtype=torch.float32)  # shape (B,) - [0,1)
+    t = torch.rand(x0.shape[0], device=x0.device, dtype=torch.float32)  # (B,) - [0,1)
     t_ = t.reshape(-1, 1, 1, 1).expand_as(x0)  # B -> B,C,H,W
 
     xt = torch.lerp(x0, x1, t_)
     ut = x1 - x0
 
-    vt = model(x=xt, t=t, z=z1, y=y1, e=e1, c=c1)
+    vt = model(x=xt, t=t, meta=meta1)
     return torch.nn.functional.mse_loss(vt, ut)
 
 
@@ -181,16 +184,10 @@ def evaluate(
         disable=D.rank != 0,  # only show from one process
     ):
         x1 = batch["img"]
-        y1 = batch["perturbation_id"]
-        exp = batch["experiment_id"]
-        cell_type = batch["cell_type_id"]
-        zoom = batch["zoom_id"]
+        meta = batch["meta"]
 
         x1 = x1.to(D.device, non_blocking=True)
-        y1 = y1.to(D.device, non_blocking=True)
-        exp = exp.to(D.device, non_blocking=True)
-        cell_type = cell_type.to(D.device, non_blocking=True)
-        zoom = zoom.to(D.device, non_blocking=True)
+        meta = {k: v.to(D.device, non_blocking=True) for k, v in meta.items()}
 
         x1 = vae.encode(x1)
         x0 = torch.randn_like(x1)
@@ -199,10 +196,7 @@ def evaluate(
             model=model,  # type: ignore
             x0=x0,
             x1=x1,
-            y1=y1,
-            z1=zoom,
-            e1=exp,
-            c1=cell_type,
+            meta1=meta,
         )
         running_loss += loss * x1.shape[0]
         num_samples += x1.shape[0]
@@ -234,26 +228,17 @@ def visualise(
 
     batch = next(iter(loader))
     x1 = batch["img"]
-    y1 = batch["perturbation_id"]
-    exp = batch["experiment_id"]
-    cell_type = batch["cell_type_id"]
-    zoom = batch["zoom_id"]
+    meta = batch["meta"]
 
     x1 = x1.to(D.device, non_blocking=True)
-    y1 = y1.to(D.device, non_blocking=True)
-    exp = exp.to(D.device, non_blocking=True)
-    cell_type = cell_type.to(D.device, non_blocking=True)
-    zoom = zoom.to(D.device, non_blocking=True)
+    meta = {k: v.to(D.device, non_blocking=True) for k, v in meta.items()}
 
     x1 = vae.encode(x1)
     x0 = torch.randn_like(x1)
     preds, nfe = generate(
         model=model,
         x0=x0,
-        y1=y1,
-        z1=zoom,
-        e1=exp,
-        c1=cell_type,
+        meta1=meta,
     )
     preds = vae.decode(preds)
     preds = cp2rgb(preds)  # uint8 [B, 3, H, W]
@@ -306,27 +291,17 @@ def compute_metrics(
         )
     ):
         x1 = batch["img"]
-        y1 = batch["perturbation_id"]
-
-        exp = batch["experiment_id"]
-        cell_type = batch["cell_type_id"]
-        zoom = batch["zoom_id"]
+        meta = batch["meta"]
 
         x1 = x1.to(D.device, non_blocking=True)
-        y1 = y1.to(D.device, non_blocking=True)
-        exp = exp.to(D.device, non_blocking=True)
-        cell_type = cell_type.to(D.device, non_blocking=True)
-        zoom = zoom.to(D.device, non_blocking=True)
+        meta = {k: v.to(D.device, non_blocking=True) for k, v in meta.items()}
 
         B, _, H, W = x1.shape
         x0 = torch.randn(B, 8, H // 8, W // 8, device=D.device)
         preds, _ = generate(
             model=model,
             x0=x0,
-            y1=y1,
-            z1=zoom,
-            e1=exp,
-            c1=cell_type,
+            meta1=meta,
         )
         preds = vae.decode(preds)
 
@@ -397,7 +372,7 @@ def train(
     ckpt_every_n_steps: int = ornamentalist.Configurable[50_000],
     metrics_every_n_steps: int = ornamentalist.Configurable[50_000],
 ) -> None:
-    prof = get_profiler(return_dummy=D.rank != 0, save_dir=output_dir)
+    # prof = get_profiler(return_dummy=D.rank != 0, save_dir=output_dir)
     start_step = state.global_step
     loader = infinite_dataloader(train_loader, start_step=start_step, fast_resume=True)
 
@@ -413,7 +388,7 @@ def train(
     running_loss = torch.tensor(0.0, device=D.device)
     num_samples = torch.tensor(0, device=D.device)
     start_time = time.time()
-    prof.start()
+    # prof.start()
     for _, batch in tqdm(
         zip(range(start_step, num_steps), loader),
         desc="Training",
@@ -424,16 +399,10 @@ def train(
     ):
         state.ddp.train()
         x1 = batch["img"]
-        y1 = batch["perturbation_id"]
-        exp = batch["experiment_id"]
-        cell_type = batch["cell_type_id"]
-        zoom = batch["zoom_id"]
+        meta = batch["meta"]
 
         x1 = x1.to(D.device, non_blocking=True)
-        y1 = y1.to(D.device, non_blocking=True)
-        exp = exp.to(D.device, non_blocking=True)
-        cell_type = cell_type.to(D.device, non_blocking=True)
-        zoom = zoom.to(D.device, non_blocking=True)
+        meta = {k: v.to(D.device, non_blocking=True) for k, v in meta.items()}
 
         x1 = vae.encode(x1)
         x0 = torch.randn_like(x1)
@@ -441,10 +410,7 @@ def train(
             model=state.ddp,
             x0=x0,
             x1=x1,
-            y1=y1,
-            z1=zoom,
-            e1=exp,
-            c1=cell_type,
+            meta1=meta,
         )
         running_loss += loss.detach() * x0.shape[0]  # total batch loss
         num_samples += x0.shape[0]
@@ -453,7 +419,7 @@ def train(
 
         state.global_step += 1
         step(state.global_step, state.opt, state.ema, state.ddp)
-        prof.step()
+        # prof.step()
 
         if state.global_step % log_every_n_steps == 0:
             elapsed_time = time.time() - start_time
@@ -477,6 +443,10 @@ def train(
                     "train/grad_norm": grad_norm,
                 },
             )
+        if state.global_step % ckpt_every_n_steps == 0:
+            ckpt_dir = os.path.join(output_dir, "checkpoints")
+            log(step=state.global_step, msg=f"Saving checkpoint to {ckpt_dir}")
+            state.save_latest_ckpt(dir=ckpt_dir)
 
         if state.global_step % eval_every_n_steps == 0:
             visualise(
@@ -502,11 +472,6 @@ def train(
                     D=D,
                     use_ema=True,
                 )
-
-        if state.global_step % ckpt_every_n_steps == 0:
-            ckpt_dir = os.path.join(output_dir, "checkpoints")
-            log(step=state.global_step, msg=f"Saving checkpoint to {ckpt_dir}")
-            state.save_latest_ckpt(dir=ckpt_dir)
 
     log(step=state.global_step, msg="Training complete")
     return

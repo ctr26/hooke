@@ -63,6 +63,9 @@ class SelfAttention(nn.Module):
         )  # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # Reshape mask from (B, T) to (B, 1, 1, T) for broadcasting with attention scores
+        if mask is not None:
+            mask = mask[:, None, None, :]
         y = nn.functional.scaled_dot_product_attention(
             q,
             k,

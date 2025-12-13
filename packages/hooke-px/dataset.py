@@ -1,4 +1,6 @@
+import dataclasses
 from typing import Callable
+import logging
 
 import diffusers
 import ornamentalist
@@ -8,6 +10,11 @@ import zarr
 import zarr.core
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.transforms import v2
+
+from adaptor import DataFrameTokenizer
+
+logging.basicConfig(level=logging.INFO)
+_log = logging.getLogger(__name__)
 
 # encode these cols as ints in the range [0, num_classes)
 # no harm in this being larger than the actual number of unique labels
@@ -151,15 +158,19 @@ class CellDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         metadata: pl.DataFrame,
+        tokenizer: DataFrameTokenizer,
         train: bool,
         size: int,
-        multiscale: bool = True,
+        multiscale: bool = False,
     ):
         required_cols = [
-            "path",
-            "experiment",
-            "perturbation",
+            "image_path",
             "cell_type",
+            "experiment_label",
+            "image_type",
+            "well_address",
+            "rec_id",
+            "concentration",
         ]
         assert all(col in metadata.columns for col in required_cols), (
             f"metadata must have the following columns: {required_cols}"
@@ -169,45 +180,71 @@ class CellDataset(torch.utils.data.Dataset):
         self.multiscale = multiscale
         self.size = size
         self.train = train
+        self.tokenizer = tokenizer
 
     def __len__(self):
         return len(self.metadata)
 
-    def __getitem__(self, index: int):
-        row = self.metadata.row(index, named=True)
-        path = row["path"]
-        perturbation_id = row["perturbation_id"]
-        experiment_id = row["experiment_id"]
-        cell_type_id = row["cell_type_id"]
-
-        # uint8 array (lazy loaded memory-mapped file)
-        array = zarr.open_array(path, mode="r")
-        with torch.inference_mode():
-            if self.multiscale:
-                crop_size = 2 * int(
-                    torch.randint(MIN_CROP_SIZE // 2, MAX_CROP_SIZE // 2, (1,)).item()
-                )
-            else:
-                crop_size = self.size
-
-            if self.train:
-                tensor = random_crop_zarr(array, crop_size, border=256)
-            else:
-                tensor = center_crop_zarr(array, crop_size)
-
-            # C x H x W at this point. Will be stacked into
-            # B x C x H x W by collate_fn in the dataloader
-            tensor = self.transforms(tensor)
-
-        # normalize to [0, 1]
-        zoom_id = (crop_size - MIN_CROP_SIZE) / (MAX_CROP_SIZE - MIN_CROP_SIZE)
+    def _get_fallback_sample(self):
+        """Return a valid fallback sample with zeros when data loading fails."""
+        tensor = torch.zeros(6, self.size, self.size, dtype=torch.uint8)
+        # Use first row as fallback metadata (will be masked out anyway)
+        fallback_row = self.metadata.row(0, named=True)
         return {
             "img": tensor,
-            "zoom_id": zoom_id,
-            "perturbation_id": perturbation_id,
-            "experiment_id": experiment_id,
-            "cell_type_id": cell_type_id,
+            "meta": self.tokenizer(fallback_row),
         }
+
+    def __getitem__(self, index: int):
+        try:
+            row = self.metadata.row(index, named=True)
+            path = row["image_path"]
+            # uint8 array (lazy loaded memory-mapped file)
+            array = zarr.open_array(path, mode="r")
+            with torch.inference_mode():
+                if self.multiscale:
+                    crop_size = 2 * int(
+                        torch.randint(
+                            MIN_CROP_SIZE // 2, MAX_CROP_SIZE // 2, (1,)
+                        ).item()
+                    )
+                else:
+                    crop_size = self.size
+
+                if self.train:
+                    tensor = random_crop_zarr(array, crop_size, border=256)
+                else:
+                    tensor = center_crop_zarr(array, crop_size)
+
+                # C x H x W at this point. Will be stacked into
+                # B x C x H x W by collate_fn in the dataloader
+                tensor = self.transforms(tensor)
+                if tensor.shape[0] == 3:
+                    tensor = torch.cat([tensor, tensor], dim=0)
+
+            sample = {
+                "img": tensor,
+                "meta": self.tokenizer(row),
+            }
+            return sample
+        except Exception as e:
+            _log.warning(
+                "Failed to load sample at index %d. Falling back to zeros. Error: %s",
+                index,
+                e,
+            )
+            return self._get_fallback_sample()
+
+
+@dataclasses.dataclass(frozen=True)
+class MetaVocab:
+    rec_id_dim: int
+    concentration_dim: int
+    cell_type_dim: int
+    experiment_dim: int
+    image_type_dim: int
+    well_address_dim: int
+    pad_length: int
 
 
 @ornamentalist.configure()
@@ -219,23 +256,34 @@ def get_dataloaders(
     batch_size: int = ornamentalist.Configurable[64],
     num_workers: int = ornamentalist.Configurable[16],
     pin_memory: bool = ornamentalist.Configurable[True],
-    multiscale: bool = ornamentalist.Configurable[False],
-) -> tuple[DataLoader, DataLoader]:
+    pad_length: int = 8,
+) -> tuple[DataLoader, DataLoader, MetaVocab, DataFrameTokenizer]:
     df = pl.read_parquet(path)
     train_df = df.filter(pl.col("split") == "train")
     val_df = df.filter(pl.col("split") == "val_iid")
 
+    tokenizer = DataFrameTokenizer(df, pad_length=pad_length)
+    vocab = MetaVocab(
+        rec_id_dim=len(tokenizer.rec_id_tokenizer),
+        concentration_dim=len(tokenizer.concentration_tokenizer),
+        cell_type_dim=len(tokenizer.cell_type_tokenizer),
+        experiment_dim=len(tokenizer.experiment_tokenizer),
+        image_type_dim=len(tokenizer.image_type_tokenizer),
+        well_address_dim=len(tokenizer.well_address_tokenizer),
+        pad_length=tokenizer.pad_length,
+    )
+
     train_ds = CellDataset(
         train_df,
+        tokenizer=tokenizer,
         train=True,
         size=IMG_SIZE,
-        multiscale=multiscale,
     )
     val_ds = CellDataset(
         val_df,
+        tokenizer=tokenizer,
         train=False,
         size=IMG_SIZE,
-        multiscale=False,
     )
 
     train_sampler = DistributedSampler(train_ds, shuffle=True)
@@ -256,4 +304,4 @@ def get_dataloaders(
         pin_memory=pin_memory,
         drop_last=False,
     )
-    return train_loader, val_loader
+    return train_loader, val_loader, vocab, tokenizer

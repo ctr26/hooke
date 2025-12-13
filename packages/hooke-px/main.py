@@ -77,14 +77,19 @@ def main(config: ornamentalist.ConfigDict):
         prng(D.rank)
         torch.set_float32_matmul_precision("medium")
 
+        train_loader, val_loader, vocab, tokenizer = dataset.get_dataloaders()
+
         model_cls = get_model_cls()
         net = model_cls(
             input_size=32,
             in_channels=8,
             learn_sigma=False,
-            y_dim=dataset.NUM_PERTURBATIONS,
-            e_dim=dataset.NUM_EXPERIMENTS,
-            c_dim=dataset.NUM_CELL_TYPES,
+            rec_id_dim=vocab.rec_id_dim,
+            concentration_dim=vocab.concentration_dim,
+            cell_type_dim=vocab.cell_type_dim,
+            experiment_dim=vocab.experiment_dim,
+            image_type_dim=vocab.image_type_dim,
+            well_address_dim=vocab.well_address_dim,
         )
         net.to(D.device)
         net: torch.nn.Module = torch.compile(net)  # type: ignore
@@ -97,7 +102,7 @@ def main(config: ornamentalist.ConfigDict):
             eps=1e-8,
             weight_decay=0.0,
         )
-        state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0)
+        state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0, tokenizer=tokenizer)
 
         nparams = sum(p.numel() for p in net.parameters())
         log.info(f"Model has {nparams / 1e6:.0f}M parameters")
@@ -107,7 +112,6 @@ def main(config: ornamentalist.ConfigDict):
         log.info(f"Using checkpoint directory: {ckpt_dir}")
         state.load_latest_ckpt(dir=ckpt_dir, device=D.device)
 
-        train_loader, val_loader = dataset.get_dataloaders()
         train(
             state=state,
             train_loader=train_loader,
@@ -141,9 +145,9 @@ def launcher(
     gpus: int = ornamentalist.Configurable[1],
     cpus: int = ornamentalist.Configurable[24],
     ram: int = ornamentalist.Configurable[128],
-    timeout: int = ornamentalist.Configurable[1440],
+    timeout: int = ornamentalist.Configurable[1440 * 4],
     partition: str = ornamentalist.Configurable["hopper"],
-    qos: str = ornamentalist.Configurable["normal"],
+    qos: str = ornamentalist.Configurable["hooke-predict"],
     output_dir: str = ornamentalist.Configurable["./outputs/"],
     cluster: Literal["debug", "local", "slurm"] = ornamentalist.Configurable["debug"],
     desc: str = ornamentalist.Configurable[""],
@@ -165,9 +169,9 @@ def launcher(
         cpus_per_task=cpus,
         slurm_mem_per_gpu=f"{ram}G",
         timeout_min=timeout,
-        exclude="hop02",  # hop02 has issues
         stderr_to_stdout=True,
         slurm_signal_delay_s=120,
+        slurm_wckey="hooke-predict",
     )
 
     os.makedirs(output_dir, exist_ok=True)

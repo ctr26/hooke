@@ -14,8 +14,6 @@ import sklearn.metrics
 import torch
 from scipy import linalg
 
-from utils.phenom2 import load_phenom2
-
 
 class DINOv2Detector:
     def __init__(self, device: torch.device):
@@ -52,16 +50,18 @@ class DINOv2Detector:
 
 class Phenom2Detector:
     def __init__(self, device: torch.device):
-        self.model = load_phenom2(device=device)
-        self.model.eval().requires_grad_(False).to(device)
+        self.device = device
+        self.model = torch.jit.load(
+            "/mnt/ps/home/CORP/jason.hartford/project/cj-generative/artifacts/inference_model/model.pth",
+            map_location=device,
+        )
+        self.model.eval().to(device)
 
     def __call__(self, x):
         """Extract features using Phenom-2.
         Input is expected to be a torch.uint8 tensor of shape (B, 6, 256, 256)."""
-        x = self.model.input_norm(x)
-        embeddings, _, _ = self.model.encoder.forward_masked(x, mask_ratio=0.0)
-        embeddings = embeddings[:, 1:, :]  # B,1025,1664 -> B,1024,1664 (drop [CLS])
-        return embeddings.mean(dim=1)  # B,1664
+        x = x.to(self.device, non_blocking=True)
+        return self.model(x)
 
 
 def compute_statistics(reps):

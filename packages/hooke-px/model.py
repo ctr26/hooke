@@ -2,19 +2,114 @@
 Forked from github.com/facebookresearch/DiT (MIT license)."""
 
 import functools
-from typing import Literal
+from typing import Literal, Optional, Type
 
 import numpy as np
 import ornamentalist
 import torch
 import torch.nn as nn
-from timm.models.vision_transformer import Attention, Mlp, PatchEmbed  # type: ignore
+import torch.nn.functional as F
+from timm.models.vision_transformer import Mlp, PatchEmbed  # type: ignore
 
-from adaptor import BasicAdaptor
+from adaptor import ScalarEmbedder, TransformerAdaptor
 
 
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+
+class Attention(nn.Module):
+    """Standard Multi-head Self Attention module with QKV projection.
+
+    This module implements the standard multi-head attention mechanism used in transformers.
+    It supports both the fused attention implementation (scaled_dot_product_attention) for
+    efficiency when available, and a manual implementation otherwise. The module includes
+    options for QK normalization, attention dropout, and projection dropout.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        qk_norm: bool = False,
+        scale_norm: bool = False,
+        proj_bias: bool = True,
+        attn_drop: float = 0.1,
+        proj_drop: float = 0.0,
+        norm_layer: Optional[Type[nn.Module]] = None,
+        device=None,
+        dtype=None,
+    ) -> None:
+        """Initialize the Attention module.
+
+        Args:
+            dim: Input dimension of the token embeddings
+            num_heads: Number of attention heads
+            qkv_bias: Whether to use bias in the query, key, value projections
+            qk_norm: Whether to apply normalization to query and key vectors
+            proj_bias: Whether to use bias in the output projection
+            attn_drop: Dropout rate applied to the attention weights
+            proj_drop: Dropout rate applied after the output projection
+            norm_layer: Normalization layer constructor for QK normalization if enabled
+        """
+        super().__init__()
+        dd = {"device": device, "dtype": dtype}
+        assert dim % num_heads == 0, "dim should be divisible by num_heads"
+        if scale_norm:
+            assert norm_layer is not None, (
+                "norm_layer must be provided if scale_norm is True"
+            )
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim**-0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias, **dd)
+        self.q_norm = nn.LayerNorm(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = nn.LayerNorm(self.head_dim) if qk_norm else nn.Identity()
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.norm = norm_layer(dim, **dd) if scale_norm else nn.Identity()
+        self.proj = nn.Linear(dim, dim, bias=proj_bias, **dd)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        B, N, C = x.shape
+        qkv = (
+            self.qkv(x)
+            .reshape(B, N, 3, self.num_heads, self.head_dim)
+            .permute(2, 0, 3, 1, 4)
+        )
+        q, k, v = qkv.unbind(0)
+        q, k = self.q_norm(q), self.k_norm(k)
+
+        # Prepare attn_mask to be broadcastable to (B, num_heads, N, N)
+        if attn_mask is not None:
+            if attn_mask.dtype is not torch.bool:
+                attn_mask = attn_mask.to(torch.bool)
+            if attn_mask.dim() == 2:
+                # (B, N) -> (B, 1, 1, N)
+                attn_mask = attn_mask[:, None, None, :]
+            elif attn_mask.dim() == 3:
+                # (B, N, N) -> (B, 1, N, N)
+                attn_mask = attn_mask[:, None, :, :]
+
+        x = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=self.attn_drop.p if self.training else 0.0,
+            is_causal=False,
+        )
+        x = x.transpose(1, 2).reshape(B, N, C)
+        x = self.norm(x)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
 
 
 class DiTBlock(nn.Module):
@@ -166,13 +261,16 @@ class DiT(nn.Module):
 
 
 class DiTWrapper(nn.Module):
-    """Wraps DiT to include a BasicAdaptor for conditioning."""
+    """Wraps DiT to include transformer-based conditioning from tokenized metadata."""
 
     def __init__(
         self,
-        y_dim,
-        e_dim,
-        c_dim,
+        rec_id_dim: int,
+        concentration_dim: int,
+        cell_type_dim: int,
+        experiment_dim: int,
+        image_type_dim: int,
+        well_address_dim: int,
         input_size=32,
         patch_size=2,
         in_channels=4,
@@ -194,16 +292,35 @@ class DiTWrapper(nn.Module):
             mlp_ratio=mlp_ratio,
             learn_sigma=learn_sigma,
         )
-        self.adaptor = BasicAdaptor(
-            hidden_size=hidden_size,
-            y_dim=y_dim,
-            e_dim=e_dim,
-            c_dim=c_dim,
-            frequency_embedding_size=frequency_embedding_size,
+        self.t_embedder = ScalarEmbedder(
+            hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size
         )
 
-    def forward(self, *, x, t, z, y=None, e=None, c=None):
-        cond = self.adaptor(t, z, y, e, c)  # (B, hidden_size)
+        self.meta_adaptor = TransformerAdaptor(
+            hidden_size=hidden_size,
+            rec_id_dim=rec_id_dim,
+            concentration_dim=concentration_dim,
+            cell_type_dim=cell_type_dim,
+            experiment_dim=experiment_dim,
+            image_type_dim=image_type_dim,
+            well_address_dim=well_address_dim,
+        )
+
+    def forward(
+        self, *, x, t, meta: dict, force_drop_rec_conc: torch.Tensor | None = None
+    ):
+        t_emb = self.t_embedder(t)
+        meta_emb = self.meta_adaptor(
+            rec_id=meta["rec_id"],
+            concentration=meta["concentration"],
+            comp_mask=meta["comp_mask"],
+            cell_type=meta["cell_type"],
+            experiment_label=meta["experiment_label"],
+            image_type=meta["image_type"],
+            well_address=meta["well_address"],
+            force_drop_rec_conc=force_drop_rec_conc,
+        )
+        cond = t_emb + meta_emb  # (B, hidden_size)
         return self.dit(x, cond)  # (B, out_channels, H, W)
 
 
