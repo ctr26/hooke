@@ -96,13 +96,13 @@ class TrainState:
         self.load_ckpt(path, device)
 
 
-@ornamentalist.configure()
+# @ornamentalist.configure()
 def guided_prediction(
     model: DiTWrapper,
     x,
     t,
     meta: dict[str, torch.Tensor],
-    cfg: float = ornamentalist.Configurable[1.0],
+    cfg: float = 1.0,
 ) -> torch.Tensor:  # fmt: off
     if t.ndim == 0:  # the ODE solver gives scalar t
         t = t.expand(x.shape[0])

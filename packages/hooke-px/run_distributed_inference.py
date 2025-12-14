@@ -584,7 +584,7 @@ def distributed_inference(
     }
 
     if model_config:
-        worker_conf["get_model_cls"] = model_config
+        worker_conf["model"] = model_config
 
     config_path = output_dir / "config.json"
     with open(config_path, "w") as f:

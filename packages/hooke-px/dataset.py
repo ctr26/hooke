@@ -1,6 +1,7 @@
 import dataclasses
 from typing import Callable
 import logging
+import numcodecs
 
 import diffusers
 import ornamentalist
@@ -10,8 +11,9 @@ import zarr
 import zarr.core
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.transforms import v2
-
 from adaptor import DataFrameTokenizer
+
+numcodecs.blosc.use_threads = False
 
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__name__)
@@ -226,6 +228,8 @@ class CellDataset(torch.utils.data.Dataset):
                 "img": tensor,
                 "meta": self.tokenizer(row),
             }
+            if "zarr_index" in row:
+                sample["zarr_index"] = row["zarr_index"]
             return sample
         except Exception as e:
             _log.warning(

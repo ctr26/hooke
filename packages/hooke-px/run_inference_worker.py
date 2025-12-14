@@ -42,6 +42,15 @@ PHENOM_DIM = 1664
 DINO_DIM = 1024
 
 
+def strip_orig_mod_prefix(state_dict: dict) -> dict:
+    """Strip _orig_mod prefix from state dict keys (added by torch.compile)."""
+    new_state_dict = {}
+    for key, value in state_dict.items():
+        new_key = key.replace("._orig_mod", "")
+        new_state_dict[new_key] = value
+    return new_state_dict
+
+
 @ornamentalist.configure()
 def get_worker_config(
     checkpoint_path: str = ornamentalist.Configurable[""],
@@ -91,19 +100,22 @@ def load_model(
         pad_length=tokenizer.pad_length,
     )
 
-    # Create model with correct vocab sizes
+    # Create model with correct vocab sizes (exclude pad_length which is not a model param)
     model_cls = get_model_cls()
+    vocab_dict = dataclasses.asdict(vocab)
+    del vocab_dict["pad_length"]
     net = model_cls(
         input_size=32,
         in_channels=8,
         learn_sigma=False,
-        **dataclasses.asdict(vocab),
+        **vocab_dict,
     )
     net.to(device)
 
-    # Load EMA weights
+    # Load EMA weights (strip _orig_mod prefix if checkpoint was saved with torch.compile)
     ema = KarrasEMA(net)
-    ema.load_state_dict(state["ema"])
+    ema_state = strip_orig_mod_prefix(state["ema"])
+    ema.load_state_dict(ema_state)
 
     model = ema.module
     model.eval()
@@ -138,17 +150,19 @@ def process_batch(
         S = 1
         px1_flat = px1
 
-    # Extract real image features (keep sample dimension if present)
-    real_phenom = phenom(px1_flat).cpu().numpy().reshape(B, S, PHENOM_DIM)
-    real_dino = (
-        dino(cp2rgb(px1_flat.to(torch.uint8))).cpu().numpy().reshape(B, S, DINO_DIM)
-    )
+    # Extract real image features
+    real_phenom = phenom(px1_flat).cpu().numpy()
+    real_dino = dino(cp2rgb(px1_flat.to(torch.uint8))).cpu().numpy()
+    if S > 1:
+        real_phenom = real_phenom.reshape(B, S, PHENOM_DIM)
+        real_dino = real_dino.reshape(B, S, DINO_DIM)
+    else:
+        real_phenom = real_phenom.reshape(B, PHENOM_DIM)
+        real_dino = real_dino.reshape(B, DINO_DIM)
 
     if num_samples > 1:
         # Generate multiple samples per image (DART-style)
-        meta_rep = {
-            k: v.repeat_interleave(num_samples, dim=0) for k, v in meta.items()
-        }
+        meta_rep = {k: v.repeat_interleave(num_samples, dim=0) for k, v in meta.items()}
         px0 = torch.randn(B * num_samples, 8, 32, 32, device=device)
         preds, _ = generate(model=model, x0=px0, meta1=meta_rep)
         preds = vae.decode(preds)
@@ -190,8 +204,8 @@ def run_worker(worker_dir: str, config_path: str):
         config = json.load(f)
 
     # Initialize ornamentalist
-    if "get_model_cls" not in config:
-        config["get_model_cls"] = {"name": "DiT-XL/2"}
+    if "model" not in config:
+        config["model"] = {"name": "DiT-XL/2"}
 
     ornamentalist.setup(config, force=True)
 
