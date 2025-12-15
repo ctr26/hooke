@@ -240,6 +240,105 @@ class CellDataset(torch.utils.data.Dataset):
             return self._get_fallback_sample()
 
 
+class HFCellDataset(torch.utils.data.Dataset):
+    """CellDataset backed by HuggingFace Dataset for O(1) memory-mapped access.
+
+    This dataset reads from a pre-processed HuggingFace Dataset cache that contains
+    pre-tokenized metadata. This avoids the O(N) row access overhead of Polars
+    DataFrames and enables efficient memory sharing across workers via mmap.
+
+    Use scripts/prepare_hf_cache.py to create the cache from a parquet file.
+    """
+
+    def __init__(
+        self,
+        cache_dir: str,
+        train: bool,
+        size: int,
+        pad_length: int = 8,
+        multiscale: bool = False,
+    ):
+        from datasets import load_from_disk
+
+        self.hf_dataset = load_from_disk(cache_dir)
+        self.transforms = get_transforms(train, size)
+        self.multiscale = multiscale
+        self.size = size
+        self.train = train
+        self.pad_length = pad_length
+
+    def __len__(self):
+        return len(self.hf_dataset)
+
+    def _get_fallback_sample(self):
+        """Return a valid fallback sample with zeros when data loading fails."""
+        tensor = torch.zeros(6, self.size, self.size, dtype=torch.uint8)
+        row = self.hf_dataset[0]
+        return {
+            "img": tensor,
+            "meta": {
+                "rec_id": torch.tensor(row["rec_id"], dtype=torch.long),
+                "concentration": torch.tensor(row["concentration"], dtype=torch.long),
+                "comp_mask": torch.arange(self.pad_length) < row["rec_id_len"],
+                "cell_type": torch.tensor(row["cell_type"], dtype=torch.long),
+                "image_type": torch.tensor(row["image_type"], dtype=torch.long),
+                "experiment_label": torch.tensor(
+                    row["experiment_label"], dtype=torch.long
+                ),
+                "well_address": torch.tensor(row["well_address"], dtype=torch.long),
+            },
+        }
+
+    def __getitem__(self, index: int):
+        try:
+            row = self.hf_dataset[index]  # O(1) memory-mapped access
+            path = row["image_path"]
+
+            # uint8 array (lazy loaded memory-mapped file)
+            array = zarr.open_array(path, mode="r")
+            with torch.inference_mode():
+                if self.multiscale:
+                    crop_size = 2 * int(
+                        torch.randint(
+                            MIN_CROP_SIZE // 2, MAX_CROP_SIZE // 2, (1,)
+                        ).item()
+                    )
+                else:
+                    crop_size = self.size
+
+                if self.train:
+                    tensor = random_crop_zarr(array, crop_size, border=256)
+                else:
+                    tensor = center_crop_zarr(array, crop_size)
+
+                # C x H x W at this point. Will be stacked into
+                # B x C x H x W by collate_fn in the dataloader
+                tensor = self.transforms(tensor)
+                if tensor.shape[0] == 3:
+                    tensor = torch.cat([tensor, tensor], dim=0)
+
+            # Build metadata dict (already tokenized and padded in cache)
+            meta = {
+                "rec_id": torch.tensor(row["rec_id"], dtype=torch.long),
+                "concentration": torch.tensor(row["concentration"], dtype=torch.long),
+                "comp_mask": torch.arange(self.pad_length) < row["rec_id_len"],
+                "cell_type": torch.tensor(row["cell_type"], dtype=torch.long),
+                "image_type": torch.tensor(row["image_type"], dtype=torch.long),
+                "experiment_label": torch.tensor(
+                    row["experiment_label"], dtype=torch.long
+                ),
+                "well_address": torch.tensor(row["well_address"], dtype=torch.long),
+            }
+            return {"img": tensor, "meta": meta}
+        except Exception as e:
+            _log.warning(
+                "Failed to load sample at index %d. Falling back to zeros. Error: %s",
+                index,
+                e,
+            )
+            return self._get_fallback_sample()
+
+
 @dataclasses.dataclass(frozen=True)
 class MetaVocab:
     rec_id_dim: int
@@ -261,34 +360,74 @@ def get_dataloaders(
     num_workers: int = ornamentalist.Configurable[16],
     pin_memory: bool = ornamentalist.Configurable[True],
     pad_length: int = 8,
+    use_cache: bool = ornamentalist.Configurable[True],
 ) -> tuple[DataLoader, DataLoader, MetaVocab, DataFrameTokenizer]:
-    df = pl.read_parquet(path)
-    train_df = df.filter(pl.col("split") == "train")
-    val_df = df.filter(pl.col("split") == "val_iid")
+    import json
+    from pathlib import Path
 
-    tokenizer = DataFrameTokenizer(df, pad_length=pad_length)
-    vocab = MetaVocab(
-        rec_id_dim=len(tokenizer.rec_id_tokenizer),
-        concentration_dim=len(tokenizer.concentration_tokenizer),
-        cell_type_dim=len(tokenizer.cell_type_tokenizer),
-        experiment_dim=len(tokenizer.experiment_tokenizer),
-        image_type_dim=len(tokenizer.image_type_tokenizer),
-        well_address_dim=len(tokenizer.well_address_tokenizer),
-        pad_length=tokenizer.pad_length,
-    )
+    cache_dir = Path(path).with_suffix(".cache")
 
-    train_ds = CellDataset(
-        train_df,
-        tokenizer=tokenizer,
-        train=True,
-        size=IMG_SIZE,
-    )
-    val_ds = CellDataset(
-        val_df,
-        tokenizer=tokenizer,
-        train=False,
-        size=IMG_SIZE,
-    )
+    # Use HF cache if available and enabled
+    if use_cache and cache_dir.exists() and (cache_dir / "tokenizer.json").exists():
+        _log.info(f"Using HuggingFace Dataset cache at {cache_dir}")
+
+        # Load tokenizer from cache
+        with open(cache_dir / "tokenizer.json") as f:
+            tokenizer = DataFrameTokenizer.from_state_dict(json.load(f))
+
+        vocab = MetaVocab(
+            rec_id_dim=len(tokenizer.rec_id_tokenizer),
+            concentration_dim=len(tokenizer.concentration_tokenizer),
+            cell_type_dim=len(tokenizer.cell_type_tokenizer),
+            experiment_dim=len(tokenizer.experiment_tokenizer),
+            image_type_dim=len(tokenizer.image_type_tokenizer),
+            well_address_dim=len(tokenizer.well_address_tokenizer),
+            pad_length=tokenizer.pad_length,
+        )
+
+        train_ds = HFCellDataset(
+            str(cache_dir / "train"),
+            train=True,
+            size=IMG_SIZE,
+            pad_length=pad_length,
+        )
+        val_ds = HFCellDataset(
+            str(cache_dir / "valid"),
+            train=False,
+            size=IMG_SIZE,
+            pad_length=pad_length,
+        )
+    else:
+        if use_cache:
+            _log.info(f"No cache found at {cache_dir}, falling back to DataFrame")
+
+        df = pl.read_parquet(path)
+        train_df = df.filter(pl.col("split") == "train")
+        val_df = df.filter(pl.col("split") == "valid")
+
+        tokenizer = DataFrameTokenizer(df, pad_length=pad_length)
+        vocab = MetaVocab(
+            rec_id_dim=len(tokenizer.rec_id_tokenizer),
+            concentration_dim=len(tokenizer.concentration_tokenizer),
+            cell_type_dim=len(tokenizer.cell_type_tokenizer),
+            experiment_dim=len(tokenizer.experiment_tokenizer),
+            image_type_dim=len(tokenizer.image_type_tokenizer),
+            well_address_dim=len(tokenizer.well_address_tokenizer),
+            pad_length=tokenizer.pad_length,
+        )
+
+        train_ds = CellDataset(
+            train_df,
+            tokenizer=tokenizer,
+            train=True,
+            size=IMG_SIZE,
+        )
+        val_ds = CellDataset(
+            val_df,
+            tokenizer=tokenizer,
+            train=False,
+            size=IMG_SIZE,
+        )
 
     train_sampler = DistributedSampler(train_ds, shuffle=True)
     val_sampler = DistributedSampler(val_ds, shuffle=False)
