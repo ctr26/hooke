@@ -7,7 +7,7 @@
 
 # TODO: Update these paths for your specific checkpoint and parquet file
 CHECKPOINT_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/1765902991/12149725/checkpoints"
-OUTPUT_BASE="/mnt/ps/home/CORP/jason.hartford/project/big-x/metrics/big-img"
+OUTPUT_BASE="/mnt/ps/home/CORP/jason.hartford/project/big-x/metrics/hooke-mini"
 PARQUET="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/metadata/inference_set.parquet"
 QOS="default"
 # QOS="hooke-predict"
