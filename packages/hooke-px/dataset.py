@@ -354,7 +354,7 @@ class MetaVocab:
 def get_dataloaders(
     *,
     path: str = ornamentalist.Configurable[
-        "/mnt/ps/home/CORP/charlie.jones/project/big-img/metadata/modest_cell2.parquet"
+        "/mnt/ps/home/CORP/jason.hartford/project/big-x/joint-model/metadata/pretraining_v2.parquet"
     ],
     batch_size: int = ornamentalist.Configurable[64],
     num_workers: int = ornamentalist.Configurable[16],
@@ -392,7 +392,7 @@ def get_dataloaders(
             pad_length=pad_length,
         )
         val_ds = HFCellDataset(
-            str(cache_dir / "valid"),
+            str(cache_dir / "val"),
             train=False,
             size=IMG_SIZE,
             pad_length=pad_length,
@@ -438,6 +438,7 @@ def get_dataloaders(
         sampler=train_sampler,
         pin_memory=pin_memory,
         drop_last=True,
+        prefetch_factor=8,
     )
     val_loader = DataLoader(
         val_ds,
