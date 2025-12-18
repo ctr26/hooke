@@ -55,7 +55,13 @@ def get_metric_suites_for_task_id(
 
     elif task_id == "virtual_map":
         virtual_map_suite = VirtualMapSuite(
-            metric_labels={"map_mse"},
+            metric_labels={
+                "map_error",
+                "map_ranking",
+                "map_classification_90%",
+                "map_classification_0.4",
+                "map_classification_0.7",
+            },
             plot_destination=save_destination / "virtual_map",
         )
         suites.append(virtual_map_suite)
@@ -219,5 +225,10 @@ def tx_evaluate_cli(
         )
         .sort("metric")
     )
+
+    # Config to display all rows and columns
+    pl.Config.set_tbl_rows(-1)
+    pl.Config.set_tbl_cols(-1)
     logger.info(f"Summary of results:\n{summary}")
+
     return results

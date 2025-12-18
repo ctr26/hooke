@@ -4,12 +4,16 @@ from typing import ClassVar, Literal
 import numpy as np
 import polars as pl
 from loguru import logger
-from sklearn.metrics import mean_squared_error
 
 from vcb.data_models.metrics.metric_info import MinimalMetricInfo
 from vcb.data_models.metrics.suite import MetricSuite
 from vcb.data_models.task.base import TaskAdapter
 from vcb.metrics.map_building.efaar import map_building_pipeline
+from vcb.metrics.virtual_map import (
+    map_cosine_sim_classification,
+    map_cosine_sim_error,
+    map_cosine_sim_ranking,
+)
 
 
 class VirtualMapSuite(MetricSuite):
@@ -22,7 +26,15 @@ class VirtualMapSuite(MetricSuite):
     plot_destination: Path | None = None
 
     _all_supported_metrics: ClassVar[dict[str, MinimalMetricInfo]] = {
-        "map_mse": MinimalMetricInfo(fn=mean_squared_error),
+        "map_error": MinimalMetricInfo(fn=map_cosine_sim_error),
+        "map_ranking": MinimalMetricInfo(fn=map_cosine_sim_ranking),
+        "map_classification_90%": MinimalMetricInfo(fn=map_cosine_sim_classification),
+        "map_classification_0.4": MinimalMetricInfo(
+            fn=map_cosine_sim_classification, kwargs={"cosine_sim_threshold": 0.4}
+        ),
+        "map_classification_0.7": MinimalMetricInfo(
+            fn=map_cosine_sim_classification, kwargs={"cosine_sim_threshold": 0.7}
+        ),
     }
 
     def _maybe_get_subdir(self, subdir: str) -> Path | None:
@@ -109,7 +121,8 @@ class VirtualMapSuite(MetricSuite):
 
             # Compute performance measures
             for label, metric in self.metrics.items():
-                score = metric.fn(y_true, y_pred)
-                rows.append({"metric": label, "score": score, "cell_type": cell_type})
+                scores = metric.fn(y_true, y_pred, **metric.kwargs)
+                for k, v in scores.items():
+                    rows.append({"metric": label + "_" + k, "score": v, "cell_type": cell_type})
 
         return pl.DataFrame(rows)

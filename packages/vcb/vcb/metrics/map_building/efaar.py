@@ -170,7 +170,7 @@ def map_building_pipeline(
             # Fun fact: "vlag" is the Dutch word for "flag", which, like the color palette, is red-white-blue.
             # Aren't you happy about that tidbit of information? No? Oh... Okay, moving on...
             cmap = sns.color_palette("vlag", as_cmap=True)
-            sns.heatmap(mapmat, ax=ax, cmap=cmap, vmin=-1, vmax=1)
+            sns.heatmap(mapmat, ax=ax, cmap=cmap, vmin=-1, vmax=1, annot=len(perturbations) < 25)
 
             if len(perturbations) == len(ax.get_xticks()):
                 # Enough space to show all labels.

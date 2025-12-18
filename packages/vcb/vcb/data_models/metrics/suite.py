@@ -34,7 +34,10 @@ class MetricSuite(BaseModel, ABC):
         """
         for metric in v:
             if metric not in cls._all_supported_metrics:
-                raise ValueError(f"Metric {metric} is not supported for phenorescue tasks")
+                raise ValueError(
+                    f"Metric {metric} is not supported for this metric suite. "
+                    f"Choose from {cls._all_supported_metrics.keys()}"
+                )
         return v
 
     @abstractmethod

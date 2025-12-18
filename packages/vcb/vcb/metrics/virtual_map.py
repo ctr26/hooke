@@ -1,5 +1,5 @@
 """
-NOTE (cwognum): Basically the same as the virtual map metrics, but for phenorescue.
+NOTE (cwognum): Basically the same as the virtual screening metrics.
   For now separating these out in separate files since it's little code and
   it simplifies adapting to application specifics later.
 """
@@ -16,30 +16,31 @@ from sklearn.metrics import (
 from vcb.metrics.utils.enrichment_factor import enrichment_factor
 
 
-def hit_score_error(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    """Error metrics between the predicted and ground truth hit scores."""
+def map_cosine_sim_error(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    """Error metrics between the predicted and ground truth cosine similarities in the map."""
     return {
         "mse": np.mean((y_true - y_pred) ** 2),
         "mae": np.mean(np.abs(y_true - y_pred)),
     }
 
 
-def hit_ranking(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    """Measure the accuracy of the ranking for any of the hits."""
+def map_cosine_sim_ranking(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    """Measure the accuracy of the ranking for any of the cosine similarities."""
     return {"spearman": spearmanr(y_true, y_pred)[0]}
 
 
-def hit_classification(
-    y_true: np.ndarray, y_pred: np.ndarray, hit_threshold: float | None = None
+def map_cosine_sim_classification(
+    y_true: np.ndarray, y_pred: np.ndarray, cosine_sim_threshold: float | None = None
 ) -> dict[str, float]:
-    """Using post-hoc classification, classify hit scores into hits and non-hits. Then compute classification metrics on these classes."""
+    """Using post-hoc classification, classify cosine similarities into hits and non-hits. Then compute classification metrics on these classes."""
 
-    if hit_threshold is None:
+    if cosine_sim_threshold is None:
         # set to best 10% are hits, i.e. .9 quantile of y_true
-        hit_threshold = float(np.quantile(y_true, 0.9))
+        cosine_sim_threshold = float(np.quantile(y_true, 0.9))
+
     # Post-hoc classification
-    y_true_hit = y_true > hit_threshold
-    y_pred_hit = y_pred > hit_threshold
+    y_true_hit = y_true > cosine_sim_threshold
+    y_pred_hit = y_pred > cosine_sim_threshold
 
     if not np.any(y_true_hit):
         return {}

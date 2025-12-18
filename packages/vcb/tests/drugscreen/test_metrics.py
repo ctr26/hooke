@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from vcb.metrics.phenorescue import enrichment_factor
+from vcb.metrics.utils.enrichment_factor import enrichment_factor
 
 
 @pytest.mark.parametrize(

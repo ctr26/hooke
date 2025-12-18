@@ -93,7 +93,7 @@ class PhenorescueSuite(MetricSuite):
 
             # Compute performance measures
             for label, metric in self.metrics.items():
-                scores = metric.fn(y_true_experiment, y_pred_experiment)
+                scores = metric.fn(y_true_experiment, y_pred_experiment, **metric.kwargs)
                 for k, v in scores.items():
                     rows.append({"metric": label + "_" + k, "score": v, "experiment": experiment})
 
