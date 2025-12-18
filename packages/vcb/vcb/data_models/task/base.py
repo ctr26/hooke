@@ -3,7 +3,7 @@ from typing import Tuple
 
 import numpy as np
 import polars as pl
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 
@@ -31,6 +31,12 @@ class TaskAdapter(BaseModel, ABC):
     context_groupby_cols: list[str]
     perturbation_groupby_cols_types: list[Tuple[str, str]]
     perturbation_splitting_col: str
+
+    # TODO (cwognum): I'm not entirely comfortable with the caching here,
+    # since the dataset object is mutable and can be modified outside of the task adapter
+    # without invalidating the cache. That being said, it's worth the performance gain.
+    _all_perturbed_obs_cache: pl.DataFrame | None = PrivateAttr(default=None)
+    _all_basal_obs_cache: pl.DataFrame | None = PrivateAttr(default=None)
 
     @property
     def perturbation_length_filter(self) -> pl.Expr:
@@ -105,9 +111,17 @@ class TaskAdapter(BaseModel, ABC):
     def prepare(self) -> None:
         pass
 
-    @abstractmethod
-    def get_basal_states(self, *predictates: pl.Expr) -> np.ndarray:
-        pass
+    @property
+    def all_basal_obs(self) -> pl.DataFrame:
+        if self._all_basal_obs_cache is None:
+            self._all_basal_obs_cache = self.get_all_basal_obs()
+        return self._all_basal_obs_cache
+
+    @property
+    def all_perturbed_obs(self) -> pl.DataFrame:
+        if self._all_perturbed_obs_cache is None:
+            self._all_perturbed_obs_cache = self.get_all_perturbed_obs()
+        return self._all_perturbed_obs_cache
 
     @abstractmethod
     def get_all_basal_obs(self) -> pl.DataFrame:

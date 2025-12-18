@@ -52,7 +52,7 @@ class VirtualMapSuite(MetricSuite):
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
 
-        obs_perturbed = predictions.get_all_perturbed_obs()
+        obs_perturbed = predictions.all_perturbed_obs
         cell_types = obs_perturbed["cell_type"].unique().to_list()
         pert_type = obs_perturbed["type"].unique()
 

@@ -149,15 +149,17 @@ class DrugscreenTaskAdapter(TaskAdapter):
         obs = add_compound_perturbation_to_obs(obs)
         self.dataset.obs = obs
 
+        self._all_basal_obs_cache = None
+        self._all_perturbed_obs_cache = None
         self.dataset._obs_is_prepared = True
 
     def get_basal_states(self, *predictates: pl.Expr) -> np.ndarray:
-        obs = self.get_all_basal_obs().filter(*predictates)
+        obs = self.all_basal_obs.filter(*predictates)
         return self.dataset.X[obs["original_index"].to_list()]
 
     def get_perturbations(self, *predictates: pl.Expr) -> np.ndarray:
         # Filter for drugscreen queries
-        obs = self.get_all_perturbed_obs().filter(*predictates)
+        obs = self.all_perturbed_obs.filter(*predictates)
 
         # Get the perturbations and convert to numpy array
         sortedcols = sorted(self.perturbation_groupby_cols)
@@ -169,5 +171,5 @@ class DrugscreenTaskAdapter(TaskAdapter):
         return perturbations
 
     def get_perturbed_states(self, *predictates: pl.Expr) -> np.ndarray:
-        obs = self.get_all_perturbed_obs().filter(*predictates)
+        obs = self.all_perturbed_obs.filter(*predictates)
         return self.dataset.X[obs["original_index"].to_list()]

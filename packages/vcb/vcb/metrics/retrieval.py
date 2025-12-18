@@ -1,4 +1,5 @@
 import numpy as np
+from loguru import logger
 from tqdm import tqdm
 
 from vcb.data_models.misc import CompoundPerturbation
@@ -37,15 +38,46 @@ def from_distances_to_retrieval_score(distances: np.ndarray) -> float:
     return score
 
 
+def get_unique_groups(
+    p_true: np.ndarray,
+    p_pred: np.ndarray,
+    n_samples: int | None = None,
+    random_state: int | None = None,
+) -> np.ndarray:
+    unique_groups = np.intersect1d(np.unique(p_true), np.unique(p_pred))
+    logger.info(f"There are a total of {len(unique_groups)} groups in the dataset.")
+
+    if n_samples is not None:
+        if n_samples > len(unique_groups):
+            logger.warning(
+                f"n_samples {n_samples} is greater than the number of unique groups {len(unique_groups)}. "
+                "Simply using all unique groups instead."
+            )
+            return unique_groups
+
+        rng = np.random.RandomState(random_state)
+
+        n_before = len(unique_groups)
+        unique_groups = rng.choice(unique_groups, size=n_samples, replace=False)
+        pct = len(unique_groups) / n_before * 100
+        logger.info(
+            f"Sampled a random subset of {len(unique_groups)} ({pct:.1f}%) groups from the full dataset."
+        )
+
+    return unique_groups
+
+
 def calculate_mae_retrieval(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     p_true: np.ndarray,
     p_pred: np.ndarray,
     y_base: np.ndarray | None = None,
+    n_samples: int | None = None,
+    random_state: int | None = 42,
 ) -> tuple[float, dict]:
     # Get the groups to compare
-    unique_groups = np.intersect1d(np.unique(p_true), np.unique(p_pred))
+    unique_groups = get_unique_groups(p_true, p_pred, n_samples, random_state)
 
     group_means_pred = {}
     group_means_truth = {}
@@ -84,6 +116,8 @@ def calculate_edistance_retrieval(
     y_base: np.ndarray,
     p_true: np.ndarray,
     p_pred: np.ndarray,
+    n_samples: int | None = None,
+    random_state: int | None = 42,
 ) -> tuple[float, dict]:
     """
     Calculate normalized retrieval for a given set of generated samples against a groundtruth.
@@ -94,7 +128,7 @@ def calculate_edistance_retrieval(
     They should be equivalent for the euclidean distance kernel and E-distance might be simpler choice overall, but let's keep this in mind.
     """
     # Get the groups to compare
-    unique_groups = np.intersect1d(np.unique(p_pred), np.unique(p_true))
+    unique_groups = get_unique_groups(p_true, p_pred, n_samples, random_state)
     n_groups = len(unique_groups)
     distances = np.zeros((n_groups, n_groups))
 

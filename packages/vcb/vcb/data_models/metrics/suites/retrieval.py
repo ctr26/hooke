@@ -26,6 +26,9 @@ class RetrievalSuite(MetricSuite):
 
     use_distributional_metrics: bool = True
 
+    n_samples: int | None = None
+    random_state: int | None = 42
+
     _all_supported_metrics: ClassVar[dict[str, RetrievalMetricInfo]] = {
         "retrieval_mae": RetrievalMetricInfo(fn=calculate_mae_retrieval),
         "retrieval_edistance": RetrievalMetricInfo(fn=calculate_edistance_retrieval, is_distributional=True),
@@ -36,7 +39,7 @@ class RetrievalSuite(MetricSuite):
 
         # Groupby context
         for group_label, _, predicate in predicate_group_by(
-            predictions.get_all_perturbed_obs(),
+            predictions.all_perturbed_obs,
             predictions.context_groupby_cols,
             description=f"Computing {self.kind} suite per {predictions.context_groupby_cols}",
         ):
@@ -59,6 +62,8 @@ class RetrievalSuite(MetricSuite):
                     y_base=y_base,
                     p_true=p_true,
                     p_pred=p_pred,
+                    n_samples=self.n_samples,
+                    random_state=self.random_state,
                     **metric.kwargs,
                 )
                 rows.append({"score": score, "metric": label, **supp, **group_label})

@@ -24,6 +24,7 @@ def get_metric_suites_for_task_id(
         RetrievalSuite(
             metric_labels={"retrieval_mae", "retrieval_edistance"},
             use_distributional_metrics=distributional_metrics,
+            n_samples=100,
         ),
         PerturbationEffectPredictionSuite(
             metric_labels={"pearson", "pearson_delta", "cosine", "cosine_delta", "mse"},
@@ -59,11 +60,11 @@ def px_evaluate_cli(
     save_destination: Annotated[
         Path, typer.Option(..., "--save-destination", "-o", help="path to where results should be saved")
     ],
-    predictions_var_path: Annotated[
-        Path,
-        typer.Option(..., "--predictions-var-path", "-v", help="path to the var file for the predictions"),
-    ],
     task_id: Annotated[str, typer.Option(help="The task id. Either 'phenorescue' or 'virtual_map")],
+    predictions_var_path: Annotated[
+        Path | None,
+        typer.Option("--predictions-var-path", "-v", help="path to the var file for the predictions"),
+    ] = None,
     predictions_features_layer: Annotated[
         str, typer.Option(help="layer of the features in the zarr file to use for the predictions")
     ] = None,
@@ -107,14 +108,13 @@ def px_evaluate_cli(
         use_validation_split: Whether to use the validation split instead of the test split (default False).
         copy_base_states_and_controls: Whether to copy the base states and controls from the ground truth to the predictions.
     """
-
     # Load the ground truth.
     ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
 
     # Load the predictions.
     predictions = AnnotatedDataMatrix(
         **PredictionPaths(root=predictions_path).model_dump(),
-        var_path=predictions_var_path,
+        var_path=predictions_var_path or ground_truth.var_path,
         metadata_path=ground_truth.metadata_path,
         features_layer=predictions_features_layer,
         zarr_index_column=predictions_zarr_index_column,

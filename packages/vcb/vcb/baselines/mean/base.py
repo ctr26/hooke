@@ -37,7 +37,7 @@ class BaseMeanBaseline(BaseBaseline):
         """
 
         for context, context_obs, context_predicate in predicate_group_by(
-            task.get_all_perturbed_obs(), task.context_groupby_cols, description="Grouping by context"
+            task.all_perturbed_obs, task.context_groupby_cols, description="Grouping by context"
         ):
             context = dict_to_ordered_tuple(context, task.context_groupby_cols)
             mean_base_states = []

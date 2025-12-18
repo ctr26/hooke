@@ -93,7 +93,7 @@ def singles_split_cli(
     # this takes the first and only element of batch_groupby_cols; if we want to support more: -> .with_columns
     batch_center = task_adapter.batch_groupby_cols[0]
 
-    perturbations_subset = task_adapter.get_all_perturbed_obs().filter(
+    perturbations_subset = task_adapter.all_perturbed_obs.filter(
         pl.col(batch_center).is_in(obs[batch_center].unique())
     )
 

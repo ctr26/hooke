@@ -71,7 +71,7 @@ class MeanContextDeltaBaseline(BaseMeanBaseline):
             logger.warning(
                 f"For {missing_count} ({missing_percentage:.2f}%) contexts, "
                 "we did not find the context in the training set. "
-                "In these case we simply return the basal state (i.e. no delta)."
+                "In these cases we simply return the basal state (i.e. no delta)."
             )
 
         return np.vstack(predictions)
@@ -135,7 +135,7 @@ class MeanPerturbationDeltaBaseline(BaseMeanBaseline):
             logger.warning(
                 f"For {missing_count} ({missing_percentage:.2f}%) perturbations, "
                 "we did not find the perturbation in the training set. "
-                "In these case we simply return the basal state (i.e. no delta)."
+                "In these cases we simply return the basal state (i.e. no delta)."
             )
 
         return np.vstack(predictions)

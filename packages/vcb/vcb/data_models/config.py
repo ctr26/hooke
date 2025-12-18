@@ -96,8 +96,8 @@ class EvaluationConfig(BaseModel):
 
         self.ground_truth.dataset.filter(obs_indices=split_indices)
 
-        gt = self.ground_truth.get_all_perturbed_obs()["obs_id"].to_list()
-        p = self.predictions.get_all_perturbed_obs()["obs_id"].to_list()
+        gt = self.ground_truth.all_perturbed_obs["obs_id"].to_list()
+        p = self.predictions.all_perturbed_obs["obs_id"].to_list()
         if len(gt) != len(p):
             raise RuntimeError(
                 "Ground truth and predictions do not have the same number of observations. "

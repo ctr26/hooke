@@ -106,7 +106,7 @@ class MeanPerturbationSampleBaseline(BaseMeanBaseline):
                 missing_count += 1
                 perturbation = sample_random_key(self._mapping)
 
-            # (1) Sample a random perturbation
+            # (1) Sample a random context
             context = sample_random_key(self._mapping[perturbation])
 
             # (2) Sample a random batch

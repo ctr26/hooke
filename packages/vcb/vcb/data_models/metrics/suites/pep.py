@@ -44,7 +44,7 @@ class PerturbationEffectPredictionSuite(MetricSuite):
         groupby_cols = predictions.batch_groupby_cols + predictions.context_groupby_cols
 
         for batch_context, batch_context_obs, batch_context_predicate in predicate_group_by(
-            predictions.get_all_perturbed_obs(),
+            predictions.all_perturbed_obs,
             groupby_cols,
             # NOTE (cwognum): This may seem like the wrong description, but it's actually correct.
             # I place this description here so that it's visible in the top-level progress bar.
