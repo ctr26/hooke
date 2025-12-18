@@ -1,19 +1,33 @@
+import importlib
+import sys
 from pathlib import Path
 
 import numpy as np
 import zarr
 
+import vcb.utils
 from tests.utils import assert_imperfect_performance, assert_perfect_performance
 from vcb._cli.evaluate.px_cli import px_evaluate_cli
 from vcb._cli.evaluate.tx_cli import tx_evaluate_cli
 
 
 def test_evaluate_tx_cli(
-    mock_drugscreen_dataset_path, mock_drugscreen_predictions_path, mock_drugscreen_split_path, tmpdir
+    mock_drugscreen_dataset_path,
+    mock_drugscreen_predictions_path,
+    mock_drugscreen_split_path,
+    tmpdir,
+    monkeypatch,
 ):
     """
     End to end test for Drugscreen Transcriptomics.
     """
+
+    # Patch out txam so that the code default back to PCA.
+    # With TxAM embeddings and our mocked data, everything becomes an outlier (as detected by isolation forest) and we end up with zero controls.
+    # Causing test cases to fail locally, but not on the Github CICD.
+    monkeypatch.setitem(sys.modules, "txam", None)
+    importlib.reload(vcb.utils)
+
     # For Tx, predictions are assumed to be log1p-transformed.
     root = zarr.open(Path(mock_drugscreen_predictions_path) / "features.zarr", mode="r+")
 
@@ -60,11 +74,22 @@ def test_evaluate_tx_cli(
 
 
 def test_rescale_tx_cli(
-    mock_drugscreen_dataset_path, mock_drugscreen_predictions_path, mock_drugscreen_split_path, tmpdir
+    mock_drugscreen_dataset_path,
+    mock_drugscreen_predictions_path,
+    mock_drugscreen_split_path,
+    tmpdir,
+    monkeypatch,
 ):
     """
     End to end test for Drugscreen Transcriptomics that scaling is on and scoring robust to library size
     """
+
+    # Patch out txam so that the code default back to PCA.
+    # With TxAM embeddings and our mocked data, everything becomes an outlier (as detected by isolation forest) and we end up with zero controls.
+    # Causing test cases to fail locally, but not on the Github CICD.
+    monkeypatch.setitem(sys.modules, "txam", None)
+    importlib.reload(vcb.utils)
+
     # Tests that rescaling of predictions is working and on by default.
     # This test is less because it _has_ to be on, and more to make sure any changes
     # on that point are made intentionally

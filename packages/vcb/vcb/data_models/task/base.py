@@ -3,7 +3,7 @@ from typing import Tuple
 
 import numpy as np
 import polars as pl
-from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 
@@ -38,6 +38,9 @@ class TaskAdapter(BaseModel, ABC):
     _all_perturbed_obs_cache: pl.DataFrame | None = PrivateAttr(default=None)
     _all_basal_obs_cache: pl.DataFrame | None = PrivateAttr(default=None)
 
+    # Pydantic Config
+    model_config = ConfigDict(validate_default=True)
+
     @property
     def perturbation_length_filter(self) -> pl.Expr:
         # the return line below will evaluate to True for every row;
@@ -55,7 +58,6 @@ class TaskAdapter(BaseModel, ABC):
     @field_validator("perturbation_groupby_cols_types", mode="after")
     @classmethod
     def validate_types_in_typemap(cls, v: list[Tuple[str, str]]) -> list[Tuple[str, str]]:
-        # TODO, this code is never called, figure out why not
         for _, dtype in v:
             if dtype not in type_map:
                 raise ValueError(f"Type {dtype} not in type_map")
