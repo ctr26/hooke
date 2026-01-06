@@ -91,12 +91,12 @@ def load_model(
 
     # Build vocab from tokenizer
     vocab = MetaVocab(
-        rec_id_dim=len(tokenizer.rec_id_tokenizer),
-        concentration_dim=len(tokenizer.concentration_tokenizer),
-        cell_type_dim=len(tokenizer.cell_type_tokenizer),
-        experiment_dim=len(tokenizer.experiment_tokenizer),
-        image_type_dim=len(tokenizer.image_type_tokenizer),
-        well_address_dim=len(tokenizer.well_address_tokenizer),
+        rec_id_dim=int(1.2 * len(tokenizer.rec_id_tokenizer)),
+        concentration_dim=int(1.2 * len(tokenizer.concentration_tokenizer)),
+        cell_type_dim=int(1.2 * len(tokenizer.cell_type_tokenizer)),
+        experiment_dim=int(1.2 * len(tokenizer.experiment_tokenizer)),
+        image_type_dim=int(1.2 * len(tokenizer.image_type_tokenizer)),
+        well_address_dim=int(1.2 * len(tokenizer.well_address_tokenizer)),
         pad_length=tokenizer.pad_length,
     )
 
