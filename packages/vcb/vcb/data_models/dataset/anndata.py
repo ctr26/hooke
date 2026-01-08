@@ -6,6 +6,7 @@ import polars as pl
 import zarr
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator, model_validator
+from tqdm import tqdm
 
 from vcb.data_models.dataset.metadata import DatasetMetadata
 
@@ -203,30 +204,51 @@ class AnnotatedDataMatrix(BaseModel):
         """Reads X features from zarr file, collapsing middle dimension if applicable"""
         logger.info(f"Loading {self.features_path} into memory. This may take a while.")
 
-        # Load the Zarr archive, can be a group or an array
-        X = zarr.open(self.features_path)
+        zarr_root = zarr.open(self.features_path, mode="r")
 
-        if isinstance(X, zarr.Group):
+        if isinstance(zarr_root, zarr.Group):
             if self.features_layer is None:
                 raise ValueError(
                     "features_layer is not set, and the features_path is a Zarr group. "
                     "Please set features_layer to the name of the array to load the features from."
                 )
-            X = X[self.features_layer]
+            item = zarr_root[self.features_layer]
+            if not isinstance(item, zarr.Array):
+                raise TypeError(f"Expected zarr.Array at {self.features_layer}, got {type(item)}")
+            X_zarr: zarr.Array = item
 
-        X = X[:]  # actual, slow read in
+        elif isinstance(zarr_root, zarr.Array):
+            X_zarr = zarr_root
+        else:
+            raise ValueError(f"Unsupported Zarr type: {type(zarr_root)}. Expected zarr.Group or zarr.Array.")
 
-        # collapse patch embeddings if present
-        # assumes last two dimensions are the patch and embedding dimensions
-        if X.ndim == 3:
-            old_shape = X.shape
-            X = X.mean(axis=-2)
-            logger.warning(f"Collapsing patch embeddings. Input shape: {old_shape}, output shape: {X.shape}")
+        # TODO (@jhartford): align chunk size with the chunk size of the Zarr array.
+        # Note: If X_zarr.chunks[0] is larger than 10k, this slicing will be inefficient.
+        chunk_size = min(10_000, X_zarr.shape[0])
 
-        elif X.ndim != 2:  # 2 is expected, with no action required, everything else unexpected
-            raise ValueError(f"Unexpected shape {X.shape} does not have length in [2, 3]")
+        if X_zarr.ndim not in (2, 3):
+            raise ValueError(f"Unsupported array dimensions: {X_zarr.ndim}. Expected 2 or 3.")
 
-        return X
+        if X_zarr.ndim == 3:
+            old_shape = X_zarr.shape
+            logger.info(f"Processing 3D array: {old_shape}")
+
+            X_out = np.zeros((X_zarr.shape[0], X_zarr.shape[2]), dtype=np.float32)
+
+            for start in tqdm(range(0, X_zarr.shape[0], chunk_size), desc="Iteratively loading X features"):
+                end = min(start + chunk_size, X_zarr.shape[0])
+
+                # Load chunk into memory
+                chunk = X_zarr[start:end]
+
+                # Collapse chunk along second dimension
+                X_out[start:end] = chunk.mean(axis=1)
+
+            logger.info(f"Collapsed embeddings: {old_shape} → {X_out.shape}")
+        else:  # 2D array
+            X_out = X_zarr[:]
+
+        return X_out
 
 
 class TxAnnotatedDataMatrix(AnnotatedDataMatrix):
