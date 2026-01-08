@@ -4,6 +4,7 @@ from typing import ClassVar, Literal
 import numpy as np
 import polars as pl
 from loguru import logger
+from pydantic import computed_field
 
 from vcb.data_models.metrics.metric_info import MinimalMetricInfo
 from vcb.data_models.metrics.suite import MetricSuite
@@ -14,6 +15,7 @@ from vcb.metrics.virtual_map import (
     map_cosine_sim_error,
     map_cosine_sim_ranking,
 )
+from vcb.settings import settings
 
 
 class VirtualMapSuite(MetricSuite):
@@ -22,8 +24,6 @@ class VirtualMapSuite(MetricSuite):
     """
 
     kind: Literal["virtual_map"] = "virtual_map"
-
-    plot_destination: Path | None = None
 
     _all_supported_metrics: ClassVar[dict[str, MinimalMetricInfo]] = {
         "map_error": MinimalMetricInfo(fn=map_cosine_sim_error),
@@ -37,8 +37,13 @@ class VirtualMapSuite(MetricSuite):
         ),
     }
 
-    def _maybe_get_subdir(self, subdir: str) -> Path | None:
-        return self.plot_destination / subdir if self.plot_destination is not None else None
+    @computed_field
+    def save_dir(self) -> Path:
+        return settings.ensure_save_dir(self.kind)
+
+    @computed_field
+    def cache_dir(self) -> Path:
+        return settings.cache_dir / self.kind
 
     def get_common_perturbations(self, true: list[str], pred: list[str]) -> list[str]:
         true_unique = set(true)
@@ -79,45 +84,44 @@ class VirtualMapSuite(MetricSuite):
         else:
             raise ValueError(f"Unknown perturbation type: {pert_type}")
 
-        # TODO (cwognum): This probably could be cached. No need to recompute it every time.
         true_maps = {}
         logger.info("Computing the ground truth map...")
-        for mapmat, cell_type, perturbations in map_building_pipeline(
+        for vmap in map_building_pipeline(
             ground_truth.dataset,
             perturbation_groupby_columns=[map_pert_col],
-            plot_destination=self._maybe_get_subdir("ground_truth"),
+            save_destination=self.save_dir / "ground_truth",
             cell_type_subset=cell_types,
+            cache_dir=self.cache_dir / ground_truth.dataset.dataset_id / "ground_truth",
         ):
-            true_maps[cell_type] = (mapmat, perturbations)
+            true_maps[vmap.cell_type] = vmap
 
         pred_maps = {}
         logger.info("Computing the predicted map...")
         for cell_type in cell_types:
-            mapmat, cell_type, perturbations = next(
+            pred_maps[cell_type] = next(
                 map_building_pipeline(
                     predictions.dataset,
                     perturbation_groupby_columns=[map_pert_col],
-                    plot_destination=self._maybe_get_subdir("predicted"),
+                    save_destination=self.save_dir / "predicted",
                     cell_type_subset=[cell_type],
-                    perturbation_order=true_maps[cell_type][1],
+                    perturbation_order=true_maps[cell_type].perturbations,
                 )
             )
-            pred_maps[cell_type] = (mapmat, perturbations)
 
-        for cell_type, (true_map, true_perturbations) in true_maps.items():
-            pred_map, pred_perturbations = pred_maps[cell_type]
+        for cell_type, true_map in true_maps.items():
+            pred_map = pred_maps[cell_type]
 
-            common = self.get_common_perturbations(true_perturbations, pred_perturbations)
+            common = self.get_common_perturbations(true_map.perturbations, pred_map.perturbations)
             if len(common) == 0:
                 logger.warning(f"No common perturbations found for cell type {cell_type}. Skipping.")
                 continue
-            if len(common) < len(true_perturbations) or len(common) < len(pred_perturbations):
+            if len(common) < len(true_map.perturbations) or len(common) < len(pred_map.perturbations):
                 logger.warning(
                     f"Predictions and ground truth don't have the same perturbations for cell type {cell_type}."
                 )
 
-            y_true = self.align_map(true_map, true_perturbations, common)
-            y_pred = self.align_map(pred_map, pred_perturbations, common)
+            y_true = self.align_map(true_map.similarity_matrix, true_map.perturbations, common)
+            y_pred = self.align_map(pred_map.similarity_matrix, pred_map.perturbations, common)
 
             # Compute performance measures
             for label, metric in self.metrics.items():

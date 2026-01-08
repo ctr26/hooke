@@ -15,6 +15,7 @@ from vcb.data_models.config import TASK_ADAPTERS_TYPE
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.split import Split
+from vcb.settings import settings
 
 
 def run_baseline_px_cli(
@@ -43,6 +44,9 @@ def run_baseline_px_cli(
     """
     Evaluate baseline performance on a phenomics dataset.
     """
+
+    # Update the global settings
+    settings.save_dir = save_destination
 
     # Extract splits.
     split = Split.from_json(split_path)
@@ -119,7 +123,7 @@ def run_baseline_px_cli(
             task_id=task_id,
             split_path=split_path,
             split_idx=split_idx,
-            save_destination=save_destination,
+            save_destination=settings.save_dir,
             predictions_features_layer="predictions",
             predictions_zarr_index_column=None,
             predictions_var_path=ground_truth.var_path,

@@ -13,6 +13,7 @@ from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.task.singles import add_single_perturbation_to_obs
 from vcb.metrics.drugscreen.utils import SynchronizedDataset, stack
+from vcb.metrics.map_building.map import Map
 from vcb.metrics.utils.transforms import pcaw_transform_data
 
 
@@ -104,12 +105,62 @@ def aggregate(
     return collect
 
 
+def build_map(
+    data: SynchronizedDataset,
+    perturbation_groupby_columns: list[str],
+    cell_type: str,
+    perturbation_order: list[str] | None = None,
+) -> Map:
+    """
+    Build the map using the EFAAR pipeline.
+    """
+
+    data = pcaw_transform_data(data, ["batch_center"])
+    data = tvn_on_controls(data)
+
+    embedding_per_perturbation = aggregate(data, perturbation_groupby_columns)
+    perturbations = sorted(embedding_per_perturbation.keys())
+    embeddings = np.vstack([embedding_per_perturbation[pert] for pert in perturbations])
+
+    if len(embeddings) < 2:
+        logger.warning(
+            f"After all transformations, we're left with just {len(embeddings)} perturbations "
+            f"for cell type {cell_type}, skipping."
+        )
+        return None
+
+    mat = pdist(embeddings, metric="cosine")
+    square_mat = squareform(mat)
+
+    if perturbation_order is not None:
+        order = [perturbations.index(pert) for pert in perturbation_order]
+    else:
+        # Reorder such that similar perturbations are close together and close to the diagonal.
+        Z = linkage(mat, method="ward")
+        order = leaves_list(Z)
+
+    reordered_mat = square_mat[order, :]
+    reordered_mat = reordered_mat[:, order]
+    perturbations = [perturbations[i] for i in order]
+
+    # Go from distance [0, 2] to similarity [-1, 1].
+    mapmat = 1 - reordered_mat
+
+    return Map(
+        similarity_matrix=mapmat,
+        embeddings=embeddings,
+        perturbations=perturbations,
+        cell_type=cell_type,
+    )
+
+
 def map_building_pipeline(
     data: AnnotatedDataMatrix,
     perturbation_groupby_columns: list[str],
-    plot_destination: Path | None = None,
+    save_destination: Path | None = None,
     cell_type_subset: list[str] | None = None,
     perturbation_order: list[str] | None = None,
+    cache_dir: Path | None = None,
 ):
     """
     Build the map using the EFAAR pipeline.
@@ -128,41 +179,28 @@ def map_building_pipeline(
             f"Creating a map for cell type {cell_type} ({idx + 1} / {data.obs['cell_type'].n_unique()})"
         )
 
-        group = pcaw_transform_data(group, ["batch_center"])
-        group = tvn_on_controls(group)
+        cache_path = None
+        if cache_dir is not None:
+            cache_path = cache_dir / f"map_{cell_type}.npz"
 
-        embedding_per_perturbation = aggregate(group, perturbation_groupby_columns)
-        perturbations = sorted(embedding_per_perturbation.keys())
-        embeddings = np.vstack([embedding_per_perturbation[pert] for pert in perturbations])
+        if cache_path is not None and cache_path.exists():
+            logger.info(f"Loading map from cache: {cache_path}")
+            vmap = Map.load(cache_path)
+        else:
+            vmap = build_map(group, perturbation_groupby_columns, cell_type, perturbation_order)
+            if cache_path is not None:
+                vmap.save(cache_path)
 
-        if len(embeddings) < 2:
-            logger.warning(
-                f"After all transformations, we're left with just {len(embeddings)} perturbations "
-                f"for cell type {cell_type}, skipping."
-            )
+        # If still None, there weren't enough perturbations to build a map.
+        if vmap is None:
             continue
 
-        mat = pdist(embeddings, metric="cosine")
-        square_mat = squareform(mat)
+        if save_destination is not None:
+            map_destination = save_destination / "maps"
+            map_destination.mkdir(parents=True, exist_ok=True)
+            vmap.save(map_destination / f"map_{cell_type}.npz")
 
-        if perturbation_order is not None:
-            order = [perturbations.index(pert) for pert in perturbation_order]
-        else:
-            # Reorder such that similar perturbations are close together and close to the diagonal.
-            Z = linkage(mat, method="ward")
-            order = leaves_list(Z)
-
-        reordered_mat = square_mat[order, :]
-        reordered_mat = reordered_mat[:, order]
-        perturbations = [perturbations[i] for i in order]
-
-        # Go from distance [0, 2] to similarity [-1, 1].
-        mapmat = 1 - reordered_mat
-
-        sns.histplot(mapmat[np.triu_indices(mapmat.shape[0], k=1)].flatten())
-        plt.show()
-
-        if plot_destination is not None:
+            plot_destination = save_destination / "plots"
             plot_destination.mkdir(parents=True, exist_ok=True)
 
             fig, ax = plt.subplots(figsize=(12, 10))
@@ -170,11 +208,19 @@ def map_building_pipeline(
             # Fun fact: "vlag" is the Dutch word for "flag", which, like the color palette, is red-white-blue.
             # Aren't you happy about that tidbit of information? No? Oh... Okay, moving on...
             cmap = sns.color_palette("vlag", as_cmap=True)
-            sns.heatmap(mapmat, ax=ax, cmap=cmap, vmin=-1, vmax=1, annot=len(perturbations) < 25)
 
-            if len(perturbations) == len(ax.get_xticks()):
+            sns.heatmap(
+                vmap.similarity_matrix,
+                ax=ax,
+                cmap=cmap,
+                vmin=-1,
+                vmax=1,
+                annot=len(vmap.perturbations) < 25,
+            )
+
+            if len(vmap.perturbations) == len(ax.get_xticks()):
                 # Enough space to show all labels.
-                prettified_labels = [", ".join(p) for p in perturbations]
+                prettified_labels = [", ".join(p) for p in vmap.perturbations]
                 ax.set_xticklabels(prettified_labels, rotation=90)
                 ax.set_yticklabels(prettified_labels, rotation=0)
             else:
@@ -184,11 +230,11 @@ def map_building_pipeline(
             ax.set_title(f"Cosine Similarity Map for Cell Type {cell_type}")
 
             fig.tight_layout()
-            dpi = max(100, min(600, mapmat.shape[0] // 10))
+            dpi = max(100, min(600, vmap.similarity_matrix.shape[0] // 10))
             fig.savefig(plot_destination / f"map_{cell_type}.jpg", dpi=dpi)
             plt.close(fig)
 
-        yield mapmat, cell_type, perturbations
+        yield vmap
 
 
 if __name__ == "__main__":

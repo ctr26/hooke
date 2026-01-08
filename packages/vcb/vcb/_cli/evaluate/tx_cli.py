@@ -19,12 +19,11 @@ from vcb.preprocessing.pipeline import TranscriptomicsPreprocessingPipeline
 from vcb.preprocessing.steps.log1p import InverseLog1pStep, Log1pStep
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
 from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
+from vcb.settings import settings
 from vcb.utils import is_txam_installed
 
 
-def get_metric_suites_for_task_id(
-    task_id: str, distributional_metrics: bool, save_destination: Path
-) -> list[MetricSuite]:
+def get_metric_suites_for_task_id(task_id: str, distributional_metrics: bool) -> list[MetricSuite]:
     suites = [
         RetrievalSuite(
             metric_labels={"retrieval_mae", "retrieval_edistance"},
@@ -46,7 +45,6 @@ def get_metric_suites_for_task_id(
 
         rescue_suite = PhenorescueSuite(
             metric_labels={"hit_score_error", "hit_classification", "hit_ranking"},
-            plot_destination=save_destination / "phenorescue",
             embedding=embedding,
             embedding_kwargs=embedding_kwargs,
             plot_hit_threshold=None,
@@ -62,7 +60,6 @@ def get_metric_suites_for_task_id(
                 "map_classification_0.4",
                 "map_classification_0.7",
             },
-            plot_destination=save_destination / "virtual_map",
         )
         suites.append(virtual_map_suite)
 
@@ -152,6 +149,9 @@ def tx_evaluate_cli(
     # _do_ log transform ground truth and predictions before final metric calculation
     evaluate_in_logspace = True
 
+    # Update the global settings
+    settings.save_dir = save_destination
+
     # Load the ground truth.
     ground_truth = TxAnnotatedDataMatrix(
         **DatasetDirectory(root=ground_truth_path).model_dump(),
@@ -167,6 +167,7 @@ def tx_evaluate_cli(
         zarr_index_column=predictions_zarr_index_column,
         var_gene_id_column=predictions_gene_id_column,
     )
+    predictions.obs = predictions.obs.with_columns(pl.lit(False).alias("is_negative_control"))
 
     type_adapter = TypeAdapter(TASK_ADAPTERS_TYPE)
 
@@ -197,11 +198,7 @@ def tx_evaluate_cli(
                 ),
             ]
         ),
-        metric_suites=get_metric_suites_for_task_id(
-            task_id,
-            distributional_metrics,
-            save_destination,
-        ),
+        metric_suites=get_metric_suites_for_task_id(task_id, distributional_metrics),
         copy_base_states_and_controls=copy_base_states_and_controls,
     )
 
@@ -209,9 +206,9 @@ def tx_evaluate_cli(
     results = config.execute()
 
     # Save the results
-    save_destination.mkdir(parents=True, exist_ok=True)
-    results.write_parquet(save_destination / "results.parquet")
-    with open(save_destination / "config.json", "w") as f:
+    save_dir = settings.ensure_save_dir()
+    results.write_parquet(save_dir / "results.parquet")
+    with open(save_dir / "config.json", "w") as f:
         f.write(config.model_dump_json(indent=4))
 
     # Summarize the results

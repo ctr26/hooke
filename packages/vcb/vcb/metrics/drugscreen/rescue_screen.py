@@ -8,7 +8,6 @@ from loguru import logger
 from sklearn.decomposition import PCA
 from tqdm import tqdm
 
-from vcb.constants import TXAM_MODEL_PATH
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix, TxAnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.task.drugscreen import add_compound_perturbation_to_obs
@@ -23,6 +22,7 @@ from vcb.metrics.drugscreen.sampling import (
 )
 from vcb.metrics.drugscreen.utils import SynchronizedDataset
 from vcb.metrics.utils.transforms import pcaw_transform_data
+from vcb.settings import settings
 from vcb.utils import is_txam_installed
 
 
@@ -70,7 +70,7 @@ def rescue_screen_analysis(
         from txam import TxAMEncoder
 
         if "model_path" not in embedding_kwargs:
-            embedding_kwargs["model_path"] = TXAM_MODEL_PATH
+            embedding_kwargs["model_path"] = settings.txam_model_path
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = TxAMEncoder.from_pretrained(embedding_kwargs["model_path"], device=device)

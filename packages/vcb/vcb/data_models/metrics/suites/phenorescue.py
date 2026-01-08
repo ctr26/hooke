@@ -4,7 +4,7 @@ from typing import ClassVar, Literal
 import numpy as np
 import polars as pl
 from loguru import logger
-from pydantic import Field
+from pydantic import Field, computed_field
 from tqdm import tqdm
 
 from vcb.data_models.metrics.metric_info import MinimalMetricInfo
@@ -13,6 +13,7 @@ from vcb.data_models.task.base import TaskAdapter
 from vcb.data_models.task.drugscreen import DrugscreenTaskAdapter
 from vcb.metrics.drugscreen.rescue_screen import rescue_screen_analysis
 from vcb.metrics.phenorescue import hit_classification, hit_ranking, hit_score_error
+from vcb.settings import settings
 
 
 class PhenorescueSuite(MetricSuite):
@@ -25,7 +26,6 @@ class PhenorescueSuite(MetricSuite):
     embedding: Literal["txam", "pca"] | None = None
     embedding_kwargs: dict = Field(default_factory=dict)
 
-    plot_destination: Path | None = None
     plot_hit_threshold: float | None = 0.5
 
     random_state: int = 42
@@ -36,8 +36,9 @@ class PhenorescueSuite(MetricSuite):
         "hit_classification": MinimalMetricInfo(fn=hit_classification),
     }
 
-    def _maybe_get_subdir(self, subdir: str) -> Path | None:
-        return self.plot_destination / subdir if self.plot_destination is not None else None
+    @computed_field
+    def save_dir(self) -> Path:
+        return settings.ensure_save_dir(self.kind)
 
     def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
         rows = []
@@ -54,7 +55,7 @@ class PhenorescueSuite(MetricSuite):
         logger.info("Computing the hit scores for the ground truth...")
         for experiment, hit_scores, _, exp_plot_compounds in rescue_screen_analysis(
             ground_truth.dataset,
-            plot_destination=self._maybe_get_subdir("ground_truth"),
+            plot_destination=self.save_dir / "plots" / "ground_truth",
             plot_hit_threshold=self.plot_hit_threshold,
             embedding=self.embedding,
             embedding_kwargs=self.embedding_kwargs,
@@ -71,7 +72,7 @@ class PhenorescueSuite(MetricSuite):
         logger.info("Computing the hit scores for the predictions...")
         for experiment, hit_scores, _, _ in rescue_screen_analysis(
             predictions.dataset,
-            plot_destination=self._maybe_get_subdir("predicted"),
+            plot_destination=self.save_dir / "plots" / "predicted",
             plot_compounds=plot_compounds,
             embedding=self.embedding,
             embedding_kwargs=self.embedding_kwargs,

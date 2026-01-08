@@ -15,11 +15,10 @@ from vcb.data_models.metrics.suites.pep import PerturbationEffectPredictionSuite
 from vcb.data_models.metrics.suites.phenorescue import PhenorescueSuite
 from vcb.data_models.metrics.suites.retrieval import RetrievalSuite
 from vcb.data_models.metrics.suites.virtual_map import VirtualMapSuite
+from vcb.settings import settings
 
 
-def get_metric_suites_for_task_id(
-    task_id: str, distributional_metrics: bool, save_destination: Path
-) -> list[MetricSuite]:
+def get_metric_suites_for_task_id(task_id: str, distributional_metrics: bool) -> list[MetricSuite]:
     suites = [
         RetrievalSuite(
             metric_labels={"retrieval_mae", "retrieval_edistance"},
@@ -34,8 +33,7 @@ def get_metric_suites_for_task_id(
 
     if task_id == "phenorescue":
         rescue_suite = PhenorescueSuite(
-            metric_labels={"hit_score_error", "hit_classification", "hit_ranking"},
-            plot_destination=save_destination / "phenorescue",
+            metric_labels={"hit_score_error", "hit_classification", "hit_ranking"}
         )
         suites.append(rescue_suite)
 
@@ -47,8 +45,7 @@ def get_metric_suites_for_task_id(
                 "map_classification_90%",
                 "map_classification_0.4",
                 "map_classification_0.7",
-            },
-            plot_destination=save_destination / "virtual_map",
+            }
         )
         suites.append(virtual_map_suite)
 
@@ -114,6 +111,10 @@ def px_evaluate_cli(
         use_validation_split: Whether to use the validation split instead of the test split (default False).
         copy_base_states_and_controls: Whether to copy the base states and controls from the ground truth to the predictions.
     """
+
+    # Update the global settings
+    settings.save_dir = save_destination
+
     # Load the ground truth.
     ground_truth = AnnotatedDataMatrix(**DatasetDirectory(root=ground_truth_path).model_dump())
 
@@ -141,19 +142,15 @@ def px_evaluate_cli(
         split_path=split_path,
         split_index=split_idx,
         use_validation_split=use_validation_split,
-        metric_suites=get_metric_suites_for_task_id(
-            task_id,
-            distributional_metrics,
-            save_destination,
-        ),
+        metric_suites=get_metric_suites_for_task_id(task_id, distributional_metrics),
         copy_base_states_and_controls=copy_base_states_and_controls,
     )
     results = config.execute()
 
     # Save the results
-    save_destination.mkdir(parents=True, exist_ok=True)
-    results.write_parquet(save_destination / "results.parquet")
-    with open(save_destination / "config.json", "w") as f:
+    save_dir = settings.ensure_save_dir()
+    results.write_parquet(save_dir / "results.parquet")
+    with open(save_dir / "config.json", "w") as f:
         f.write(config.model_dump_json(indent=4))
 
     # Summarize the results

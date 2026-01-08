@@ -18,6 +18,7 @@ from vcb.data_models.split import Split
 from vcb.preprocessing.steps.log1p import Log1pStep
 from vcb.preprocessing.steps.match_genes import MatchGenesStep
 from vcb.preprocessing.steps.scale_counts import ScaleCountsStep
+from vcb.settings import settings
 
 
 def run_baseline_tx_cli(
@@ -59,6 +60,9 @@ def run_baseline_tx_cli(
     """
     Evaluate baseline performance on a transcriptomics dataset.
     """
+
+    # Update the global settings
+    settings.save_dir = save_destination
 
     # Extract splits.
     split = Split.from_json(split_path)
@@ -149,7 +153,7 @@ def run_baseline_tx_cli(
             task_id=task_id,
             split_path=split_path,
             split_idx=split_idx,
-            save_destination=save_destination,
+            save_destination=settings.save_dir,
             predictions_features_layer="predictions",
             predictions_zarr_index_column=None,
             predictions_var_path=predictions_var_path,
