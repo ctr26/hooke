@@ -51,10 +51,17 @@ def drugscreen_split_cli(
     splitting_strategy: str = "random",
     validation_ratio: float = 0.15,
     subsample_ratio: float | None = None,
+    test_obs_ids_file: Path | None = None,
 ):
     """
     Split a drugscreen dataset into a train and test set.
     """
+
+    # Convert None to empty list for simpler code
+    if test_obs_ids_file is not None:
+        test_obs_ids = pl.read_csv(test_obs_ids_file, has_header=False)["column_1"].to_list()
+    else:
+        test_obs_ids = []
 
     # Load the dataset
     dataset = AnnotatedDataMatrix(**DatasetDirectory(root=dataset_dir).model_dump())
@@ -137,9 +144,48 @@ def drugscreen_split_cli(
     unique_values = drugscreen_subset[splitting_col].unique()
     if subsample_ratio is not None:
         subsample_size = int(len(unique_values) * subsample_ratio)
-        unique_values = np.random.choice(unique_values, size=subsample_size, replace=False)
+        unique_values = np.random.choice(unique_values.to_numpy(), size=subsample_size, replace=False)
         drugscreen_subset = drugscreen_subset.filter(pl.col(splitting_col).is_in(unique_values))
         log_step("Subsampled", len(drugscreen_subset))
+    else:
+        unique_values = unique_values.to_numpy()
+
+    # Handle explicitly specified test observation IDs
+    test_splitting_values = np.array([], dtype=unique_values.dtype)
+    if len(test_obs_ids) > 0:
+        # Find which observations from test_obs_ids exist in drugscreen_subset
+        test_obs_filtered = drugscreen_subset.filter(pl.col("obs_id").is_in(test_obs_ids))
+        found_test_obs_ids = set(test_obs_filtered["obs_id"].to_list())
+        missing_test_obs_ids = set(test_obs_ids) - found_test_obs_ids
+
+        if missing_test_obs_ids:
+            logger.warning(
+                f"Some test_obs_ids were not found in the filtered drugscreen subset: "
+                f"{missing_test_obs_ids}. These will be ignored."
+            )
+
+        if len(found_test_obs_ids) > 0:
+            # Extract the splitting values for these test observations
+            test_splitting_values = test_obs_filtered[splitting_col].unique().to_numpy()
+
+            # sanity check consistency between splitting level and test_obs_ids
+            not_test_obs_filtered = drugscreen_subset.filter(~pl.col("obs_id").is_in(test_obs_ids))
+            not_test_splitting_values = not_test_obs_filtered[splitting_col].unique().to_numpy()
+            if set(not_test_splitting_values) & set(test_splitting_values):
+                raise ValueError(
+                    f"The splitting values inside vs outside the test_obs_ids are not mutually exclusive. "
+                    f"This probably indicates that the test_obs_ids were split with logic "
+                    f"that does not group by the splitting_level as expected for this split. "
+                    f"The overlap is: {set(not_test_splitting_values) & set(test_splitting_values)}"
+                )
+
+            # Remove test splitting values from unique_values to exclude them from KFold
+            unique_values = np.setdiff1d(unique_values, test_splitting_values)
+
+            logger.info(
+                f"Explicitly assigning {len(test_splitting_values)} splitting value(s) to test set "
+                f"(from {len(found_test_obs_ids)} test observation IDs)"
+            )
 
     # Find the batch-paired negative controls
     negative_control_indices = (
@@ -162,6 +208,10 @@ def drugscreen_split_cli(
         for j, (finetune, test) in enumerate(random_cv.split(unique_values)):
             train_perturbations = unique_values[finetune]
             test_perturbations = unique_values[test]
+
+            # Always add explicitly specified test splitting values to test set
+            if len(test_splitting_values) > 0:
+                test_perturbations = np.concatenate([test_perturbations, test_splitting_values])
 
             if validation_ratio > 0:
                 val_size = int(len(train_perturbations) * validation_ratio)
@@ -238,6 +288,65 @@ def drugscreen_split_cli(
             assert validation_compounds.intersection(test_compounds) == set(), (
                 f"Validation and test have {validation_compounds.intersection(test_compounds)}"
             )
+
+    # Validate that test_obs_ids are always in test sets and never in train/validation
+    if len(test_obs_ids) > 0:
+        found_test_indices = set(
+            drugscreen_subset.filter(pl.col("obs_id").is_in(test_obs_ids))["original_index"].to_list()
+        )
+
+        if len(found_test_indices) > 0:
+            for fold in split_model.folds:
+                fold_test_indices = set(fold.test)
+                fold_train_indices = set(fold.finetune)
+                fold_val_indices = set(fold.validation)
+
+                # Check that all test_obs_ids are in test
+                missing_from_test = found_test_indices - fold_test_indices
+                if missing_from_test:
+                    logger.warning(
+                        f"Fold ({fold.outer_fold}, {fold.inner_fold}): Some test_obs_ids are missing from test set: "
+                        f"{len(missing_from_test)} missing: {list(missing_from_test)[:5]}..."
+                    )
+
+                # Check that test_obs_ids are not in train or validation
+                in_train = found_test_indices & fold_train_indices
+                in_val = found_test_indices & fold_val_indices
+                if in_train or in_val:
+                    logger.warning(
+                        f"Fold ({fold.outer_fold}, {fold.inner_fold}): Some test_obs_ids appear in train/validation, indices: "
+                        f"train={len(in_train)}: {list(in_train)[:5]}..., validation={len(in_val)}: {list(in_val)[:5]}..."
+                    )
+
+                # When splitting_level != "observation", validate that all observations with the same
+                # splitting value as test_obs_ids are also in test
+                if splitting_level != "observation":
+                    test_obs_in_fold = drugscreen_subset.filter(
+                        pl.col("original_index").is_in(list(found_test_indices))
+                    )
+                    test_splitting_vals = set(test_obs_in_fold[splitting_col].unique().to_list())
+
+                    # Find all observations with these splitting values
+                    all_obs_with_test_splitting_vals = drugscreen_subset.filter(
+                        pl.col(splitting_col).is_in(list(test_splitting_vals))
+                    )
+                    all_obs_ids_with_test_splitting_vals = set(
+                        all_obs_with_test_splitting_vals["original_index"].to_list()
+                    )
+
+                    # Check if any are in train or validation
+                    in_train = all_obs_ids_with_test_splitting_vals & fold_train_indices
+                    in_val = all_obs_ids_with_test_splitting_vals & fold_val_indices
+
+                    if in_train or in_val:
+                        logger.warning(
+                            f"Fold ({fold.outer_fold}, {fold.inner_fold}): Violation of splitting-level constraint! "
+                            f"When splitting_level='{splitting_level}', all observations sharing the same splitting "
+                            f"value as test_obs_ids must be in test. However, {len(in_train)} observation(s) with "
+                            f"test splitting values are in train and {len(in_val)} are in validation. "
+                            f"This probably indicates that the test_obs_ids were split with logic "
+                            f"that does not group by the splitting_level as expected."
+                        )
 
     logger.info("\n" + str(split_model))
 

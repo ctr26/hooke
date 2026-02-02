@@ -1,15 +1,33 @@
+import json
 from pathlib import Path
+from typing import Annotated
 
 import numpy as np
 import polars as pl
 from loguru import logger
 from sklearn.model_selection import KFold
+import typer
 
 from vcb._cli.split.utils import POS_CONTROL_FILTER, log_step
 from vcb.data_models.dataset.anndata import AnnotatedDataMatrix
 from vcb.data_models.dataset.dataset_directory import DatasetDirectory
 from vcb.data_models.split import Fold, Split
 from vcb.data_models.task.singles import SinglesTaskAdapter
+
+
+def _parse_perturbation_groupby_cols_types(value: str | None) -> list[tuple[str, str]] | None:
+    """Parse perturbation_groupby_cols_types from JSON string."""
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+        if not isinstance(parsed, list):
+            raise ValueError(
+                "perturbation_groupby_cols_types must be a json string with a list of lists with pairs of [col_name, col_type]"
+            )
+        return [tuple(item) for item in parsed]
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON for perturbation_groupby_cols_types: {e}")
 
 
 def singles_split_cli(
@@ -19,18 +37,59 @@ def singles_split_cli(
     splitting_level: str = "unique_perturbation",
     splitting_strategy: str = "random",
     validation_ratio: float = 0.15,
+    n_folds: Annotated[
+        int,
+        typer.Option(
+            "--n-folds", help="Number of folds for KFold, this controls the test set fraction (1/n_folds)"
+        ),
+    ] = 5,
     subsample_ratio: float | None = None,
+    test_obs_ids_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--test-obs-ids-file",
+            help="Path to file containing test observation IDs, one per line, no header",
+        ),
+    ] = None,
+    perturbation_groupby_cols_types: Annotated[
+        str | None,
+        typer.Option(
+            "--perturbation-groupby-cols-types",
+            help='JSON string specifying perturbation_groupby_cols_types, e.g., \'[["inchikey", "<U27"], ["concentration", "float"]]\'',
+        ),
+    ] = None,
+    perturbation_splitting_col: Annotated[
+        str | None,
+        typer.Option(
+            "--perturbation-splitting-col",
+            help="Column name to use for perturbation-level splitting (e.g., 'inchikey')",
+        ),
+    ] = None,
 ):
     """
     Split a singles dataset into train, validation and test sets.
     """
+    if test_obs_ids_file is not None:
+        test_obs_ids = pl.read_csv(test_obs_ids_file, has_header=False)["column_1"].to_list()
+    else:
+        test_obs_ids = []
 
-    logger.critical("This has not been tested and will likely not work. Thread with caution.")
+    # Build task adapter kwargs from config file and CLI (CLI takes precedence)
+    task_adapter_kwargs = {}
 
+    # perturbation_groupby_cols_types: from config file or CLI
+    if perturbation_groupby_cols_types is not None:
+        task_adapter_kwargs["perturbation_groupby_cols_types"] = _parse_perturbation_groupby_cols_types(
+            perturbation_groupby_cols_types
+        )
+
+    # perturbation_splitting_col: from config file or CLI
+    if perturbation_splitting_col is not None:
+        task_adapter_kwargs["perturbation_splitting_col"] = perturbation_splitting_col
     # Load the dataset
     dataset = AnnotatedDataMatrix(**DatasetDirectory(root=dataset_dir).model_dump())
 
-    task_adapter = SinglesTaskAdapter(dataset=dataset)
+    task_adapter = SinglesTaskAdapter(dataset=dataset, **task_adapter_kwargs)
     # Preprocess the observations
     task_adapter.prepare()
     original = task_adapter.dataset.obs
@@ -69,8 +128,8 @@ def singles_split_cli(
     # Filter out any context with less than 25 unique compounds
     perturbations_per_base_state = (
         obs.group_by(FULL_GROUPING)
-        .agg(pl.col(task_adapter.perturbation_groupby_cols).n_unique().alias("count"))
-        .filter(pl.col("count").ge(25))[FULL_GROUPING]
+        .agg(pl.struct(task_adapter.perturbation_groupby_cols).n_unique().alias("count_upert"))
+        .filter(pl.col("count_upert").ge(25))[FULL_GROUPING]
         .to_list()
     )
     obs = obs.filter(pl.col(FULL_GROUPING).is_in(perturbations_per_base_state))
@@ -95,7 +154,7 @@ def singles_split_cli(
 
     perturbations_subset = task_adapter.all_perturbed_obs.filter(
         pl.col(batch_center).is_in(obs[batch_center].unique())
-    )
+    ).filter(POS_CONTROL_FILTER)
 
     # We split randomly on the compound level
     if splitting_level == "observation":
@@ -110,13 +169,58 @@ def singles_split_cli(
     if splitting_strategy != "random":
         raise ValueError(f"Invalid splitting strategy: {splitting_strategy}. Choose from: 'random'.")
 
+    # check if there are any None values in the splitting column, report the obs_id
+    none_values = perturbations_subset.filter(pl.col(splitting_col).is_null())["obs_id"].to_list()
+    if len(none_values) > 0:
+        raise ValueError(
+            f"There are {len(none_values)} None values in the splitting column: {splitting_col}, e.g. obs_ids: {none_values[:5]}..."
+        )
+
     unique_values = perturbations_subset[splitting_col].unique()
     # maybe make it small to speed things up
     if subsample_ratio is not None:
         subsample_size = int(len(unique_values) * subsample_ratio)
-        unique_values = np.random.choice(unique_values, size=subsample_size, replace=False)
+        unique_values = np.random.choice(unique_values.to_numpy(), size=subsample_size, replace=False)
         perturbations_subset = perturbations_subset.filter(pl.col(splitting_col).is_in(unique_values))
         log_step("Subsampled", len(perturbations_subset))
+    else:
+        unique_values = unique_values.to_numpy()
+
+    # Handle explicitly specified test observation IDs
+    test_splitting_values = np.array([], dtype=unique_values.dtype)
+    if len(test_obs_ids) > 0:
+        # Find which observations from test_obs_ids exist in perturbations_subset
+        test_obs_filtered = perturbations_subset.filter(pl.col("obs_id").is_in(test_obs_ids))
+        found_test_obs_ids = set(test_obs_filtered["obs_id"].to_list())
+        missing_test_obs_ids = set(test_obs_ids) - found_test_obs_ids
+
+        if missing_test_obs_ids:
+            logger.warning(
+                f"Some test_obs_ids were not found in the filtered perturbations subset: "
+                f"{missing_test_obs_ids}. These will be ignored."
+            )
+
+        if len(found_test_obs_ids) > 0:
+            # Extract the splitting values for these test observations
+            test_splitting_values = test_obs_filtered[splitting_col].unique().to_numpy()
+
+            # sanity check consistency between splitting level and test_obs_ids
+            not_test_obs_filtered = perturbations_subset.filter(~pl.col("obs_id").is_in(test_obs_ids))
+            not_test_splitting_values = not_test_obs_filtered[splitting_col].unique().to_numpy()
+            if set(not_test_splitting_values) & set(test_splitting_values):
+                raise ValueError(
+                    f"The splitting values inside vs outside the test_obs_ids are not mutually exclusive. "
+                    f"This probably indicates that the test_obs_ids were split with logic "
+                    f"that does not group by the splitting_level as expected for this split. "
+                    f"The overlap is: {set(not_test_splitting_values) & set(test_splitting_values)}"
+                )
+            # Remove test splitting values from unique_values to exclude them from KFold
+            unique_values = np.setdiff1d(unique_values, test_splitting_values)
+
+            logger.info(
+                f"Explicitly assigning {len(test_splitting_values)} splitting value(s) to test set "
+                f"(from {len(found_test_obs_ids)} test observation IDs)"
+            )
 
     # Find the batch-paired negative controls / base_states
     base_state_indices = (
@@ -128,11 +232,15 @@ def singles_split_cli(
     # 5x5 Cross Validation
     folds = []
     for i in range(5):
-        random_cv = KFold(n_splits=5, random_state=i, shuffle=True)
+        random_cv = KFold(n_splits=n_folds, random_state=i, shuffle=True)
 
         for j, (finetune, test) in enumerate(random_cv.split(unique_values)):
             train_perturbations = unique_values[finetune]
             test_perturbations = unique_values[test]
+
+            # add the splitting values of any explicitly specified test obs_id values to test set
+            if len(test_splitting_values) > 0:
+                test_perturbations = np.concatenate([test_perturbations, test_splitting_values])
 
             if validation_ratio > 0:
                 val_size = int(len(train_perturbations) * validation_ratio)
@@ -185,6 +293,67 @@ def singles_split_cli(
         assert all(obs.filter(pl.col("original_index").is_in(fold.finetune))["has_query_perturbation"])
         assert all(obs.filter(pl.col("original_index").is_in(fold.validation))["has_query_perturbation"])
         assert all(obs.filter(pl.col("original_index").is_in(fold.test))["has_query_perturbation"])
+
+    # Validate that test_obs_ids are always in test sets and never in train/validation
+    if len(test_obs_ids) > 0:
+        found_test_indices = set(
+            perturbations_subset.filter(pl.col("obs_id").is_in(test_obs_ids))["original_index"].to_list()
+        )
+
+        if len(found_test_indices) > 0:
+            for fold in split_model.folds:
+                fold_test_indices = set(fold.test)
+                fold_train_indices = set(fold.finetune)
+                fold_val_indices = set(fold.validation)
+
+                # Check that all test_obs_ids are in test
+                missing_from_test = found_test_indices - fold_test_indices
+                if missing_from_test:
+                    logger.warning(
+                        f"Fold ({fold.outer_fold}, {fold.inner_fold}): Some test_obs_ids are missing from test set, indices: "
+                        f"{len(missing_from_test)} missing: {list(missing_from_test)[:5]}..."
+                    )
+
+                # Check that test_obs_ids are not in train or validation
+                in_train = found_test_indices & fold_train_indices
+                in_val = found_test_indices & fold_val_indices
+                if in_train or in_val:
+                    logger.warning(
+                        f"Fold ({fold.outer_fold}, {fold.inner_fold}): Some test_obs_ids appear in train/validation, indices: "
+                        f"train={len(in_train)}: {list(in_train)[:5]}..., validation={len(in_val)}: {list(in_val)[:5]}..."
+                    )
+
+                # When splitting_level != "observation", validate that all observations with the same
+                # splitting value as test_obs_ids are also in test
+                # e.g. if this is a compound-singles-split and as much as a single well with Comp1 is in the test set
+                #  then Comp1 is always and only in the test set
+                if splitting_level != "observation":
+                    test_obs_in_fold = perturbations_subset.filter(
+                        pl.col("original_index").is_in(list(found_test_indices))
+                    )
+                    test_splitting_vals = set(test_obs_in_fold[splitting_col].unique().to_list())
+
+                    # Find all observations with these splitting values
+                    all_obs_with_test_splitting_vals = perturbations_subset.filter(
+                        pl.col(splitting_col).is_in(list(test_splitting_vals))
+                    )
+                    all_obs_ids_with_test_splitting_vals = set(
+                        all_obs_with_test_splitting_vals["original_index"].to_list()
+                    )
+
+                    # Check if any are in train or validation
+                    in_train = all_obs_ids_with_test_splitting_vals & fold_train_indices
+                    in_val = all_obs_ids_with_test_splitting_vals & fold_val_indices
+
+                    if in_train or in_val:
+                        logger.warning(
+                            f"Fold ({fold.outer_fold}, {fold.inner_fold}): Violation of splitting-level constraint! "
+                            f"When splitting_level='{splitting_level}', all observations sharing the same splitting "
+                            f"value as test_obs_ids must be in test. However, {len(in_train)} observation(s) with "
+                            f"test splitting values are in train and {len(in_val)} are in validation. "
+                            f"This probably indicates that the test_obs_ids were split with logic "
+                            f"that does not group by the splitting_level as expected."
+                        )
 
     logger.info("\n" + str(split_model))
 

@@ -37,6 +37,24 @@ uv run vcb evaluate baseline --help
 uv run vcb evaluate baseline [tx/px/...] <path_to_groundtruth_dir> <path_to_split_json> <split_index> <baseline_type> <results_save_path>
 ```
 
+### Create dataset splits:
+
+```bash
+uv run vcb split singles --help
+uv run vcb split singles <dataset_dir> <output_dir> <version> \
+     --splitting-level unique_perturbation
+
+# With explicitly specified test observations:
+uv run vcb split singles <dataset_dir> <output_dir> <version> \
+     --splitting-level unique_perturbation \
+     --test-obs-ids-file <file-with-1-obs_id-per-line-no-header>
+
+# same basic options available for other tasks 
+uv run vcb split drugscreen --help
+```
+
+
+
 ## Development
 
 ```mermaid

@@ -1,25 +1,29 @@
-from typing import Literal, Tuple
+from typing import Literal, Self, Tuple
 
 import numpy as np
 import polars as pl
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from vcb.data_models.task.base import TaskAdapter
+from vcb.utils import filter_negative_controls_and_duplicates
 
 
 def add_single_perturbation_to_obs(obs: pl.DataFrame) -> pl.DataFrame:
     """
     Add the single perturbation to the observations.
     """
-    # assert single perts only
-    singles_and_empties = obs.filter(pl.col("perturbations").list.len().le(1))
+    # first skip the negative controls and duplicates
+    obs = filter_negative_controls_and_duplicates(obs)
+
+    # assert single perts only (or empty)
+    singles_and_empties = obs.filter(pl.col("clean_perturbations").list.len() <= 1)
     if not singles_and_empties.shape[0] == obs.shape[0]:
         raise ValueError(
             f"Expected all observations to be singles, but singles comprised "
             f"{singles_and_empties.shape[0]} / {obs.shape[0]} of the observations."
         )
     return (
-        obs.with_columns(pl.col("perturbations").alias("pert_ex_un"))
+        obs.with_columns(pl.col("clean_perturbations").alias("pert_ex_un"))
         .explode("pert_ex_un")
         .unnest("pert_ex_un")
     )
@@ -46,15 +50,28 @@ class SinglesTaskAdapter(TaskAdapter):
     perturbation_groupby_cols_types: list[Tuple[str, str]] = Field(
         default_factory=lambda: [("inchikey", "<U27"), ("concentration", "float")]
     )
-    context_groupby_cols: list[str] = Field(default_factory=lambda: ["cell_type"])
+    context_groupby_cols: list[str] = Field(default_factory=lambda: [])
     perturbation_splitting_col: str = Field(default="inchikey")
+
+    @model_validator(mode="before")
+    def set_from_metadata(self) -> Self:
+        """
+        Set context_groupby_cols and perturbation_splitting_col from dataset metadata if available.
+        """
+        if self["dataset"].metadata is not None:
+            self["context_groupby_cols"] = list(self["dataset"].metadata.biological_context)
+
+        return self
 
     @property
     def perturbation_length_filter(self) -> pl.Expr:
         return pl.col("perturbations").list.len().le(1)
 
     def get_all_perturbed_obs(self) -> pl.DataFrame:
-        return self.dataset.obs.filter(~pl.col("is_negative_control"))
+        # define as, 'has a query', i.e. contains at least one perturbation with usage_class == "query"
+        return self.dataset.obs.filter(
+            pl.col("perturbations").list.eval(pl.element().struct.field("usage_class").eq("query")).list.any()
+        )
 
     def get_all_basal_obs(self) -> pl.DataFrame:
         return self.dataset.obs.filter(pl.col("is_negative_control"))
