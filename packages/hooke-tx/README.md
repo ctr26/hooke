@@ -1,2 +1,2 @@
-# hooke-tx
+# HookeTx
 Repository for Transcriptomics perturbation prediction
