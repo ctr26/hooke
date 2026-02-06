@@ -353,8 +353,8 @@ def launch_workers(
     config_path: Path,
     output_dir: Path,
     partition: str = "hopper",
-    qos: str | None = "hooke-predict",
-    timeout_min: int = 120,
+    qos: str | None = None,  # "hooke-predict",
+    timeout_min: int = 480,
 ) -> list[submitit.Job]:
     """Launch SLURM jobs for each worker directory using submitit array job."""
     executor = submitit.AutoExecutor(folder=str(output_dir / "submitit_logs"))
@@ -367,9 +367,12 @@ def launch_workers(
         tasks_per_node=1,
         gpus_per_node=1,
         cpus_per_task=6,
-        mem_gb=32,
+        mem_gb=48,
         timeout_min=timeout_min,
-        slurm_additional_parameters={"requeue": True},
+        slurm_additional_parameters={
+            "requeue": True,
+            "exclude": "hop01,hop61,hop62",  # Exclude nodes with MIG or small GPU slices
+        },
     )
 
     worker_args = [(str(wd), str(config_path)) for wd in worker_dirs]
@@ -516,7 +519,7 @@ def distributed_inference(
     num_real_image_samples: int = ornamentalist.Configurable[1],
     batch_size: int = ornamentalist.Configurable[4],
     partition: str = ornamentalist.Configurable["hopper"],
-    qos: str = ornamentalist.Configurable["hooke-predict"],
+    qos: str = ornamentalist.Configurable["default"],
     wandb_project: str | None = ornamentalist.Configurable[None],
     skip_launch: bool = ornamentalist.Configurable[False],
     metrics_only: bool = ornamentalist.Configurable[False],

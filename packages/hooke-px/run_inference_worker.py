@@ -30,9 +30,17 @@ from dataset import (
     MetaVocab,
 )
 from model import get_model_cls
+from main import (
+    REC_ID_DIM,
+    CONCENTRATION_DIM,
+    CELL_TYPE_DIM,
+    IMAGE_TYPE_DIM,
+    EXPERIMENT_DIM,
+    WELL_ADDRESS_DIM,
+)
 from trainer import generate
 from utils.ema import KarrasEMA
-from utils.evaluation import DINOv2Detector, Phenom2Detector
+from utils.evaluation import DINOv2Detector, Phenom2Detector, PH2BFDetector
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -91,12 +99,12 @@ def load_model(
 
     # Build vocab from tokenizer
     vocab = MetaVocab(
-        rec_id_dim=int(1.2 * len(tokenizer.rec_id_tokenizer)),
-        concentration_dim=int(1.2 * len(tokenizer.concentration_tokenizer)),
-        cell_type_dim=int(1.2 * len(tokenizer.cell_type_tokenizer)),
-        experiment_dim=int(1.2 * len(tokenizer.experiment_tokenizer)),
-        image_type_dim=int(1.2 * len(tokenizer.image_type_tokenizer)),
-        well_address_dim=int(1.2 * len(tokenizer.well_address_tokenizer)),
+        rec_id_dim=REC_ID_DIM,
+        concentration_dim=CONCENTRATION_DIM,
+        cell_type_dim=CELL_TYPE_DIM,
+        experiment_dim=EXPERIMENT_DIM,
+        image_type_dim=IMAGE_TYPE_DIM,
+        well_address_dim=WELL_ADDRESS_DIM,
         pad_length=tokenizer.pad_length,
     )
 
@@ -151,14 +159,14 @@ def process_batch(
         px1_flat = px1
 
     # Extract real image features
-    real_phenom = phenom(px1_flat).cpu().numpy()
-    real_dino = dino(cp2rgb(px1_flat.to(torch.uint8))).cpu().numpy()
-    if S > 1:
-        real_phenom = real_phenom.reshape(B, S, PHENOM_DIM)
-        real_dino = real_dino.reshape(B, S, DINO_DIM)
-    else:
-        real_phenom = real_phenom.reshape(B, PHENOM_DIM)
-        real_dino = real_dino.reshape(B, DINO_DIM)
+    # real_phenom = phenom(px1_flat).cpu().numpy()
+    # real_dino = dino(cp2rgb(px1_flat.to(torch.uint8))).cpu().numpy()
+    # if S > 1:
+    #     real_phenom = real_phenom.reshape(B, S, PHENOM_DIM)
+    #     real_dino = real_dino.reshape(B, S, DINO_DIM)
+    # else:
+    #     real_phenom = real_phenom.reshape(B, PHENOM_DIM)
+    #     real_dino = real_dino.reshape(B, DINO_DIM)
 
     if num_samples > 1:
         # Generate multiple samples per image (DART-style)
@@ -169,7 +177,7 @@ def process_batch(
 
         # Extract features and reshape to (B, num_samples, dim)
         pred_phenom = phenom(preds).cpu().numpy().reshape(B, num_samples, PHENOM_DIM)
-        pred_dino = dino(cp2rgb(preds)).cpu().numpy().reshape(B, num_samples, DINO_DIM)
+        #pred_dino = dino(cp2rgb(preds)).cpu().numpy().reshape(B, num_samples, DINO_DIM)
         pred_images = (
             preds.cpu()
             .numpy()
@@ -187,18 +195,17 @@ def process_batch(
 
     return {
         "zarr_indices": zarr_indices,
-        "real_phenom": real_phenom,
-        "real_dino": real_dino,
+        #"real_phenom": real_phenom,
+        #"real_dino": real_dino,
         "pred_phenom": pred_phenom,
-        "pred_dino": pred_dino,
+        #"pred_dino": pred_dino,
         "pred_images": pred_images,
     }
 
 
 def run_worker(worker_dir: str, config_path: str):
     """Main worker function."""
-    worker_dir = Path(worker_dir)
-    chunk_path = worker_dir / "chunk.parquet"
+    chunk_path = Path(worker_dir) / "chunk.parquet"
 
     with open(config_path) as f:
         config = json.load(f)
@@ -226,6 +233,10 @@ def run_worker(worker_dir: str, config_path: str):
 
     # Load chunk metadata
     df = pl.read_parquet(chunk_path)
+    image_type = df["image_type"].unique()
+    assert len(image_type) == 1, "All rows must have the same image type"
+
+    image_type = image_type[0]
     incomplete_mask = ~df["complete"]
     df_incomplete = df.filter(incomplete_mask)
 
@@ -240,7 +251,12 @@ def run_worker(worker_dir: str, config_path: str):
     model, vae, tokenizer = load_model(checkpoint_path, device)
 
     # Initialize feature extractors
-    phenom = Phenom2Detector(device=device)
+    if image_type == "brightfield_3channel":
+        phenom = PH2BFDetector(device=device)
+        log.info("Using PH2BF Embedding")
+    else:
+        phenom = Phenom2Detector(device=device)
+        log.info("Using Phenom2 Embedding")
     dino = DINOv2Detector(device=device)
     cp2rgb = CellPaintConverter(device=device)
 
@@ -261,10 +277,10 @@ def run_worker(worker_dir: str, config_path: str):
     )
 
     # Open shared zarr arrays
-    real_phenom_zarr = zarr.open(os.path.join(zarr_dir, "real_phenom.zarr"), mode="r+")
-    real_dino_zarr = zarr.open(os.path.join(zarr_dir, "real_dino.zarr"), mode="r+")
+    #real_phenom_zarr = zarr.open(os.path.join(zarr_dir, "real_phenom.zarr"), mode="r+")
+    #real_dino_zarr = zarr.open(os.path.join(zarr_dir, "real_dino.zarr"), mode="r+")
     pred_phenom_zarr = zarr.open(os.path.join(zarr_dir, "pred_phenom.zarr"), mode="r+")
-    pred_dino_zarr = zarr.open(os.path.join(zarr_dir, "pred_dino.zarr"), mode="r+")
+    #pred_dino_zarr = zarr.open(os.path.join(zarr_dir, "pred_dino.zarr"), mode="r+")
     pred_images_zarr = zarr.open(os.path.join(zarr_dir, "pred_images.zarr"), mode="r+")
 
     # Process batches
@@ -283,10 +299,10 @@ def run_worker(worker_dir: str, config_path: str):
 
         # Write to zarr
         for i, idx in enumerate(results["zarr_indices"]):
-            real_phenom_zarr[idx] = results["real_phenom"][i]
-            real_dino_zarr[idx] = results["real_dino"][i]
+            #real_phenom_zarr[idx] = results["real_phenom"][i]
+            #real_dino_zarr[idx] = results["real_dino"][i]
             pred_phenom_zarr[idx] = results["pred_phenom"][i]
-            pred_dino_zarr[idx] = results["pred_dino"][i]
+            #pred_dino_zarr[idx] = results["pred_dino"][i]
             pred_images_zarr[idx] = results["pred_images"][i]
             completed_indices.append(idx)
 
