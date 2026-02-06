@@ -6,12 +6,12 @@
 #   ./scripts/launch_dart.sh --wait   # Launch and wait for completion
 
 # TODO: Update these paths for your specific checkpoint and parquet file
-CHECKPOINT_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/YOUR_JOB_ID/checkpoints"
+CHECKPOINT_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/1765842211/12146024/checkpoints"
 OUTPUT_BASE="/mnt/ps/home/CORP/jason.hartford/project/big-x/metrics/big-img-dart"
-PARQUET="/path/to/your/dart_data.parquet"
+PARQUET="/mnt/ps/home/CORP/jason.hartford/project/big-x/joint-model/metadata/overfit_data.parquet"
 
 # Checkpoints to evaluate
-STEPS=(50000 100000)
+STEPS=(50000)
 
 WAIT_MODE=false
 if [ "$1" == "--wait" ]; then

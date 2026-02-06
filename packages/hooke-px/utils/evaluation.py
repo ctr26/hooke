@@ -64,6 +64,27 @@ class Phenom2Detector:
         return self.model(x)
 
 
+class PH2BFDetector:
+    def __init__(self, device: torch.device):
+        from pathlib import Path
+
+        self.device = device
+        model_path = Path(
+            "/rxrx/data/valence/hooke-models/PH2-BF/inference_model/model.pth"
+        )
+        self.model = torch.jit.load(str(model_path), map_location=device)
+        self.model.eval().to(device)
+
+    def __call__(self, x):
+        """Extract features using PH2-BF.
+        Input is expected to be a torch.uint8 tensor of shape (B, 3, 256, 256)."""
+        B, c, h, w = x.shape
+        if c != 3:
+            x = x[:, :3, :, :]
+        x = x.to(self.device, non_blocking=True)
+        return self.model(x)
+
+
 def compute_statistics(reps):
     mu = np.mean(reps, axis=0)
     sigma = np.cov(reps, rowvar=False)

@@ -6,21 +6,27 @@
 #   ./scripts/launch_inference.sh --wait   # Launch and wait for completion
 
 # TODO: Update these paths for your specific checkpoint and parquet file
-CHECKPOINT_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/1765902991/12149725/checkpoints"
-OUTPUT_BASE="/mnt/ps/home/CORP/jason.hartford/project/big-x/metrics/hooke-mini"
-PARQUET="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/metadata/inference_set.parquet"
+#CHECKPOINT_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/1766740182/12277032/checkpoints"
+CHECKPOINT_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/1768305605/12583183/checkpoints"
+#CHECKPOINT_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/1766742068/12277450/checkpoints"
+#OUTPUT_BASE="/mnt/ps/home/CORP/jason.hartford/project/big-x/metrics/hooke-mini-v4/XL/drugscreen_controls"
+OUTPUT_BASE="/mnt/ps/home/CORP/jason.hartford/project/big-x/metrics/hooke-mini-v6/drugscreen/XL"
+#PARQUET="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/metadata/inference_set.parquet"
+#PARQUET="/mnt/ps/home/CORP/jason.hartford/project/big-x/joint-model/metadata/inference_v5.parquet"
+PARQUET="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/metadata/drugscreen_inference.parquet"
+
 QOS="default"
 # QOS="hooke-predict"
 
 # Checkpoints to evaluate
-STEPS=(50000)
+STEPS=(200000)
 
 WAIT_MODE=false
 if [ "$1" == "--wait" ]; then
     WAIT_MODE=true
 fi
 
-cd /mnt/ps/home/CORP/jason.hartford/project/big-x/big-img
+cd /mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/
 
 PIDS=()
 
@@ -46,7 +52,7 @@ for step in "${STEPS[@]}"; do
         --setup.num_workers 1000 \
         --setup.num_samples_per_image 36 \
         --setup.num_real_image_samples 1 \
-        --setup.batch_size 8 \
+        --setup.batch_size 3 \
         --setup.wandb_project big-img-eval \
         --setup.qos "$QOS" \
         > "$LOG_FILE" 2>&1 &

@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import logging
 import os
 import re
@@ -32,13 +33,49 @@ from utils.profiler import get_profiler
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__name__)
 
+# Module-level path for file-based metrics logging (used when wandb is not available)
+_metrics_log_path: str | None = None
+
+
+def set_metrics_log_path(path: str | None) -> None:
+    """Set the path for file-based metrics logging (JSONL format).
+
+    Call this before running evaluation/training to enable file-based logging
+    when wandb is not initialized.
+    """
+    global _metrics_log_path
+    _metrics_log_path = path
+    if path is not None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        _log.info(f"Metrics will be logged to {path}")
+
+
+def _serialize_for_json(obj):
+    """Convert non-JSON-serializable objects to serializable format."""
+    if isinstance(obj, wandb.Image):
+        return (
+            f"<wandb.Image: {obj._path}>" if hasattr(obj, "_path") else "<wandb.Image>"
+        )
+    if isinstance(obj, (np.floating, np.integer)):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return str(obj)
+
 
 @rank_zero()
 def log(*, step: int, msg: str | None = None, data: dict | None = None):
     if msg is not None:
         _log.info(f"[{step=}] {msg}")
     if data is not None:
-        wandb.log(data, step=step)
+        if wandb.run is not None:
+            wandb.log(data, step=step)
+        elif _metrics_log_path is not None:
+            # Log to JSONL file when wandb is not available
+            serializable_data = {k: _serialize_for_json(v) for k, v in data.items()}
+            record = {"step": step, **serializable_data}
+            with open(_metrics_log_path, "a") as f:
+                f.write(json.dumps(record) + "\n")
 
 
 @dataclasses.dataclass
@@ -366,10 +403,10 @@ def train(
     test_loaders: dict[str, torch.utils.data.DataLoader],
     output_dir: str,
     D: Distributed,
-    num_steps: int = ornamentalist.Configurable[250_000],
+    num_steps: int = ornamentalist.Configurable[1_000_000],
     log_every_n_steps: int = ornamentalist.Configurable[250],
     eval_every_n_steps: int = ornamentalist.Configurable[10_000],
-    ckpt_every_n_steps: int = ornamentalist.Configurable[50_000],
+    ckpt_every_n_steps: int = ornamentalist.Configurable[20_000],
     metrics_every_n_steps: int = ornamentalist.Configurable[50_000],
 ) -> None:
     # prof = get_profiler(return_dummy=D.rank != 0, save_dir=output_dir)
