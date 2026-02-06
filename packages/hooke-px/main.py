@@ -1,6 +1,7 @@
 import logging
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -13,6 +14,7 @@ import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dataset
+from adaptor import DataFrameTokenizer
 from model import get_model_cls
 from trainer import TrainState, train
 from utils.distributed import Distributed
@@ -23,12 +25,78 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 
+def load_tokenizer_from_checkpoint(ckpt_dir: str) -> DataFrameTokenizer | None:
+    """Load the tokenizer from the latest checkpoint in the directory.
+
+    This is useful for finetuning on a subset of data while preserving
+    the original vocabulary from pretraining.
+
+    Returns None if no checkpoint is found.
+    """
+    pattern = r"step_(\d+).ckpt"
+    if not os.path.exists(ckpt_dir):
+        return None
+    fnames = [
+        f.name
+        for f in os.scandir(ckpt_dir)
+        if f.is_file() and re.fullmatch(pattern, f.name)
+    ]
+    if len(fnames) == 0:
+        return None
+
+    latest = max(fnames, key=lambda x: int(re.fullmatch(pattern, x).group(1)))  # type: ignore
+    path = os.path.join(ckpt_dir, latest)
+    log.info(f"Loading tokenizer from checkpoint: {path}")
+    state = torch.load(path, weights_only=False, map_location="cpu")
+    if "tokenizer" not in state:
+        log.warning("Checkpoint does not contain tokenizer, will fit new one")
+        return None
+    return DataFrameTokenizer.from_state_dict(state["tokenizer"])
+
+
+# Unique rec_ids:  628698
+# Unique concentrations:  386
+# Unique cell_types:  47
+# Unique image_types:  4
+# Unique experiments:  10112
+# Unique well_addresses:  1531
+REC_ID_DIM = 750_000  # 628698
+CONCENTRATION_DIM = 550  # 386
+CELL_TYPE_DIM = 55  # 47
+IMAGE_TYPE_DIM = 6  # 4
+EXPERIMENT_DIM = 12_000  # 10112
+WELL_ADDRESS_DIM = 1536  # 1531
+
+
 @ornamentalist.configure()
 def prng(rank: int, seed: int = ornamentalist.Configurable[42]):
     local_seed = seed + rank
     torch.manual_seed(local_seed)
     torch.cuda.manual_seed(local_seed)
     log.info(f"Rank {rank} setting seed to {local_seed}")
+
+
+@ornamentalist.configure(name="ckpt")
+def get_resume_checkpoint_dir(
+    resume_from: str = ornamentalist.Configurable[""],
+) -> str | None:
+    """Get the checkpoint directory to resume from.
+
+    Args:
+        resume_from: Path to a checkpoint directory or a specific .ckpt file.
+                     If a directory, will look for checkpoints in that directory.
+                     If a .ckpt file, will use that file's parent directory.
+                     If empty string, returns None (no resume).
+
+    Example usage:
+        python main.py --resume_from=/path/to/outputs/1234567890/checkpoints
+        python main.py --resume_from=/path/to/outputs/1234567890/checkpoints/step_100000.ckpt
+    """
+    if not resume_from:
+        return None
+    if resume_from.endswith(".ckpt"):
+        return os.path.dirname(resume_from)
+    return resume_from
 
 
 def main(config: ornamentalist.ConfigDict):
@@ -77,20 +145,39 @@ def main(config: ornamentalist.ConfigDict):
         prng(D.rank)
         torch.set_float32_matmul_precision("medium")
 
-        train_loader, val_loader, vocab, tokenizer = dataset.get_dataloaders()
+        # Checkpoint directories:
+        # - ckpt_dir: where new checkpoints will be saved (job's own directory)
+        # - resume_ckpt_dir: where to load existing checkpoints from (can be different)
+        ckpt_dir = os.path.join(output_dir, "checkpoints")
+        os.makedirs(ckpt_dir, exist_ok=True)
+
+        resume_ckpt_dir = get_resume_checkpoint_dir()
+        if resume_ckpt_dir:
+            log.info(f"Will resume from checkpoint directory: {resume_ckpt_dir}")
+        else:
+            # If no explicit resume path, try to resume from the job's own checkpoint dir
+            resume_ckpt_dir = ckpt_dir
+
+        # Load tokenizer from checkpoint if resuming, to preserve vocabulary
+        # when finetuning on a subset of the original training data
+        existing_tokenizer = load_tokenizer_from_checkpoint(resume_ckpt_dir)
+
+        train_loader, val_loader, vocab, tokenizer = dataset.get_dataloaders(
+            tokenizer=existing_tokenizer
+        )
 
         model_cls = get_model_cls()
         net = model_cls(
             input_size=32,
             in_channels=8,
             learn_sigma=False,
-            rec_id_dim=vocab.rec_id_dim,
-            concentration_dim=vocab.concentration_dim,
-            cell_type_dim=vocab.cell_type_dim,
-            experiment_dim=vocab.experiment_dim,
-            image_type_dim=vocab.image_type_dim,
-            well_address_dim=vocab.well_address_dim,
-        )
+            rec_id_dim=REC_ID_DIM,
+            concentration_dim=CONCENTRATION_DIM,
+            cell_type_dim=CELL_TYPE_DIM,
+            experiment_dim=EXPERIMENT_DIM,
+            image_type_dim=IMAGE_TYPE_DIM,
+            well_address_dim=WELL_ADDRESS_DIM,
+        )  # I add 20% to the dimensions to account for the new vocabulary items during fine-tuning
         net.to(D.device)
         net: torch.nn.Module = torch.compile(net)  # type: ignore
         ddp = DDP(net)
@@ -102,15 +189,15 @@ def main(config: ornamentalist.ConfigDict):
             eps=1e-8,
             weight_decay=0.0,
         )
-        state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0, tokenizer=tokenizer)
+        state = TrainState(
+            ddp=ddp, ema=ema, opt=opt, global_step=0, tokenizer=tokenizer
+        )
 
         nparams = sum(p.numel() for p in net.parameters())
         log.info(f"Model has {nparams / 1e6:.0f}M parameters")
-
-        ckpt_dir = os.path.join(output_dir, "checkpoints")
-        os.makedirs(ckpt_dir, exist_ok=True)
-        log.info(f"Using checkpoint directory: {ckpt_dir}")
-        state.load_latest_ckpt(dir=ckpt_dir, device=D.device)
+        log.info(f"Loading checkpoints from: {resume_ckpt_dir}")
+        log.info(f"Saving checkpoints to: {ckpt_dir}")
+        state.load_latest_ckpt(dir=resume_ckpt_dir, device=D.device)
 
         train(
             state=state,
@@ -172,6 +259,10 @@ def launcher(
         stderr_to_stdout=True,
         slurm_signal_delay_s=120,
         slurm_wckey="hooke-predict",
+        slurm_additional_parameters={
+            "requeue": True,
+            "exclude": "hop08,hop61,hop62",  # Exclude nodes with MIG or small GPU slices
+        },
     )
 
     os.makedirs(output_dir, exist_ok=True)
