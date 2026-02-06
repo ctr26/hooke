@@ -25,6 +25,14 @@ import zarr
 from torch.utils.data import DataLoader
 
 from adaptor import DataFrameTokenizer, TransformerAdaptor
+from main import (
+    REC_ID_DIM,
+    CONCENTRATION_DIM,
+    CELL_TYPE_DIM,
+    IMAGE_TYPE_DIM,
+    EXPERIMENT_DIM,
+    WELL_ADDRESS_DIM,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -59,15 +67,15 @@ def load_adaptor(
     # Restore tokenizer from checkpoint
     tokenizer = DataFrameTokenizer.from_state_dict(state["tokenizer"])
 
-    # Build adaptor with correct vocab sizes
+    # Build adaptor with fixed vocab sizes (must match training dimensions)
     adaptor = TransformerAdaptor(
         hidden_size=hidden_size,
-        rec_id_dim=len(tokenizer.rec_id_tokenizer),
-        concentration_dim=len(tokenizer.concentration_tokenizer),
-        cell_type_dim=len(tokenizer.cell_type_tokenizer),
-        experiment_dim=len(tokenizer.experiment_tokenizer),
-        image_type_dim=len(tokenizer.image_type_tokenizer),
-        well_address_dim=len(tokenizer.well_address_tokenizer),
+        rec_id_dim=REC_ID_DIM,
+        concentration_dim=CONCENTRATION_DIM,
+        cell_type_dim=CELL_TYPE_DIM,
+        experiment_dim=EXPERIMENT_DIM,
+        image_type_dim=IMAGE_TYPE_DIM,
+        well_address_dim=WELL_ADDRESS_DIM,
     )
 
     # Extract adaptor weights from EMA state_dict
@@ -305,13 +313,12 @@ def run_worker(worker_dir: str, config_path: str):
     # Open shared zarr array
     emb_zarr = zarr.open(f"{zarr_dir}/adaptor_emb.zarr", mode="r+")
 
-    # Process batches
-    completed_indices = []
+    # Process batches with incremental progress saving
     num_well_addresses = len(tokenizer.well_address_tokenizer)
 
     from tqdm import tqdm
 
-    for batch in tqdm(loader, desc="Processing batches"):
+    for batch_idx, batch in enumerate(tqdm(loader, desc="Processing batches")):
         zarr_indices = batch["zarr_index"]
 
         if case == 2:
@@ -324,26 +331,27 @@ def run_worker(worker_dir: str, config_path: str):
             embeddings = compute_embeddings(adaptor, batch["meta"], device)
 
         # Write to zarr
+        batch_completed = []
         for i, idx in enumerate(zarr_indices):
             emb_zarr[idx] = embeddings[i]
-            completed_indices.append(idx)
+            batch_completed.append(idx)
 
-    # Mark completed rows in the parquet file
-    log.info(f"Marking {len(completed_indices)} rows as complete")
-    df = df.with_columns(
-        pl.when(pl.col("zarr_index").is_in(completed_indices))
-        .then(pl.lit(True))
-        .otherwise(pl.col("complete"))
-        .alias("complete")
-    )
-    df.write_parquet(chunk_path)
+        # Update chunk parquet after each batch to save progress incrementally
+        df = df.with_columns(
+            pl.when(pl.col("zarr_index").is_in(batch_completed))
+            .then(pl.lit(True))
+            .otherwise(pl.col("complete"))
+            .alias("complete")
+        )
+        df.write_parquet(chunk_path)
 
     # Verify all complete
+    num_complete = df["complete"].sum()
     if df["complete"].all():
-        log.info("All rows complete")
+        log.info(f"All {num_complete} rows complete")
     else:
         remaining = (~df["complete"]).sum()
-        log.warning(f"{remaining} rows still incomplete")
+        log.warning(f"{remaining} rows still incomplete (completed {num_complete})")
 
 
 def main():
