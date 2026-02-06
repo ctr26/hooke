@@ -173,7 +173,7 @@ class TransformerAdaptor(nn.Module):
         )
 
         self.transformer = TransformerCore(
-            n_embd=hidden_size, n_layer=8, n_head=8, dropout=0.0
+            n_embd=hidden_size, n_layer=12, n_head=16, dropout=0.0
         )
         self.class_token = nn.Parameter(
             torch.randn(1, 1, hidden_size) * 0.02, requires_grad=True
