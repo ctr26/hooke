@@ -18,6 +18,66 @@ def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
+
+class MLPBlock(nn.Module):
+    """MLP block with optional skip connection (none, sum, or cat)."""
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        norm: bool = False,
+        activation: nn.Module = nn.GELU(),
+        dropout: float = 0.0,
+        skip_type: str = "none",  # none, "sum", or "cat"
+    ):
+        super().__init__()
+        self.skip_type = skip_type
+        self.use_norm = norm
+        
+        layers = []
+        if self.use_norm:
+            layers.append(nn.LayerNorm(in_dim))
+        layers.append(nn.Linear(in_dim, out_dim))
+        if activation is not None:
+            layers.append(activation)
+        if dropout > 0:
+            layers.append(nn.Dropout(dropout))
+        
+        self.block = nn.Sequential(*layers)
+        
+        # Setup skip connection components
+        if self.skip_type == "cat":
+            # Cat works regardless of dimensions - concatenate and project
+            # Skip normalization is optional and follows the main norm setting
+            if self.use_norm:
+                self.skip_norm = nn.LayerNorm(out_dim + in_dim)
+            else:
+                self.skip_norm = None
+            self.skip_linear = nn.Linear(out_dim + in_dim, out_dim)
+        elif self.skip_type == "sum":
+            # Sum only works when dimensions match (no projection)
+            self.use_sum_skip = (in_dim == out_dim)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = self.block(x)
+        
+        if self.skip_type == "cat":
+            # Cat works regardless of dimensions - just concatenate
+            cat = torch.cat([out, x], dim=-1)
+            
+            # Apply normalization if enabled (follows main norm setting)
+            if self.skip_norm is not None:
+                cat = self.skip_norm(cat)
+            
+            return self.skip_linear(cat)
+
+        elif self.skip_type == "sum":
+            # Sum only works when dimensions match (no projection)
+            if self.use_sum_skip:
+                return out + x
+        
+        return out
+
 class Attention(nn.Module):
     """Standard Multi-head Self Attention module with QKV projection.
 
@@ -330,6 +390,71 @@ class DiTWrapper(nn.Module):
         cond = t_emb + meta_emb  # (B, hidden_size)
         return self.dit(x, cond)  # (B, out_channels, H, W)
 
+
+class TxDiTWrapper(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.mlp = mlp_ut_layers = [
+            nn.Dropout(dropout),  # Initial dropout before first layer
+            MLPBlock(
+                ut_input_dim,
+                hidden_dim,
+                norm=norm,
+                activation=nn.GELU(),
+                dropout=dropout,
+                skip_type="none",  # First layer, no skip
+            )
+        ]
+        for _ in range(ut_layers - 2):
+            mlp_ut_layers.append(
+                MLPBlock(
+                    hidden_dim,
+                    hidden_dim,
+                    norm=norm,
+                    activation=nn.GELU(),
+                    dropout=dropout,
+                    skip_type=skip_type,
+                )
+            )
+        mlp_ut_layers.append(
+            MLPBlock(
+                hidden_dim,
+                data_dim,
+                norm=None,  # No normalization on output layer for regression
+                activation=None,  # No activation on last layer
+                dropout=0.0,  # No dropout on last layer
+                skip_type="none",  # Last layer, no skip
+            )
+        )
+        self.mlp_ut = nn.Sequential(*mlp_ut_layers)
+        self.t_embedder = ScalarEmbedder(
+            hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size
+        )
+
+        self.meta_adaptor = TransformerAdaptor(
+            hidden_size=hidden_size,
+            rec_id_dim=rec_id_dim,
+            concentration_dim=concentration_dim,
+            cell_type_dim=cell_type_dim,
+            experiment_dim=experiment_dim,
+            image_type_dim=image_type_dim,
+            well_address_dim=well_address_dim,
+        )
+
+    def forward(self, x, t, meta: dict, force_drop_rec_conc: torch.Tensor | None = None):
+        t_emb = self.t_embedder(t)
+        meta_emb = self.meta_adaptor(
+            rec_id=meta["rec_id"],
+            concentration=meta["concentration"],
+            comp_mask=meta["comp_mask"],
+            cell_type=meta["cell_type"],
+            experiment_label=meta["experiment_label"],
+            image_type=meta["image_type"],
+            well_address=meta["well_address"],
+            force_drop_rec_conc=force_drop_rec_conc,
+        )
+        cond = t_emb + meta_emb  # (B, hidden_size)
+        return self.mlp(x, cond)  # (B, hidden_size)
 
 #################################################################################
 #                   Sine/Cosine Positional Embedding Functions                  #
