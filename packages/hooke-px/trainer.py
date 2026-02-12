@@ -9,7 +9,7 @@ import time
 import numpy as np
 import ornamentalist
 import torch
-import torchdiffeq
+from torch import nn
 import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision.utils import save_image
@@ -17,7 +17,6 @@ from tqdm import tqdm
 
 from adaptor import DataFrameTokenizer
 from dataset import CellPaintConverter
-from model import DiTWrapper
 from utils.distributed import Distributed, rank_zero
 from utils.ema import KarrasEMA
 from utils.evaluation import (
@@ -132,71 +131,6 @@ class TrainState:
         self.load_ckpt(path, device)
 
 
-# @ornamentalist.configure()
-def guided_prediction(
-    model: DiTWrapper,
-    x,
-    t,
-    meta: dict[str, torch.Tensor],
-    cfg: float = 1.0,
-) -> torch.Tensor:  # fmt: off
-    if t.ndim == 0:  # the ODE solver gives scalar t
-        t = t.expand(x.shape[0])
-
-    if cfg == 0.0:  # unconditional
-        force_drop = torch.ones(x.shape[0], device=x.device, dtype=torch.long)
-        return model(x=x, t=t, meta=meta, force_drop_rec_conc=force_drop)
-    if cfg == 1.0:  # conditional
-        return model(x=x, t=t, meta=meta, force_drop_rec_conc=None)
-
-    pred_cond = model(x=x, t=t, meta=meta, force_drop_rec_conc=None)
-    force_drop = torch.ones(x.shape[0], device=x.device, dtype=torch.long)
-    pred_null = model(x=x, t=t, meta=meta, force_drop_rec_conc=force_drop)
-    return pred_null + cfg * (pred_cond - pred_null)
-
-
-@torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-def generate(
-    model: DiTWrapper,  # DiT, maps x,cond -> velocity
-    x0: torch.Tensor,  # shape (B, C, H, W), sampled from N(0, I)
-    meta1: dict[str, torch.Tensor],
-) -> tuple[torch.Tensor, int]:
-    """Generate a sample with the dopri5 probability flow ODE solver."""
-    nfe = 0  # NB, if using guidance, the true nfe is this * 2
-
-    def forward_fn(t, x):
-        nonlocal nfe
-        nfe += 1
-        return guided_prediction(model, x=x, t=t, meta=meta1)
-
-    traj = torchdiffeq.odeint(
-        forward_fn,
-        x0,
-        torch.linspace(0, 1, 2, device=x0.device),
-        method="dopri5",
-        rtol=1e-5,
-        atol=1e-5,
-    )
-    return traj[-1], nfe  # type: ignore
-
-
-@torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-def compute_loss(
-    model: DDP,  # DDP wrapper around DiT, maps t,x,y,z,e,c -> velocity
-    x0: torch.Tensor,  # shape (B, C, H, W), sampled from source distribution
-    x1: torch.Tensor,  # shape (B, C, H, W), sampled from target distribution
-    meta1: dict[str, torch.Tensor],
-) -> torch.Tensor:
-    t = torch.rand(x0.shape[0], device=x0.device, dtype=torch.float32)  # (B,) - [0,1)
-    t_ = t.reshape(-1, 1, 1, 1).expand_as(x0)  # B -> B,C,H,W
-
-    xt = torch.lerp(x0, x1, t_)
-    ut = x1 - x0
-
-    vt = model(x=xt, t=t, meta=meta1)
-    return torch.nn.functional.mse_loss(vt, ut)
-
-
 @torch.inference_mode()
 def evaluate(
     *,
@@ -206,7 +140,7 @@ def evaluate(
     D: Distributed,
     use_ema: bool,
 ) -> None:
-    model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
+    model: nn.Module = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
 
     running_loss = torch.tensor(0.0, device=D.device)
@@ -219,20 +153,17 @@ def evaluate(
         unit="step",
         disable=D.rank != 0,  # only show from one process
     ):
-        x1 = batch["img"]
         meta = batch["meta"]
-
-        x1 = x1.to(D.device, non_blocking=True)
         meta = {k: v.to(D.device, non_blocking=True) for k, v in meta.items()}
-
+        x1 = batch["img"]
+        x1 = x1.to(D.device, non_blocking=True)
         x1 = vae.encode(x1)
         x0 = torch.randn_like(x1)
 
-        loss = compute_loss(
-            model=model,  # type: ignore
+        loss = model.compute_loss(
             x0=x0,
             x1=x1,
-            meta1=meta,
+            meta=meta,
         )
         running_loss += loss * x1.shape[0]
         num_samples += x1.shape[0]
@@ -249,7 +180,7 @@ def evaluate(
 
 @rank_zero()
 @torch.inference_mode()
-def visualise(
+def visualise_phenomics(
     *,
     state: TrainState,
     loader: torch.utils.data.DataLoader,
@@ -259,7 +190,7 @@ def visualise(
     D: Distributed,
     use_ema: bool,
 ):
-    model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
+    model: nn.Module = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
 
     batch = next(iter(loader))
@@ -271,10 +202,9 @@ def visualise(
 
     x1 = vae.encode(x1)
     x0 = torch.randn_like(x1)
-    preds, nfe = generate(
-        model=model,
+    preds, nfe = model.generate(
         x0=x0,
-        meta1=meta,
+        meta=meta,
     )
     preds = vae.decode(preds)
     preds = cp2rgb(preds)  # uint8 [B, 3, H, W]
@@ -292,7 +222,7 @@ def visualise(
 
 
 @torch.inference_mode()
-def compute_metrics(
+def compute_phenomics_metrics(
     *,
     state: TrainState,
     name: str,
@@ -302,7 +232,7 @@ def compute_metrics(
     D: Distributed,
     use_ema: bool,
 ) -> None:
-    model: DiTWrapper = state.ema.module if use_ema else state.ddp.module  # type: ignore
+    model: nn.Module = state.ema.module if use_ema else state.ddp.module  # type: ignore
     model.eval()
 
     dino = DINOv2Detector(device=D.device)
@@ -334,10 +264,9 @@ def compute_metrics(
 
         B, _, H, W = x1.shape
         x0 = torch.randn(B, 8, H // 8, W // 8, device=D.device)
-        preds, _ = generate(
-            model=model,
+        preds, _ = model.generate(
             x0=x0,
-            meta1=meta,
+            meta=meta,
         )
         preds = vae.decode(preds)
 
@@ -433,25 +362,24 @@ def train(
         unit="step",
         disable=D.rank != 0,  # only show from one process
     ):
-        state.ddp.train()
-        x1 = batch["img"]
+        model: nn.Module = state.ema.module if use_ema else state.ddp.module  # type: ignore
+        model.train()
         meta = batch["meta"]
-
-        x1 = x1.to(D.device, non_blocking=True)
         meta = {k: v.to(D.device, non_blocking=True) for k, v in meta.items()}
 
+        x1 = batch["img"]
+        x1 = x1.to(D.device, non_blocking=True)
         x1 = vae.encode(x1)
         x0 = torch.randn_like(x1)
-        loss = compute_loss(
-            model=state.ddp,
+        loss = model.compute_loss(
             x0=x0,
             x1=x1,
-            meta1=meta,
+            meta=meta,
         )
         running_loss += loss.detach() * x0.shape[0]  # total batch loss
         num_samples += x0.shape[0]
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(state.ddp.parameters(), max_norm=1.0)
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
         state.global_step += 1
         step(state.global_step, state.opt, state.ema, state.ddp)
@@ -485,7 +413,7 @@ def train(
             state.save_latest_ckpt(dir=ckpt_dir)
 
         if state.global_step % eval_every_n_steps == 0:
-            visualise(
+            visualise_phenomics(
                 state=state,
                 loader=val_loader,
                 output_dir=output_dir,
@@ -499,7 +427,7 @@ def train(
 
         if state.global_step % metrics_every_n_steps == 0:
             for name, loader in test_loaders.items():
-                compute_metrics(
+                compute_phenomics_metrics(
                     state=state,
                     name=name,
                     vae=vae,

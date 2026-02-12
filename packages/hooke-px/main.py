@@ -14,7 +14,7 @@ import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dataset
-from adaptor import DataFrameTokenizer
+from adaptor import DataFrameTokenizer, MetaDataConfig
 from model import get_model_cls
 from trainer import TrainState, train
 from utils.distributed import Distributed
@@ -52,20 +52,6 @@ def load_tokenizer_from_checkpoint(ckpt_dir: str) -> DataFrameTokenizer | None:
         log.warning("Checkpoint does not contain tokenizer, will fit new one")
         return None
     return DataFrameTokenizer.from_state_dict(state["tokenizer"])
-
-
-# Unique rec_ids:  628698
-# Unique concentrations:  386
-# Unique cell_types:  47
-# Unique image_types:  4
-# Unique experiments:  10112
-# Unique well_addresses:  1531
-REC_ID_DIM = 750_000  # 628698
-CONCENTRATION_DIM = 550  # 386
-CELL_TYPE_DIM = 55  # 47
-IMAGE_TYPE_DIM = 6  # 4
-EXPERIMENT_DIM = 12_000  # 10112
-WELL_ADDRESS_DIM = 1536  # 1531
 
 
 @ornamentalist.configure()
@@ -171,13 +157,8 @@ def main(config: ornamentalist.ConfigDict):
             input_size=32,
             in_channels=8,
             learn_sigma=False,
-            rec_id_dim=REC_ID_DIM,
-            concentration_dim=CONCENTRATION_DIM,
-            cell_type_dim=CELL_TYPE_DIM,
-            experiment_dim=EXPERIMENT_DIM,
-            image_type_dim=IMAGE_TYPE_DIM,
-            well_address_dim=WELL_ADDRESS_DIM,
-        )  # I add 20% to the dimensions to account for the new vocabulary items during fine-tuning
+            metadata_config=MetaDataConfig(),
+        )
         net.to(D.device)
         net: torch.nn.Module = torch.compile(net)  # type: ignore
         ddp = DDP(net)
