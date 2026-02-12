@@ -40,7 +40,7 @@ from main import (
 )
 from trainer import generate
 from utils.ema import KarrasEMA
-from utils.evaluation import DINOv2Detector, Phenom2Detector, PH2BFDetector
+from utils.encoders import DINOv2Detector, Phenom2Detector, PH2BFDetector
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)

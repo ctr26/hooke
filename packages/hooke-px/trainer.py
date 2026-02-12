@@ -21,12 +21,11 @@ from model import DiTWrapper
 from utils.distributed import Distributed, rank_zero
 from utils.ema import KarrasEMA
 from utils.evaluation import (
-    DINOv2Detector,
-    Phenom2Detector,
     compute_cossim,
     compute_fd,
     compute_prdc,
 )
+from utils.encoders import DINOv2Detector, Phenom2Detector
 from utils.infinite_dataloader import infinite_dataloader
 from utils.profiler import get_profiler
 
