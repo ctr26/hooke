@@ -1,4 +1,42 @@
 import torch
+import diffusers
+
+class StabilityCPEncoder:
+    def __init__(self, device: torch.device, compile: bool = True):
+        self.vae = diffusers.AutoencoderKL.from_pretrained("stabilityai/sd-vae-ft-mse")  # type: ignore
+        self.vae.eval().requires_grad_(False).to(device)  # type: ignore
+        self.scale = 0.18215  # magic constant from the DiT codebase
+
+        if compile:
+            self.encode = torch.compile(self.encode)
+            self.decode = torch.compile(self.decode)
+
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    @torch.no_grad()
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        """Encode a batch of cell-paint images into the stable diffusion latent space.
+        input: torch.uint8 [0, 255], (B, 6, H, W)
+        output: torch.float32, (B, 8, H // 8, W // 8)"""
+        x = x.to(torch.float32) / 127.5 - 1
+        x0, x1 = torch.chunk(x, 2, dim=1)
+        x0 = self.vae.encode(x0).latent_dist.sample()  # type: ignore
+        x1 = self.vae.encode(x1).latent_dist.sample()  # type: ignore
+        return torch.cat([x0, x1], dim=1) * self.scale
+
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    @torch.no_grad()
+    def decode(self, x: torch.Tensor) -> torch.Tensor:
+        """Decode a batch of stable diffusion latents into cell-paint space.
+        input: torch.float32, (B, 8, H // 8, W // 8)
+        output: torch.uint8 [0, 255], (B, 6, H, W)"""
+        x = x / self.scale
+        x0, x1 = torch.chunk(x, 2, dim=1)
+        x0 = self.vae.decode(x0).sample  # type: ignore
+        x1 = self.vae.decode(x1).sample  # type: ignore
+        x = torch.cat([x0, x1], dim=1)
+        x = (x + 1) * 127.5
+        x = x.clip(0, 255).to(torch.uint8)
+        return x
 
 class DINOv2Detector:
     def __init__(self, device: torch.device):

@@ -25,7 +25,6 @@ from adaptor import DataFrameTokenizer
 from dataset import (
     CellDataset,
     CellPaintConverter,
-    StabilityCPEncoder,
     IMG_SIZE,
     MetaVocab,
 )
@@ -40,7 +39,7 @@ from main import (
 )
 from trainer import generate
 from utils.ema import KarrasEMA
-from utils.encoders import DINOv2Detector, Phenom2Detector, PH2BFDetector
+from utils.encoders import DINOv2Detector, Phenom2Detector, PH2BFDetector, StabilityCPEncoder
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)

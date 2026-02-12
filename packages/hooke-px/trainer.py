@@ -16,7 +16,7 @@ from torchvision.utils import save_image
 from tqdm import tqdm
 
 from adaptor import DataFrameTokenizer
-from dataset import CellPaintConverter, StabilityCPEncoder
+from dataset import CellPaintConverter
 from model import DiTWrapper
 from utils.distributed import Distributed, rank_zero
 from utils.ema import KarrasEMA
@@ -25,7 +25,7 @@ from utils.evaluation import (
     compute_fd,
     compute_prdc,
 )
-from utils.encoders import DINOv2Detector, Phenom2Detector
+from utils.encoders import DINOv2Detector, Phenom2Detector, StabilityCPEncoder
 from utils.infinite_dataloader import infinite_dataloader
 from utils.profiler import get_profiler
 

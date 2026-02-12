@@ -135,6 +135,9 @@ data/
 .vscode/
 *.png
 outputs/
+eval_outputs/
+results/
+wandb/
 multirun/
 test_outputs/
 *.parquet

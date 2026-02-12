@@ -33,7 +33,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dataset
 from adaptor import DataFrameTokenizer
-from dataset import CellPaintConverter, StabilityCPEncoder
+from dataset import CellPaintConverter
 from main import (
     CELL_TYPE_DIM,
     CONCENTRATION_DIM,
@@ -46,6 +46,7 @@ from model import get_model_cls
 from trainer import compute_metrics, evaluate, set_metrics_log_path, visualise
 from utils.distributed import Distributed
 from utils.ema import KarrasEMA
+from utils.encoders import StabilityCPEncoder
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)

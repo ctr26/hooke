@@ -20,7 +20,7 @@ from model import get_model_cls
 from trainer import TrainState, generate
 from utils.distributed import Distributed
 from utils.ema import KarrasEMA
-from utils.evaluation import DINOv2Detector, Phenom2Detector
+from utils.encoders import DINOv2Detector, Phenom2Detector, StabilityCPEncoder
 from utils.name_run import generate_random_name
 
 logging.basicConfig(level=logging.INFO)
