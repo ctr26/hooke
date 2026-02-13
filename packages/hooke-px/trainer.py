@@ -15,7 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision.utils import save_image
 from tqdm import tqdm
 
-from adaptor import DataFrameTokenizer
+from tokenizer import DataFrameTokenizer
 from dataset import CellPaintConverter
 from utils.distributed import Distributed, rank_zero
 from utils.ema import KarrasEMA
@@ -160,7 +160,7 @@ def evaluate(
         x1 = vae.encode(x1)
         x0 = torch.randn_like(x1)
 
-        loss = model.compute_loss(
+        loss = model(
             x0=x0,
             x1=x1,
             meta=meta,
@@ -362,8 +362,7 @@ def train(
         unit="step",
         disable=D.rank != 0,  # only show from one process
     ):
-        model: nn.Module = state.ema.module if use_ema else state.ddp.module  # type: ignore
-        model.train()
+        state.ddp.train()
         meta = batch["meta"]
         meta = {k: v.to(D.device, non_blocking=True) for k, v in meta.items()}
 
@@ -371,7 +370,7 @@ def train(
         x1 = x1.to(D.device, non_blocking=True)
         x1 = vae.encode(x1)
         x0 = torch.randn_like(x1)
-        loss = model.compute_loss(
+        loss = state.ddp(
             x0=x0,
             x1=x1,
             meta=meta,
@@ -379,7 +378,7 @@ def train(
         running_loss += loss.detach() * x0.shape[0]  # total batch loss
         num_samples += x0.shape[0]
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        grad_norm = torch.nn.utils.clip_grad_norm_(state.ddp.parameters(), max_norm=1.0)
 
         state.global_step += 1
         step(state.global_step, state.opt, state.ema, state.ddp)

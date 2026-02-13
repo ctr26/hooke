@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import polars as pl
 import torch
 import torch.nn.functional as F
+import numpy as np
 
 # I add approximately 20% to the dimensions below to account for the new vocabulary items during fine-tuning
 @dataclass(frozen=True)
@@ -9,10 +10,9 @@ class MetaDataConfig:
     rec_id_dim: int = 750_000 # Unique rec_ids:  628698
     concentration_dim: int = 550 # Unique concentrations:  386
     cell_type_dim: int = 55 # Unique cell_types:  47
-    image_type_dim: int = 6 # Unique image_types:  4
+    assay_type_dim: int = 6 # Unique assay_types:  4
     experiment_dim: int = 12_000 # Unique experiments:  10112
     well_address_dim: int = 1536 # Unique well_addresses:  1531
-
 
 class Tokenizer:
     def __init__(self):
@@ -55,7 +55,7 @@ class DataFrameTokenizer:
             df["concentration"].explode().unique()
         )
         self.cell_type_tokenizer = Tokenizer().fit(df["cell_type"].unique())
-        self.image_type_tokenizer = Tokenizer().fit(df["image_type"].unique())
+        self.assay_type_tokenizer = Tokenizer().fit(df["assay_type"].unique())
         self.experiment_tokenizer = Tokenizer().fit(df["experiment_label"].unique())
         self.well_address_tokenizer = Tokenizer().fit(df["well_address"].unique())
         self.pad_length = pad_length
@@ -80,8 +80,8 @@ class DataFrameTokenizer:
             "cell_type": torch.tensor(
                 self.cell_type_tokenizer(row["cell_type"])[0], dtype=torch.long
             ),
-            "image_type": torch.tensor(
-                self.image_type_tokenizer(row["image_type"])[0], dtype=torch.long
+            "assay_type": torch.tensor(
+                self.assay_type_tokenizer(row["assay_type"])[0], dtype=torch.long
             ),
             "experiment_label": torch.tensor(
                 self.experiment_tokenizer(row["experiment_label"])[0], dtype=torch.long
@@ -99,7 +99,7 @@ class DataFrameTokenizer:
             "rec_id": self.rec_id_tokenizer.state_dict(),
             "concentration": self.concentration_tokenizer.state_dict(),
             "cell_type": self.cell_type_tokenizer.state_dict(),
-            "image_type": self.image_type_tokenizer.state_dict(),
+            "assay_type": self.assay_type_tokenizer.state_dict(),
             "experiment": self.experiment_tokenizer.state_dict(),
             "well_address": self.well_address_tokenizer.state_dict(),
             "pad_length": self.pad_length,
@@ -111,7 +111,7 @@ class DataFrameTokenizer:
         t.rec_id_tokenizer = Tokenizer.from_state_dict(state["rec_id"])
         t.concentration_tokenizer = Tokenizer.from_state_dict(state["concentration"])
         t.cell_type_tokenizer = Tokenizer.from_state_dict(state["cell_type"])
-        t.image_type_tokenizer = Tokenizer.from_state_dict(state["image_type"])
+        t.assay_type_tokenizer = Tokenizer.from_state_dict(state["assay_type"])
         t.experiment_tokenizer = Tokenizer.from_state_dict(state["experiment"])
         t.well_address_tokenizer = Tokenizer.from_state_dict(state["well_address"])
         t.pad_length = state["pad_length"]

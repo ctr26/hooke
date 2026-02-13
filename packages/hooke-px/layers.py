@@ -13,6 +13,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from typing import Optional, Type
 
 class Attention(nn.Module):
     """Standard Multi-head Self Attention module with QKV projection.

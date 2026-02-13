@@ -82,7 +82,7 @@ class LabelEmbedder(nn.Module):
         embeddings = self.embedding_table(labels)
         return embeddings
 
-class TransformerAdaptor(nn.Module):
+class TransformerEncoder(nn.Module):
     def __init__(
         self,
         hidden_size,
@@ -90,7 +90,7 @@ class TransformerAdaptor(nn.Module):
         concentration_dim,
         cell_type_dim,
         experiment_dim,
-        image_type_dim,
+        assay_type_dim,
         well_address_dim,
         dropout_prob=0.15,
     ):
@@ -113,8 +113,8 @@ class TransformerAdaptor(nn.Module):
             hidden_size=hidden_size,
             dropout_prob=dropout_prob,
         )
-        self.image_type_embedder = LabelEmbedder(
-            num_classes=image_type_dim, hidden_size=hidden_size, dropout_prob=0.0
+        self.assay_type_embedder = LabelEmbedder(
+            num_classes=assay_type_dim, hidden_size=hidden_size, dropout_prob=0.0
         )
         self.well_address_embedder = LabelEmbedder(
             num_classes=well_address_dim,
@@ -135,7 +135,7 @@ class TransformerAdaptor(nn.Module):
         nn.init.normal_(self.concentration_embedder.embedding_table.weight, std=0.02)
         nn.init.normal_(self.cell_type_embedder.embedding_table.weight, std=0.02)
         nn.init.normal_(self.experiment_embedder.embedding_table.weight, std=0.02)
-        nn.init.normal_(self.image_type_embedder.embedding_table.weight, std=0.02)
+        nn.init.normal_(self.assay_type_embedder.embedding_table.weight, std=0.02)
         nn.init.normal_(self.well_address_embedder.embedding_table.weight, std=0.02)
         nn.init.normal_(self.class_token, std=0.02)
 
@@ -145,7 +145,7 @@ class TransformerAdaptor(nn.Module):
         concentration,
         cell_type,
         experiment_label,
-        image_type,
+        assay_type,
         well_address,
         comp_mask=None,
         force_drop_rec_conc: torch.Tensor | None = None,
@@ -167,7 +167,7 @@ class TransformerAdaptor(nn.Module):
                 self.experiment_embedder(
                     experiment_label, train=self.training
                 ).unsqueeze(1),
-                self.image_type_embedder(image_type, train=self.training).unsqueeze(1),
+                self.assay_type_embedder(assay_type, train=self.training).unsqueeze(1),
                 self.well_address_embedder(well_address, train=self.training).unsqueeze(
                     1
                 ),
@@ -190,14 +190,14 @@ class TransformerAdaptor(nn.Module):
         transformer_output = self.transformer(transformer_input, mask=keep)
         return transformer_output[:, -1, :]
 
-def get_transformer_adaptor(hidden_size: int, metadata_config: MetaDataConfig = MetaDataConfig()):
-    return TransformerAdaptor(
+def get_transformer_encoder(hidden_size: int, metadata_config: MetaDataConfig = MetaDataConfig()):
+    return TransformerEncoder(
         hidden_size=hidden_size,
         rec_id_dim=metadata_config.rec_id_dim,
         concentration_dim=metadata_config.concentration_dim,
         cell_type_dim=metadata_config.cell_type_dim,
         experiment_dim=metadata_config.experiment_dim,
-        image_type_dim=metadata_config.image_type_dim,
+        assay_type_dim=metadata_config.assay_type_dim,
         well_address_dim=metadata_config.well_address_dim,
     )
 

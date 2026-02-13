@@ -1,4 +1,5 @@
 import logging
+import netrc
 import os
 import pathlib
 import re
@@ -14,8 +15,9 @@ import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dataset
-from adaptor import DataFrameTokenizer, MetaDataConfig
+from tokenizer import DataFrameTokenizer, MetaDataConfig
 from model import get_model_cls
+from flow_matching import FlowMatching
 from trainer import TrainState, train
 from utils.distributed import Distributed
 from utils.ema import KarrasEMA
@@ -153,12 +155,13 @@ def main(config: ornamentalist.ConfigDict):
         )
 
         model_cls = get_model_cls()
-        net = model_cls(
+        dit = model_cls(
             input_size=32,
             in_channels=8,
             learn_sigma=False,
             metadata_config=MetaDataConfig(),
         )
+        net = FlowMatching(dit)
         net.to(D.device)
         net: torch.nn.Module = torch.compile(net)  # type: ignore
         ddp = DDP(net)

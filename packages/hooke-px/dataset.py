@@ -11,7 +11,7 @@ import zarr
 import zarr.core
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.transforms import v2
-from adaptor import DataFrameTokenizer
+from tokenizer import DataFrameTokenizer
 
 numcodecs.blosc.use_threads = False
 
@@ -76,8 +76,6 @@ class CellPaintConverter:
         return x
 
 
-
-
 def crop_zarr(
     zarr_array: zarr.core.Array, top: int, left: int, height: int, width: int
 ) -> torch.Tensor:
@@ -131,7 +129,7 @@ class CellDataset(torch.utils.data.Dataset):
             "image_path",
             "cell_type",
             "experiment_label",
-            "image_type",
+            "assay_type",
             "well_address",
             "rec_id",
             "concentration",
@@ -201,7 +199,7 @@ class MetaVocab:
     concentration_dim: int
     cell_type_dim: int
     experiment_dim: int
-    image_type_dim: int
+    assay_type_dim: int
     well_address_dim: int
     pad_length: int
 
@@ -243,7 +241,7 @@ def get_dataloaders(
         concentration_dim=len(tokenizer.concentration_tokenizer),
         cell_type_dim=len(tokenizer.cell_type_tokenizer),
         experiment_dim=len(tokenizer.experiment_tokenizer),
-        image_type_dim=len(tokenizer.image_type_tokenizer),
+        assay_type_dim=len(tokenizer.assay_type_tokenizer),
         well_address_dim=len(tokenizer.well_address_tokenizer),
         pad_length=tokenizer.pad_length,
     )

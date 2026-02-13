@@ -10,8 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.vision_transformer import Mlp, PatchEmbed  # type: ignore
-
-from adaptor import ScalarEmbedder, MetaDataConfig, get_transformer_adaptor
 from layers import Attention
 
 def modulate(x, shift, scale):
@@ -99,6 +97,7 @@ class DiT(nn.Module):
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
+        self.hidden_size = hidden_size
 
         self.x_embedder = PatchEmbed(
             input_size, patch_size, in_channels, hidden_size, bias=True
@@ -173,57 +172,6 @@ class DiT(nn.Module):
 
 
 
-class DiTWrapper(nn.Module):
-    """Wraps DiT to include transformer-based conditioning from tokenized metadata."""
-
-    def __init__(
-        self,
-        metadata_config: MetaDataConfig = MetaDataConfig(),
-        input_size=32,
-        patch_size=2,
-        in_channels=4,
-        hidden_size=1152,
-        depth=28,
-        num_heads=16,
-        mlp_ratio=4.0,
-        learn_sigma=False,
-        frequency_embedding_size=256,
-    ):
-        super().__init__()
-        self.dit = DiT(
-            input_size=input_size,
-            patch_size=patch_size,
-            in_channels=in_channels,
-            hidden_size=hidden_size,
-            depth=depth,
-            num_heads=num_heads,
-            mlp_ratio=mlp_ratio,
-            learn_sigma=learn_sigma,
-        )
-        self.t_embedder = ScalarEmbedder(
-            hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size
-        )
-
-        self.meta_adaptor = get_transformer_adaptor(hidden_size, metadata_config)
-
-    def forward(
-        self, *, x, t, meta: dict, force_drop_rec_conc: torch.Tensor | None = None
-    ):
-        t_emb = self.t_embedder(t)
-        meta_emb = self.meta_adaptor(
-            rec_id=meta["rec_id"],
-            concentration=meta["concentration"],
-            comp_mask=meta["comp_mask"],
-            cell_type=meta["cell_type"],
-            experiment_label=meta["experiment_label"],
-            image_type=meta["image_type"],
-            well_address=meta["well_address"],
-            force_drop_rec_conc=force_drop_rec_conc,
-        )
-        cond = t_emb + meta_emb  # (B, hidden_size)
-        return self.dit(x, cond)  # (B, out_channels, H, W)
-
-
 class TxMLPWrapper(nn.Module):
     def __init__(self, mlp_in_dim: int, mlp_out_dim: int,
                 metadata_config: MetaDataConfig = MetaDataConfig(),
@@ -236,20 +184,20 @@ class TxMLPWrapper(nn.Module):
             nn.GELU(),
             nn.Dropout(mlp_dropout),
         )
-        self.meta_adaptor = get_transformer_adaptor(hidden_size, metadata_config)
+        self.context_encoder = get_transformer_encoder(hidden_size, metadata_config)
         self.t_embedder = ScalarEmbedder(
             hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size
         )
 
     def forward(self, x, t, meta: dict, force_drop_rec_conc: torch.Tensor | None = None):
         t_emb = self.t_embedder(t)
-        meta_emb = self.meta_adaptor(
+        meta_emb = self.context_encoder(
             rec_id=meta["rec_id"],
             concentration=meta["concentration"],
             comp_mask=meta["comp_mask"],
             cell_type=meta["cell_type"],
             experiment_label=meta["experiment_label"],
-            image_type=meta["image_type"],
+            assay_type=meta["assay_type"],
             well_address=meta["well_address"],
             force_drop_rec_conc=force_drop_rec_conc,
         )
@@ -301,17 +249,17 @@ class JointWrapper(nn.Module):
         self.t_embedder = ScalarEmbedder(
             hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size
         )
-        self.meta_adaptor = get_transformer_adaptor(hidden_size, metadata_config)
+        self.context_encoder = get_transformer_encoder(hidden_size, metadata_config)
 
     def forward(self, x, t, meta: dict, force_drop_rec_conc: torch.Tensor | None = None):
         t_emb = self.t_embedder(t)
-        meta_emb = self.meta_adaptor(
+        meta_emb = self.context_encoder(
             rec_id=meta["rec_id"],
             concentration=meta["concentration"],
             comp_mask=meta["comp_mask"],
             cell_type=meta["cell_type"],
             experiment_label=meta["experiment_label"],
-            image_type=meta["image_type"],
+            assay_type=meta["assay_type"],
             well_address=meta["well_address"],
             force_drop_rec_conc=force_drop_rec_conc,
         )
@@ -379,7 +327,7 @@ def get_model_cls(
         "DiT-B/2", "DiT-B/4", "DiT-B/8",
         "DiT-S/2", "DiT-S/4", "DiT-S/8",
     ] = ornamentalist.Configurable["DiT-XL/2"],
-) -> functools.partial[DiTWrapper]:  # fmt: skip
+) -> functools.partial[DiT]:  # fmt: skip
     model_variant, patch_size = name.split("/")
     match model_variant:
         case "DiT-S":
@@ -404,7 +352,7 @@ def get_model_cls(
     patch_size = int(patch_size)
     assert patch_size in [2, 4, 8], f"Invalid patch size: {patch_size}"
     return functools.partial(
-        DiTWrapper,
+        DiT,
         depth=depth,
         hidden_size=hidden_size,
         patch_size=patch_size,
