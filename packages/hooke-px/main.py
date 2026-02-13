@@ -1,5 +1,4 @@
 import logging
-import netrc
 import os
 import pathlib
 import re
@@ -15,9 +14,8 @@ import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import dataset
-from tokenizer import DataFrameTokenizer, MetaDataConfig
-from model import get_model_cls
-from flow_matching import FlowMatching
+from tokenizer import DataFrameTokenizer
+from flow_matching import JointFlowMatching, get_model
 from trainer import TrainState, train
 from utils.distributed import Distributed
 from utils.ema import KarrasEMA
@@ -67,7 +65,8 @@ def prng(rank: int, seed: int = ornamentalist.Configurable[42]):
 @ornamentalist.configure(name="ckpt")
 def get_resume_checkpoint_dir(
     resume_from: str = ornamentalist.Configurable[""],
-) -> str | None:
+    strict: bool = ornamentalist.Configurable[True],
+) -> tuple[str | None, bool]:
     """Get the checkpoint directory to resume from.
 
     Args:
@@ -75,16 +74,23 @@ def get_resume_checkpoint_dir(
                      If a directory, will look for checkpoints in that directory.
                      If a .ckpt file, will use that file's parent directory.
                      If empty string, returns None (no resume).
+        strict:      If False, allows loading a checkpoint with mismatched keys.
+                     Set to False when finetuning on a different modality
+                     (e.g. loading a Px checkpoint for Tx finetuning).
 
-    Example usage:
-        python main.py --resume_from=/path/to/outputs/1234567890/checkpoints
-        python main.py --resume_from=/path/to/outputs/1234567890/checkpoints/step_100000.ckpt
+    Example usage::
+
+        python main.py --ckpt.resume_from=/path/to/checkpoints
+        python main.py --ckpt.resume_from=/path/to/step_100000.ckpt --ckpt.strict=False
     """
+    ckpt_dir: str | None
     if not resume_from:
-        return None
-    if resume_from.endswith(".ckpt"):
-        return os.path.dirname(resume_from)
-    return resume_from
+        ckpt_dir = None
+    elif resume_from.endswith(".ckpt"):
+        ckpt_dir = os.path.dirname(resume_from)
+    else:
+        ckpt_dir = resume_from
+    return ckpt_dir, strict
 
 
 def main(config: ornamentalist.ConfigDict):
@@ -139,31 +145,62 @@ def main(config: ornamentalist.ConfigDict):
         ckpt_dir = os.path.join(output_dir, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=True)
 
-        resume_ckpt_dir = get_resume_checkpoint_dir()
+        resume_ckpt_dir, strict_ckpt = get_resume_checkpoint_dir()
         if resume_ckpt_dir:
             log.info(f"Will resume from checkpoint directory: {resume_ckpt_dir}")
+            log.info(f"Checkpoint loading strict={strict_ckpt}")
         else:
             # If no explicit resume path, try to resume from the job's own checkpoint dir
             resume_ckpt_dir = ckpt_dir
 
         # Load tokenizer from checkpoint if resuming, to preserve vocabulary
-        # when finetuning on a subset of the original training data
         existing_tokenizer = load_tokenizer_from_checkpoint(resume_ckpt_dir)
 
-        train_loader, val_loader, vocab, tokenizer = dataset.get_dataloaders(
-            tokenizer=existing_tokenizer
+        # ------------------------------------------------------------------
+        # Build model (dispatches on --flow_model.modality)
+        # ------------------------------------------------------------------
+        net: JointFlowMatching = get_model()
+        # Infer the training modality from which vector fields were created
+        active_modalities = list(net.vector_fields.keys())
+        has_px = "px" in active_modalities
+        has_tx = "tx" in active_modalities
+        if has_px and has_tx:
+            modality = "joint"
+        elif has_px:
+            modality = "px"
+        else:
+            modality = "tx"
+        log.info(f"Training modality: {modality} (active vector fields: {active_modalities})")
+
+        # ------------------------------------------------------------------
+        # Build dataloaders
+        # ------------------------------------------------------------------
+        px_train_loader = px_val_loader = px_test_loaders = None
+        tx_train_loader = tx_val_loader = None
+
+        if has_px:
+            px_train_loader, px_val_loader, _vocab, tokenizer = dataset.get_dataloaders(
+                tokenizer=existing_tokenizer
+            )
+            px_test_loaders = {"iid": px_val_loader}
+        else:
+            tokenizer = existing_tokenizer  # may be None
+
+        if has_tx:
+            # Reuse the Px tokenizer if available (joint or finetune from Px)
+            tx_train_loader, tx_val_loader, tokenizer = dataset.get_tx_dataloaders(
+                tokenizer=tokenizer
+            )
+
+        assert tokenizer is not None, (
+            "No tokenizer available. Either provide training data or resume from a checkpoint."
         )
 
-        model_cls = get_model_cls()
-        dit = model_cls(
-            input_size=32,
-            in_channels=8,
-            learn_sigma=False,
-            metadata_config=MetaDataConfig(),
-        )
-        net = FlowMatching(dit)
+        # ------------------------------------------------------------------
+        # Set up training state
+        # ------------------------------------------------------------------
         net.to(D.device)
-        net: torch.nn.Module = torch.compile(net)  # type: ignore
+        net = torch.compile(net)  # type: ignore
         ddp = DDP(net)
         ema = KarrasEMA(net)
         opt = torch.optim.Adam(
@@ -181,15 +218,18 @@ def main(config: ornamentalist.ConfigDict):
         log.info(f"Model has {nparams / 1e6:.0f}M parameters")
         log.info(f"Loading checkpoints from: {resume_ckpt_dir}")
         log.info(f"Saving checkpoints to: {ckpt_dir}")
-        state.load_latest_ckpt(dir=resume_ckpt_dir, device=D.device)
+        state.load_latest_ckpt(dir=resume_ckpt_dir, device=D.device, strict=strict_ckpt)
 
         train(
             state=state,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            test_loaders={"iid": val_loader},
             output_dir=output_dir,
             D=D,
+            modality=modality,
+            px_train_loader=px_train_loader,
+            px_val_loader=px_val_loader,
+            px_test_loaders=px_test_loaders,
+            tx_train_loader=tx_train_loader,
+            tx_val_loader=tx_val_loader,
         )
 
         if D.rank == 0:

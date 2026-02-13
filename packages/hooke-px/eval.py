@@ -38,7 +38,7 @@ from main import (
     CELL_TYPE_DIM,
     CONCENTRATION_DIM,
     EXPERIMENT_DIM,
-    IMAGE_TYPE_DIM,
+    ASSAY_TYPE_DIM,
     REC_ID_DIM,
     WELL_ADDRESS_DIM,
 )
@@ -152,7 +152,7 @@ def load_model_and_tokenizer(
         concentration_dim=CONCENTRATION_DIM,
         cell_type_dim=CELL_TYPE_DIM,
         experiment_dim=EXPERIMENT_DIM,
-        image_type_dim=IMAGE_TYPE_DIM,
+        assay_type_dim=ASSAY_TYPE_DIM,
         well_address_dim=WELL_ADDRESS_DIM,
     )
     net.to(device)

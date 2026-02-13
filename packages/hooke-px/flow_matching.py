@@ -1,18 +1,52 @@
+from typing import Literal
+
 import ornamentalist
 import torch
 from torch import nn
-from model import DiT, get_model_cls
+import torch.nn.functional as F
 import torchdiffeq
 from context_encoders import get_transformer_encoder, TransformerEncoder, ScalarEmbedder, MetaDataConfig
+from model import ConditionedMLP, get_model_cls
 
-class FlowMatching(nn.Module):
-    def __init__(self, hidden_size: int, context_encoder: TransformerEncoder, vector_field: nn.Module):
+
+class JointFlowMatching(nn.Module):
+    """Unified flow matching model supporting one or more modalities.
+
+    Each modality has its own vector field, but the context encoder and
+    time embedder are shared.  Works for both 4-D image tensors (Px) and
+    2-D feature vectors (Tx) thanks to dimension-agnostic interpolation.
+
+    Args:
+        hidden_size: Dimensionality of the shared conditioning stream.
+        context_encoder: TransformerEncoder that maps metadata -> conditioning vector.
+        vector_fields: ``{modality_name: nn.Module}`` where each module has
+            the signature ``(x, conditioning) -> prediction``.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        context_encoder: TransformerEncoder,
+        vector_fields: dict[str, nn.Module],
+    ):
         super().__init__()
-        self.vector_field = vector_field
         self.context_encoder = context_encoder
         self.t_embedder = ScalarEmbedder(hidden_size=hidden_size)
+        self.vector_fields = nn.ModuleDict(vector_fields)
 
-    def _forward_vector_field(self, *, x: torch.Tensor, t: torch.Tensor, meta: dict[str, torch.Tensor], force_drop_rec_conc: torch.Tensor | None = None) -> torch.Tensor:
+    # ------------------------------------------------------------------
+    # internals
+    # ------------------------------------------------------------------
+
+    def _forward_vector_field(
+        self,
+        modality: str,
+        *,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        meta: dict[str, torch.Tensor],
+        force_drop_rec_conc: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         t_emb = self.t_embedder(t)
         meta_emb = self.context_encoder(
             rec_id=meta["rec_id"],
@@ -24,51 +58,77 @@ class FlowMatching(nn.Module):
             well_address=meta["well_address"],
             force_drop_rec_conc=force_drop_rec_conc,
         )
-        return self.vector_field(x, t_emb + meta_emb)
-
-    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-    def forward(
-        self,
-        x0: torch.Tensor,  # shape (B, C, H, W), sampled from source distribution
-        x1: torch.Tensor,  # shape (B, C, H, W), sampled from target distribution
-        meta: dict[str, torch.Tensor],
-    ) -> torch.Tensor:
-        """Compute the flow matching loss."""
-        t = torch.rand(x0.shape[0], device=x0.device, dtype=torch.float32)  # (B,) - [0,1)
-        t_ = t.reshape(-1, 1, 1, 1).expand_as(x0)  # B -> B,C,H,W
-
-        xt = torch.lerp(x0, x1, t_)
-        ut = x1 - x0
-
-        vt = self._classifier_free_guided_prediction(x=xt, t=t, meta=meta)
-        return torch.nn.functional.mse_loss(vt, ut)
+        return self.vector_fields[modality](x, t_emb + meta_emb)
 
     def _classifier_free_guided_prediction(
         self,
-        x,
-        t,
+        modality: str,
+        x: torch.Tensor,
+        t: torch.Tensor,
         meta: dict[str, torch.Tensor],
         cfg: float = 1.0,
-    ) -> torch.Tensor:  # fmt: off
+    ) -> torch.Tensor:
         if t.ndim == 0:  # the ODE solver gives scalar t
             t = t.expand(x.shape[0])
         if cfg == 0.0:  # unconditional
-            return self._forward_vector_field(x=x, t=t, meta=meta, 
+            return self._forward_vector_field(
+                modality, x=x, t=t, meta=meta,
                 force_drop_rec_conc=torch.ones(x.shape[0], device=x.device, dtype=torch.long),
             )
         if cfg == 1.0:  # conditional
-            return self._forward_vector_field(x=x, t=t, meta=meta, force_drop_rec_conc=None)
+            return self._forward_vector_field(modality, x=x, t=t, meta=meta, force_drop_rec_conc=None)
 
-        pred_cond = self._forward_vector_field(x=x, t=t, meta=meta, force_drop_rec_conc=None)
-        pred_null = self._forward_vector_field(x=x, t=t, meta=meta, 
+        pred_cond = self._forward_vector_field(modality, x=x, t=t, meta=meta, force_drop_rec_conc=None)
+        pred_null = self._forward_vector_field(
+            modality, x=x, t=t, meta=meta,
             force_drop_rec_conc=torch.ones(x.shape[0], device=x.device, dtype=torch.long),
         )
         return pred_null + cfg * (pred_cond - pred_null)
 
+    # ------------------------------------------------------------------
+    # public API
+    # ------------------------------------------------------------------
+
+    @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    def loss(
+        self,
+        modality: str,
+        x0: torch.Tensor,  # sampled from source distribution
+        x1: torch.Tensor,  # sampled from target distribution
+        meta: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Compute the flow matching loss for a single modality.
+
+        Dimension-agnostic: works for (B, C, H, W) images or (B, D) vectors.
+        """
+        t = torch.rand(x0.shape[0], device=x0.device, dtype=torch.float32)
+        t_ = t.reshape(-1, *([1] * (x0.ndim - 1))).expand_as(x0)
+
+        xt = torch.lerp(x0, x1, t_)
+        ut = x1 - x0
+
+        vt = self._classifier_free_guided_prediction(modality, x=xt, t=t, meta=meta)
+        return F.mse_loss(vt, ut)
+
+    def forward(
+        self,
+        batches: dict[str, tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]],
+    ) -> dict[str, torch.Tensor]:
+        """Compute losses for all provided modalities in a single DDP-safe forward.
+
+        Args:
+            batches: ``{modality: (x0, x1, meta)}``
+
+        Returns:
+            ``{modality: loss}``
+        """
+        return {m: self.loss(m, x0, x1, meta) for m, (x0, x1, meta) in batches.items()}
+
     @torch.autocast(device_type="cuda", dtype=torch.bfloat16)
     def generate(
         self,
-        x0: torch.Tensor,  # shape (B, C, H, W), sampled from N(0, I)
+        modality: str,
+        x0: torch.Tensor,
         meta: dict[str, torch.Tensor],
     ) -> tuple[torch.Tensor, int]:
         """Generate a sample with the dopri5 probability flow ODE solver."""
@@ -77,7 +137,7 @@ class FlowMatching(nn.Module):
         def forward_fn(t, x):
             nonlocal nfe
             nfe += 1
-            return self._classifier_free_guided_prediction(x=x, t=t, meta=meta)
+            return self._classifier_free_guided_prediction(modality, x=x, t=t, meta=meta)
 
         traj = torchdiffeq.odeint(
             forward_fn,
@@ -90,38 +150,49 @@ class FlowMatching(nn.Module):
         return traj[-1], nfe  # type: ignore
 
 
-class JointFlowMatching(FlowMatching):
-    def __init__(self, hidden_size: int, vector_field: nn.Module, context_encoder: TransformerEncoder):
-        super().__init__(hidden_size=hidden_size, vector_field=vector_field, context_encoder=context_encoder)
-        
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
 
-@ornamentalist.configure(name="px_model")
-def get_px_flow_matching_model(
-    dit_model: str = ornamentalist.Configurable["DiT-XL/2"],
+@ornamentalist.configure(name="flow_model")
+def get_model(
+    modality: Literal["px", "tx", "joint"] = ornamentalist.Configurable["px"],
+    tx_feature_dim: int = ornamentalist.Configurable[1024],
+    tx_hidden_dim: int = ornamentalist.Configurable[2048],
+    tx_n_layers: int = ornamentalist.Configurable[4],
     metadata_config: MetaDataConfig = MetaDataConfig(),
-) -> FlowMatching:
-    dit_cls = get_model_cls(dit_model)
-    return FlowMatching(
-        hidden_size=dit_cls.hidden_size,
-        vector_field=dit_cls,
-        context_encoder=get_transformer_encoder(hidden_size=dit_cls.hidden_size, metadata_config=metadata_config),
-    )
+) -> JointFlowMatching:
+    """Build a JointFlowMatching model with the requested modalities.
 
-@ornamentalist.configure(name="tx_model")
-def get_tx_flow_matching_model(
-    mlp_in_dim: int,
-    mlp_out_dim: int,
-    hidden_size: int,
-    mlp_dropout: float = 0.0,
-    metadata_config: MetaDataConfig = MetaDataConfig(),
-) -> FlowMatching:
-    mlp = nn.Sequential(
-            nn.Linear(mlp_in_dim, mlp_out_dim),
-            nn.GELU(),
-            nn.Dropout(mlp_dropout),
+    The DiT variant is controlled by ``--model.name`` (e.g. DiT-XL/2).
+
+    CLI examples::
+
+        --flow_model.modality=px                     # Px only (default)
+        --flow_model.modality=tx --flow_model.tx_feature_dim=1024
+        --flow_model.modality=joint
+    """
+    dit_cls = get_model_cls()  # uses --model.name config
+    hidden_size: int = dit_cls.keywords["hidden_size"]  # type: ignore[union-attr]
+
+    vector_fields: dict[str, nn.Module] = {}
+    if modality in ("px", "joint"):
+        vector_fields["px"] = dit_cls(
+            input_size=32, in_channels=8, learn_sigma=False,
         )
-    return FlowMatching(
+    if modality in ("tx", "joint"):
+        vector_fields["tx"] = ConditionedMLP(
+            data_dim=tx_feature_dim,
+            cond_dim=hidden_size,
+            hidden_dim=tx_hidden_dim,
+            n_layers=tx_n_layers,
+        )
+
+    context_encoder = get_transformer_encoder(
+        hidden_size=hidden_size, metadata_config=metadata_config,
+    )
+    return JointFlowMatching(
         hidden_size=hidden_size,
-        vector_field=mlp,
-        context_encoder=get_transformer_encoder(hidden_size=hidden_size, metadata_config=metadata_config),
+        context_encoder=context_encoder,
+        vector_fields=vector_fields,
     )

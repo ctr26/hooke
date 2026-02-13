@@ -2,6 +2,7 @@ import dataclasses
 from typing import Callable
 import logging
 import numcodecs
+from pathlib import Path
 
 import diffusers
 import ornamentalist
@@ -193,6 +194,56 @@ class CellDataset(torch.utils.data.Dataset):
             return self._get_fallback_sample()
 
 
+
+class TxDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        metadata: pl.DataFrame,
+        tokenizer: DataFrameTokenizer,
+        zarr_path: str | Path = Path("/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"),
+    ):
+        required_cols = [
+            "zarr_row_idx",
+            "batch_center",
+            "is_negative_control",
+            "cell_type",
+            "experiment_label",
+            "assay_type",
+            "well_address",
+            "rec_id",
+            "concentration",
+        ]
+        assert all(col in metadata.columns for col in required_cols), (
+            f"metadata must have the following columns: {required_cols}"
+        )
+        self.metadata = metadata
+        self.tokenizer = tokenizer
+        lookup_df = (
+            metadata.group_by("batch_center")
+            .agg([
+                pl.col("zarr_row_idx").filter(pl.col("is_negative_control")).alias("control_indices")
+            ])
+        )
+        control_map = dict(zip(lookup_df["batch_center"],
+                                    lookup_df["control_indices"]))
+        self.control_map = control_map
+        self.zarr_file = zarr.open(zarr_path)
+
+    def __len__(self):
+        return len(self.metadata)
+
+    def __getitem__(self, index: int):
+        row = self.metadata.row(index, named=True)
+        control = self.metadata.row(self.control_map[row['batch_center']].sample(1).item(), named=True)
+        tx = torch.from_numpy(self.zarr_file[row["zarr_row_idx"]])
+        tx_control = torch.from_numpy(self.zarr_file[control["zarr_row_idx"]])
+        sample = {
+            "tx": tx,
+            "tx_control": tx_control,
+            "meta": self.tokenizer(row),
+        }
+        return sample
+
 @dataclasses.dataclass(frozen=True)
 class MetaVocab:
     rec_id_dim: int
@@ -280,3 +331,87 @@ def get_dataloaders(
     )
     assert tokenizer is not None  # either provided or created above
     return train_loader, val_loader, vocab, tokenizer
+
+
+@ornamentalist.configure(name="tx_data")
+def get_tx_dataloaders(
+    *,
+    path: str = ornamentalist.Configurable[
+        "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_obs.parquet"
+    ],
+    zarr_path: str = ornamentalist.Configurable[
+        "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"
+    ],
+    batch_size: int = ornamentalist.Configurable[256],
+    num_workers: int = ornamentalist.Configurable[8],
+    pin_memory: bool = ornamentalist.Configurable[True],
+    val_split: str = ornamentalist.Configurable["valid_tx"],
+    pad_length: int = 8,
+    tokenizer: DataFrameTokenizer | None = None,
+) -> tuple[DataLoader, DataLoader | None, DataFrameTokenizer]:
+    """Get Tx train (and optionally validation) dataloaders.
+
+    Args:
+        tokenizer: Optional pre-existing tokenizer. If provided, it will be
+                   used as-is (useful for joint training or finetuning).
+    """
+    df = pl.read_parquet(path)
+
+    # Ensure the expected columns exist; add zarr_row_idx if missing
+    if "zarr_row_idx" not in df.columns:
+        df = df.with_row_index("zarr_row_idx")
+
+    # Prepare rec_id / concentration from perturbations column if needed
+    if "rec_id" not in df.columns and "perturbations" in df.columns:
+        df = df.with_columns(
+            rec_id=pl.col("perturbations").list.eval(
+                pl.element().struct.field("source_id")
+            ),
+            concentration=pl.col("perturbations").list.eval(
+                pl.element().struct.field("concentration").cast(pl.Float64).cast(pl.String)
+            ),
+        )
+
+    if "assay_type" not in df.columns:
+        df = df.with_columns(pl.lit("trek").alias("assay_type"))
+
+    if "split" not in df.columns:
+        df = df.with_columns(pl.lit("train").alias("split"))
+
+    train_df = df.filter(pl.col("split") == "train")
+
+    # Use provided tokenizer, or fit a new one on the data
+    if tokenizer is None:
+        tokenizer = DataFrameTokenizer(df, pad_length=pad_length)
+    else:
+        _log.info("Using provided tokenizer for Tx data")
+
+    train_ds = TxDataset(train_df, tokenizer=tokenizer, zarr_path=zarr_path)
+    train_sampler = DistributedSampler(train_ds, shuffle=True)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        sampler=train_sampler,
+        pin_memory=pin_memory,
+        drop_last=True,
+    )
+
+    # Validation loader (optional -- may not exist yet for all Tx datasets)
+    val_loader = None
+    val_df = df.filter(pl.col("split") == val_split)
+    if len(val_df) > 0:
+        val_ds = TxDataset(val_df, tokenizer=tokenizer, zarr_path=zarr_path)
+        val_sampler = DistributedSampler(val_ds, shuffle=False)
+        val_loader = DataLoader(
+            val_ds,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            sampler=val_sampler,
+            pin_memory=pin_memory,
+            drop_last=False,
+        )
+    else:
+        _log.warning("No Tx validation data found for split='%s'", val_split)
+
+    return train_loader, val_loader, tokenizer

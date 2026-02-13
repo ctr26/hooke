@@ -2,7 +2,7 @@
 Forked from github.com/facebookresearch/DiT (MIT license)."""
 
 import functools
-from typing import Literal, Optional, Type
+from typing import Literal
 
 import numpy as np
 import ornamentalist
@@ -172,99 +172,55 @@ class DiT(nn.Module):
 
 
 
-class TxMLPWrapper(nn.Module):
-    def __init__(self, mlp_in_dim: int, mlp_out_dim: int,
-                metadata_config: MetaDataConfig = MetaDataConfig(),
-                hidden_size=1152,
-                mlp_dropout: float = 0.0,
-                frequency_embedding_size=256):
+class ConditionedMLP(nn.Module):
+    """MLP vector field with FiLM conditioning (feature-wise linear modulation).
+
+    Follows the same ``(x, conditioning) -> output`` interface as DiT so it
+    can be used as a drop-in vector field inside JointFlowMatching.
+
+    At each hidden layer the conditioning vector produces per-feature
+    scale and shift parameters, mirroring the adaLN mechanism in DiT.
+
+    Args:
+        data_dim:   Dimensionality of the input/output data (e.g. Tx feature dim).
+        cond_dim:   Dimensionality of the conditioning vector (hidden_size).
+        hidden_dim: Width of the hidden layers.
+        n_layers:   Number of hidden layers (each with its own FiLM modulation).
+    """
+
+    def __init__(self, data_dim: int, cond_dim: int, hidden_dim: int, n_layers: int = 3):
         super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(mlp_in_dim, mlp_out_dim),
-            nn.GELU(),
-            nn.Dropout(mlp_dropout),
-        )
-        self.context_encoder = get_transformer_encoder(hidden_size, metadata_config)
-        self.t_embedder = ScalarEmbedder(
-            hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size
-        )
+        self.input_proj = nn.Linear(data_dim, hidden_dim)
+        self.layers = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(n_layers)])
+        self.film_projs = nn.ModuleList([nn.Linear(cond_dim, 2 * hidden_dim) for _ in range(n_layers)])
+        self.output_proj = nn.Linear(hidden_dim, data_dim)
+        self.act = nn.GELU()
+        self.initialize_weights()
 
-    def forward(self, x, t, meta: dict, force_drop_rec_conc: torch.Tensor | None = None):
-        t_emb = self.t_embedder(t)
-        meta_emb = self.context_encoder(
-            rec_id=meta["rec_id"],
-            concentration=meta["concentration"],
-            comp_mask=meta["comp_mask"],
-            cell_type=meta["cell_type"],
-            experiment_label=meta["experiment_label"],
-            assay_type=meta["assay_type"],
-            well_address=meta["well_address"],
-            force_drop_rec_conc=force_drop_rec_conc,
-        )
-        cond = t_emb + meta_emb  # (B, hidden_size)
-        return self.mlp(x, cond)  # (B, hidden_size)
+    def initialize_weights(self):
+        # Zero-init output projection so the model starts near identity
+        nn.init.zeros_(self.output_proj.weight)
+        nn.init.zeros_(self.output_proj.bias)
+        # Zero-init FiLM projections so modulation starts as identity (scale=1, shift=0)
+        for proj in self.film_projs:
+            nn.init.zeros_(proj.weight)
+            nn.init.zeros_(proj.bias)
 
-class MLP(nn.Module):
-    def __init__(self, mlp_in_dim: int, mlp_out_dim: int, mlp_dropout: float = 0.0):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(mlp_in_dim, mlp_out_dim),
-            nn.GELU(),
-            nn.Dropout(mlp_dropout),
-        )
-    def forward(self, x, cond):
-        return self.mlp(x, cond)
-
-class JointWrapper(nn.Module):
-    def __init__(
-        self,
-        tx_class_id: int,
-        mlp_in_dim: int,
-        mlp_out_dim: int,
-        metadata_config: MetaDataConfig = MetaDataConfig(),
-        input_size=32,
-        patch_size=2,
-        in_channels=4,
-        hidden_size=1152,
-        depth=28,
-        num_heads=16,
-        mlp_ratio=4.0,
-        learn_sigma=False,
-        frequency_embedding_size=256,
-        mlp_dropout: float = 0.0,
-    ):
-        super().__init__()
-        self.tx_class_id = tx_class_id
-        
-        self.dit = DiT(
-            input_size=input_size,
-            patch_size=patch_size,
-            in_channels=in_channels,
-            hidden_size=hidden_size,
-            depth=depth,
-            num_heads=num_heads,
-            mlp_ratio=mlp_ratio,
-            learn_sigma=learn_sigma,
-        )
-        self.t_embedder = ScalarEmbedder(
-            hidden_size=hidden_size, frequency_embedding_size=frequency_embedding_size
-        )
-        self.context_encoder = get_transformer_encoder(hidden_size, metadata_config)
-
-    def forward(self, x, t, meta: dict, force_drop_rec_conc: torch.Tensor | None = None):
-        t_emb = self.t_embedder(t)
-        meta_emb = self.context_encoder(
-            rec_id=meta["rec_id"],
-            concentration=meta["concentration"],
-            comp_mask=meta["comp_mask"],
-            cell_type=meta["cell_type"],
-            experiment_label=meta["experiment_label"],
-            assay_type=meta["assay_type"],
-            well_address=meta["well_address"],
-            force_drop_rec_conc=force_drop_rec_conc,
-        )
-        
-        return self.dit(x, t, meta, force_drop_rec_conc)
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x:    (B, data_dim) input data.
+            cond: (B, cond_dim) conditioning vector (t_emb + meta_emb).
+        Returns:
+            (B, data_dim) predicted vector field.
+        """
+        h = self.input_proj(x)
+        for linear, film_proj in zip(self.layers, self.film_projs):
+            h = linear(h)
+            scale, shift = film_proj(cond).chunk(2, dim=-1)
+            h = h * (1 + scale) + shift
+            h = self.act(h)
+        return self.output_proj(h)
 
 #################################################################################
 #                   Sine/Cosine Positional Embedding Functions                  #
