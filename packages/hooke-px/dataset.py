@@ -337,7 +337,7 @@ def get_dataloaders(
 def get_tx_dataloaders(
     *,
     path: str = ornamentalist.Configurable[
-        "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_obs.parquet"
+        "/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/metadata/training_trek_v1_0_obs.parquet"
     ],
     zarr_path: str = ornamentalist.Configurable[
         "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"
