@@ -9,7 +9,6 @@ import ornamentalist
 import polars as pl
 import torch
 import zarr
-import zarr.core
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.transforms import v2
 from tokenizer import DataFrameTokenizer
@@ -78,7 +77,7 @@ class CellPaintConverter:
 
 
 def crop_zarr(
-    zarr_array: zarr.core.Array, top: int, left: int, height: int, width: int
+    zarr_array: zarr.Array, top: int, left: int, height: int, width: int
 ) -> torch.Tensor:
     """Takes a zarr array and returns a cropped uint8 torch tensor (C x H x W)
     (only loads the relevant crop into memory)."""
@@ -88,7 +87,7 @@ def crop_zarr(
     return tensor.contiguous()
 
 
-def center_crop_zarr(zarr_array: zarr.core.Array, size: int) -> torch.Tensor:
+def center_crop_zarr(zarr_array: zarr.Array, size: int) -> torch.Tensor:
     h, w, _ = zarr_array.shape
     top = int(round((h - size) / 2.0))
     left = int(round((w - size) / 2.0))
@@ -96,7 +95,7 @@ def center_crop_zarr(zarr_array: zarr.core.Array, size: int) -> torch.Tensor:
 
 
 def random_crop_zarr(
-    zarr_array: zarr.core.Array, size: int, border: int = 0
+    zarr_array: zarr.Array, size: int, border: int = 0
 ) -> torch.Tensor:
     h, w, _ = zarr_array.shape
     top = int(torch.randint(border, h - (size + border), (1,)).item())
