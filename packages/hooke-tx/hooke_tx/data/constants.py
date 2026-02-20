@@ -1,0 +1,23 @@
+ASSAY: str = "assay_type"
+CONTEXT: str = "context"
+CELL_TYPE: str = "cell_type"
+EXPERIMENT: str = "experiment_label"
+WELL: str = "well_address"
+EMPTY: str = "empty"
+NEG_CONTROL: str = "negative_control"
+POS_CONTROL: str = "positive_control"
+GENE_ONLY: str = "gene_only"
+MOL_ONLY: str = "mol_only"
+PERTURBATIONS: str = "perturbations"
+MULTI_PERT: str = "multi_pert"
+GENE_PERT: str = "gene_pert"
+EFFECT_CLASS: str = "effect_class"
+MOL_PERT: str = "mol_pert"
+DOSE: str = "concentration"
+ROUTING: str = "routing"
+SOURCE: str = "source"
+INDEX: str = "index"
+
+DATA_SOURCES = {
+    "training_trek__v1_0": "/rxrx/scratch/hooke_tx/trek/training_trek__v1_0"
+}

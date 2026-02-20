@@ -1,0 +1,6 @@
+wandb/
+
+output/
+output_sweep/
+
+loc-*

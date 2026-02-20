@@ -1,0 +1,114 @@
+constants:
+  seed: 42
+
+wandb:
+  project: Hooke-Tx
+  entity: valencelabs
+
+data:
+  data_sources:
+    fit: training_trek__v1_0
+    validate: null
+    test: null
+    predict: null
+
+  cache_dir: /rxrx/scratch/hooke_tx
+  
+  sample_base_states: random
+  target_sum: 300000
+  log1p: true
+  embedder: null
+
+task: 
+  splits_path: null
+  selected_genes_path: /mnt/ps/home/CORP/frederik.wenkel/projects/hooke-tx/configs/template/selected_ens_ids.txt
+
+  # balanced & diverse
+  composition:
+    empty: false
+    neg_control: true
+    pos_control: true
+    gene_only: true
+    mol_only: true
+  routing:
+    gene_mol:
+      empty: 0.5
+      gene_only: 0.5
+    mol_mol:
+      empty: 0.5
+      mol_only: 0.5
+    gene_gene:
+      empty: 0.5
+      gene_only: 0.5
+
+  # drugscreen
+  # composition:
+  #   empty: false
+  #   neg_control: false
+  #   pos_control: false
+  #   gene_only: false
+  #   mol_only: true
+  # routing:
+  #   gene_mol:
+  #     from_empty: 0.0
+  #     from_gene: 1.0
+  #   mol_mol:
+  #     from_empty: 1.0
+  #     from_mol: 0.0
+  #   gene_gene: null
+
+model:
+  embedding_args:
+    time:
+      type: fourier
+      dim: 64
+    xt:
+      type: identity
+    gene_pert: &one_hot
+      type: one-hot
+      dim: 64
+    effect_class: null
+    mol_pert: *one_hot
+    concentration: *one_hot
+    assay_type: null
+    routing: *one_hot
+    cell_type: *one_hot
+    experiment_label: *one_hot
+    well_address: *one_hot
+  conditioning_args:
+    type: mlp
+    hidden_dim: 128
+    latent_dim: 128
+    pre_layers: 2
+    post_layers: 2
+  generation_args:
+    type: flow
+    flow: D2D
+    guidance_strength: 1.0
+
+  
+trainer:
+  seed: ${constants.seed}
+  num_workers: 0
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  max_grad_norm: 1.0
+  batch_size_train: 32
+  batch_size_eval: 8
+  max_epochs: 1
+  warmup_epochs: 0
+  gradient_accumulation_steps: 1
+  scheduler: null
+
+accelerator:
+  type: auto
+  devices: 1
+  precision: 32
+
+checkpoint:
+  save_last: false
+  save_top_k: 0
+  monitor: tbd
+  dirpath: tbd
+  every_n_epochs: 5
+  filename: '{epoch}'
