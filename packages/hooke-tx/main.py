@@ -11,10 +11,6 @@ from hooke_tx.data.datamodule import DataModule
 from hooke_tx.trainer import TxPredictor
 
 
-user = os.getenv("USER")
-os.environ["WANDB_DIR"] = f"/rxrx/data/user/{user}/outgoing"
-
-
 @hydra.main(config_path="configs/templates/trek_drugscreen", config_name="cfg", version_base=None)
 def main(cfg: DictConfig) -> None:
     data_args = deepcopy(OmegaConf.to_container(cfg.data, resolve=True))
@@ -23,6 +19,7 @@ def main(cfg: DictConfig) -> None:
     model_args = deepcopy(OmegaConf.to_container(cfg.model, resolve=True))
     trainer_args = deepcopy(OmegaConf.to_container(cfg.trainer, resolve=True))
     compute_spec = deepcopy(OmegaConf.to_container(cfg.compute, resolve=True))
+    checkpoint_args = deepcopy(OmegaConf.to_container(cfg.checkpoint, resolve=True))
 
     # Translate relative paths to absolute paths
     _root = os.path.dirname(os.path.abspath(__file__))
@@ -45,11 +42,19 @@ def main(cfg: DictConfig) -> None:
     datamodule.prepare_data()
     datamodule.setup()
 
-    callbacks = [ModelCheckpoint(save_last=True)]
+    callbacks = []
+    if checkpoint_args.pop("enable", False):
+        callbacks.append(
+            ModelCheckpoint(**checkpoint_args)
+        )
+    
+    log_dir = f"/rxrx/data/user/{os.getenv('USER')}/outgoing/hooke-tx"
     logger = WandbLogger(
         project=cfg.wandb.get("project", "Hooke-Tx"),
         entity=cfg.wandb.get("entity", "valencelabs"),
         name=cfg.wandb.get("name", None),
+        save_dir=log_dir,
+        dir=log_dir,
     )
 
     trainer = pl.Trainer(

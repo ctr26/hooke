@@ -107,9 +107,10 @@ compute:
   precision: 32
 
 checkpoint:
+  enable: false
   save_last: false
   save_top_k: 0
-  monitor: tbd
-  dirpath: tbd
+  monitor: null
+  dirpath: null
   every_n_epochs: 5
   filename: '{epoch}'
