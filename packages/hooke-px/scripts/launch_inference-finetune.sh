@@ -42,7 +42,7 @@ for step in "${STEPS[@]}"; do
 
     echo "Launching: step=${step} -> ${OUTPUT_DIR}"
 
-    uv run run_distributed_inference.py \
+    uv run -m hooke_forge.inference.run_distributed \
         --setup.input_parquet "$PARQUET" \
         --setup.checkpoint "$CHECKPOINT" \
         --setup.output_dir "$OUTPUT_DIR" \
