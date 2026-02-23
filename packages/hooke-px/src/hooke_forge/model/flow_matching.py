@@ -6,7 +6,7 @@ from torch import nn
 import torch.nn.functional as F
 import torchdiffeq
 from hooke_forge.model.context_encoders import get_transformer_encoder, TransformerEncoder, ScalarEmbedder, MetaDataConfig
-from hooke_forge.model.architecture import ConditionedMLP, get_model_cls
+from hooke_forge.model.architecture import get_model_cls, get_tx_model_cls
 
 
 class JointFlowMatching(nn.Module):
@@ -158,13 +158,12 @@ class JointFlowMatching(nn.Module):
 def get_model(
     modality: Literal["px", "tx", "joint"] = ornamentalist.Configurable["px"],
     tx_feature_dim: int = ornamentalist.Configurable[1024],
-    tx_hidden_dim: int = ornamentalist.Configurable[2048],
-    tx_n_layers: int = ornamentalist.Configurable[4],
     metadata_config: MetaDataConfig = MetaDataConfig(),
 ) -> JointFlowMatching:
     """Build a JointFlowMatching model with the requested modalities.
 
     The DiT variant is controlled by ``--model.name`` (e.g. DiT-XL/2).
+    The TX variant is controlled by ``--tx_model.name`` (e.g. TX-S).
 
     CLI examples::
 
@@ -181,11 +180,10 @@ def get_model(
             input_size=32, in_channels=8, learn_sigma=False,
         )
     if modality in ("tx", "joint"):
-        vector_fields["tx"] = ConditionedMLP(
+        tx_cls = get_tx_model_cls()  # uses --tx_model.name config
+        vector_fields["tx"] = tx_cls(
             data_dim=tx_feature_dim,
             cond_dim=hidden_size,
-            hidden_dim=tx_hidden_dim,
-            n_layers=tx_n_layers,
         )
 
     context_encoder = get_transformer_encoder(

@@ -1,7 +1,7 @@
 [project]
 name = "hooke-forge"
 version = "0.1.0"
-description = "Add your description here"
+description = "The place where we forge all the hookes we need"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

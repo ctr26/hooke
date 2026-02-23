@@ -173,54 +173,50 @@ class DiT(nn.Module):
 
 
 class ConditionedMLP(nn.Module):
-    """MLP vector field with FiLM conditioning (feature-wise linear modulation).
+    """MLP vector field with concatenation-based conditioning.
 
-    Follows the same ``(x, conditioning) -> output`` interface as DiT so it
-    can be used as a drop-in vector field inside JointFlowMatching.
-
-    At each hidden layer the conditioning vector produces per-feature
-    scale and shift parameters, mirroring the adaLN mechanism in DiT.
-
-    Args:
-        data_dim:   Dimensionality of the input/output data (e.g. Tx feature dim).
-        cond_dim:   Dimensionality of the conditioning vector (hidden_size).
-        hidden_dim: Width of the hidden layers.
-        n_layers:   Number of hidden layers (each with its own FiLM modulation).
+    Three-stream architecture matching the hooke-predict BasicFMModule:
+    1. mlp_xt: projects input data x into latent space
+    2. mlp_c:  projects conditioning vector into latent space
+    3. mlp_ut: maps concatenated [xt_emb, c_emb] to output velocity
     """
 
-    def __init__(self, data_dim: int, cond_dim: int, hidden_dim: int, n_layers: int = 3):
+    def __init__(
+        self,
+        data_dim: int,
+        cond_dim: int,
+        hidden_dim: int = 256,
+        latent_dim: int = 256,
+        xt_layers: int = 2,
+        c_layers: int = 2,
+        ut_layers: int = 2,
+    ):
         super().__init__()
-        self.input_proj = nn.Linear(data_dim, hidden_dim)
-        self.layers = nn.ModuleList([nn.Linear(hidden_dim, hidden_dim) for _ in range(n_layers)])
-        self.film_projs = nn.ModuleList([nn.Linear(cond_dim, 2 * hidden_dim) for _ in range(n_layers)])
-        self.output_proj = nn.Linear(hidden_dim, data_dim)
-        self.act = nn.GELU()
-        self.initialize_weights()
+        self.mlp_xt = self._build_mlp(data_dim, hidden_dim, latent_dim, xt_layers)
+        self.mlp_c = self._build_mlp(cond_dim, hidden_dim, latent_dim, c_layers)
+        self.mlp_ut = self._build_mlp(2 * latent_dim, hidden_dim, data_dim, ut_layers)
+        self._zero_init_output()
 
-    def initialize_weights(self):
-        # Zero-init output projection so the model starts near identity
-        nn.init.zeros_(self.output_proj.weight)
-        nn.init.zeros_(self.output_proj.bias)
-        # Zero-init FiLM projections so modulation starts as identity (scale=1, shift=0)
-        for proj in self.film_projs:
-            nn.init.zeros_(proj.weight)
-            nn.init.zeros_(proj.bias)
+    @staticmethod
+    def _build_mlp(in_dim, hidden_dim, out_dim, n_layers):
+        """[Linear -> GELU] x n_layers -> Linear (no activation on final layer)."""
+        layers = []
+        dim_in = in_dim
+        for _ in range(n_layers):
+            layers += [nn.Linear(dim_in, hidden_dim), nn.GELU()]
+            dim_in = hidden_dim
+        layers.append(nn.Linear(dim_in, out_dim))
+        return nn.Sequential(*layers)
+
+    def _zero_init_output(self):
+        last = self.mlp_ut[-1]
+        nn.init.zeros_(last.weight)
+        nn.init.zeros_(last.bias)
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x:    (B, data_dim) input data.
-            cond: (B, cond_dim) conditioning vector (t_emb + meta_emb).
-        Returns:
-            (B, data_dim) predicted vector field.
-        """
-        h = self.input_proj(x)
-        for linear, film_proj in zip(self.layers, self.film_projs):
-            h = linear(h)
-            scale, shift = film_proj(cond).chunk(2, dim=-1)
-            h = h * (1 + scale) + shift
-            h = self.act(h)
-        return self.output_proj(h)
+        xt_emb = self.mlp_xt(x)
+        c_emb = self.mlp_c(cond)
+        return self.mlp_ut(torch.cat([xt_emb, c_emb], dim=-1))
 
 #################################################################################
 #                   Sine/Cosine Positional Embedding Functions                  #
@@ -313,4 +309,45 @@ def get_model_cls(
         hidden_size=hidden_size,
         patch_size=patch_size,
         num_heads=num_heads,
+    )
+
+
+#################################################################################
+#                             ConditionedMLP Configs                            #
+#################################################################################
+
+
+@ornamentalist.configure(name="tx_model")
+def get_tx_model_cls(
+    name: Literal["TX-S", "TX-M", "TX-L"] = ornamentalist.Configurable["TX-S"],
+) -> functools.partial[ConditionedMLP]:  # fmt: skip
+    match name:
+        case "TX-S":
+            hidden_dim = 256
+            latent_dim = 256
+            xt_layers = 2
+            c_layers = 2
+            ut_layers = 2
+        case "TX-M":
+            hidden_dim = 512
+            latent_dim = 512
+            xt_layers = 3
+            c_layers = 3
+            ut_layers = 3
+        case "TX-L":
+            hidden_dim = 1024
+            latent_dim = 512
+            xt_layers = 4
+            c_layers = 4
+            ut_layers = 4
+        case _:
+            raise ValueError(f"Unknown TX model name: {name}")
+
+    return functools.partial(
+        ConditionedMLP,
+        hidden_dim=hidden_dim,
+        latent_dim=latent_dim,
+        xt_layers=xt_layers,
+        c_layers=c_layers,
+        ut_layers=ut_layers,
     )
