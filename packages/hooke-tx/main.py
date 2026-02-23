@@ -1,4 +1,5 @@
 from copy import deepcopy
+import os
 
 import hydra
 import lightning.pytorch as pl
@@ -7,23 +8,39 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 
 from hooke_tx.data.datamodule import DataModule
-from hooke_tx.trainer import TrainerModule
+from hooke_tx.trainer import TxPredictor
 
 
-@hydra.main(config_path="configs/template", config_name="example", version_base=None)
+user = os.getenv("USER")
+os.environ["WANDB_DIR"] = f"/rxrx/data/user/{user}/outgoing"
+
+
+@hydra.main(config_path="configs/templates/trek_drugscreen", config_name="cfg", version_base=None)
 def main(cfg: DictConfig) -> None:
-    pl.seed_everything(cfg.constants.seed)
-
     data_args = deepcopy(OmegaConf.to_container(cfg.data, resolve=True))
     task_args = deepcopy(OmegaConf.to_container(cfg.task, resolve=True))
+
     model_args = deepcopy(OmegaConf.to_container(cfg.model, resolve=True))
     trainer_args = deepcopy(OmegaConf.to_container(cfg.trainer, resolve=True))
-    accelerator_args = deepcopy(OmegaConf.to_container(cfg.accelerator, resolve=True))
+    compute_spec = deepcopy(OmegaConf.to_container(cfg.compute, resolve=True))
 
+    # Translate relative paths to absolute paths
+    _root = os.path.dirname(os.path.abspath(__file__))
+    for _key in ("selected_ensembl_gene_ids_path", "splits_path"):
+        _path = task_args.get(_key)
+        if _path and not os.path.isabs(_path):
+            task_args[_key] = os.path.normpath(os.path.join(_root, _path))
+    
+    # Set seed
+    pl.seed_everything(cfg.constants.seed)
+
+    # Initialize datamodule
     datamodule = DataModule(
         data_args=data_args,
         task_args=task_args,
-        trainer_args=trainer_args,
+        batch_size_train=trainer_args.pop("batch_size_train", 32),
+        batch_size_eval=trainer_args.pop("batch_size_eval", 8),
+        num_workers=trainer_args.pop("num_workers", 0),
     )
     datamodule.prepare_data()
     datamodule.setup()
@@ -32,16 +49,17 @@ def main(cfg: DictConfig) -> None:
     logger = WandbLogger(
         project=cfg.wandb.get("project", "Hooke-Tx"),
         entity=cfg.wandb.get("entity", "valencelabs"),
+        name=cfg.wandb.get("name", None),
     )
 
     trainer = pl.Trainer(
         max_epochs=trainer_args.get("max_epochs"),
         callbacks=callbacks,
         logger=logger,
-        **accelerator_args
+        **compute_spec
     )
-    
-    model = TrainerModule(
+
+    model = TxPredictor(
         covariates=datamodule.gather_covariates(),
         data_dim=datamodule.data_dim(),
         model_args=model_args,

@@ -12,7 +12,7 @@ SCHEDULER_DICT = {
 }
 
 
-class TrainerModule(pl.LightningModule):
+class TxPredictor(pl.LightningModule):
     def __init__(
         self,
         covariates: dict[str, list[str | float]],
@@ -24,7 +24,7 @@ class TrainerModule(pl.LightningModule):
         max_epochs: int = 100,
         warmup_epochs: int = 0,
         gradient_accumulation_steps: int = 1,
-        scheduler_args: dict[str, Any] = None,
+        scheduler: dict[str, Any] = None,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -35,7 +35,7 @@ class TrainerModule(pl.LightningModule):
         self.max_epochs = max_epochs
         self.warmup_epochs = warmup_epochs
         self.gradient_accumulation_steps = gradient_accumulation_steps
-        self.scheduler_args = scheduler_args
+        self.scheduler_args = scheduler
 
         self.architecture = TxGenBinder(
             covariates=covariates,
@@ -66,7 +66,7 @@ class TrainerModule(pl.LightningModule):
         if self.warmup_epochs > 0:
             warmup = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
-                start_factor=0.0,
+                start_factor=1e-7,
                 end_factor=1.0,
                 total_iters=self.warmup_epochs,
             )

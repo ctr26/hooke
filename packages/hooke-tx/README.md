@@ -8,9 +8,6 @@ Requires [uv](https://docs.astral.sh/uv/) and Python 3.10–3.12 (PyG wheels do 
 ```bash
 # Install dependencies into .venv
 uv sync
-
-# Optional: include dev tools (pytest, ruff, mypy, pre-commit)
-uv sync --extra dev
 ```
 
 Activate the environment:
@@ -19,4 +16,16 @@ Activate the environment:
 source .venv/bin/activate
 ```
 
-Or run commands without activating: `uv run python main.py`, `uv run ipython`, etc.
+## Running an experiment (trek_drugscreen template)
+
+From the repo root:
+
+```bash
+python main.py
+```
+
+The app uses Hydra with the `configs/templates/trek_drugscreen/cfg.yaml` template. Override any option from the CLI, e.g.:
+
+```bash
+python main.py trainer.max_epochs=1 trainer.batch_size_train=16
+```

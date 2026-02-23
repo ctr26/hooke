@@ -54,6 +54,9 @@ class TaskDataset(Dataset):
             MOL_ONLY: {},
         }
         self.indices_cache = {src: {} for src in metadata_dict}
+        self._gene_pert_indices = {}
+        self._mol_pert_indices = {}
+        self._build_pert_indices()
 
         self.cache_base_state_indices()
 
@@ -78,7 +81,7 @@ class TaskDataset(Dataset):
         # Embed expression
         target_embedding = self.embed(target_expression) if self.embedder is not None else np.nan
         
-        base_expression, base_embedding, routing = self.retrieve_base_state(src, metadata) if self.sample_base_states != "none" else np.nan
+        base_expression, base_embedding, routing = self.retrieve_base_state(src, metadata)
 
         return {
             "base_expression": base_expression,
@@ -93,9 +96,13 @@ class TaskDataset(Dataset):
         """
         Matches a base state to a given metadata row.
         """
+        target_state_id = "_".join([p[0] for p in metadata[PERTURBATIONS]])
+        
+        if self.sample_base_states == "noise":
+            return np.nan, np.nan, f"noise:{target_state_id}"
+
         # Sample routing
         base_state_type, base_state_hash, base_state_id = self.sample_routing(src, metadata)
-        target_state_id = "_".join([p["type"] for p in metadata[PERTURBATIONS]])
         routing = f"{base_state_id}:{target_state_id}"
 
         if base_state_hash in self.base_state_cache[base_state_type].keys():
@@ -107,26 +114,23 @@ class TaskDataset(Dataset):
             if (c, e) in self.indices_cache[src]:
                 shared_indices = self.indices_cache[src][(c, e)]
             else:
-                shared_indices = np.where((self.metadata_dict[src][CELL_TYPE] == c) & (self.metadata_dict[src][EXPERIMENT] == e))[0]
+                context_mask = (np.atleast_1d(self.metadata_dict[src][CELL_TYPE]) == c) & (np.atleast_1d(self.metadata_dict[src][EXPERIMENT]) == e)
+                shared_indices = np.flatnonzero(context_mask)
                 self.indices_cache[src][(c, e)] = shared_indices
-            
+
             if base_state_type == EMPTY:
-                empty_indices = np.where(self.metadata_dict[src][EMPTY])[0]
-                selected_indices = list(set(empty_indices) & set(shared_indices))
+                empty_indices = np.flatnonzero(np.atleast_1d(self.metadata_dict[src][EMPTY]))
+                selected_indices = np.intersect1d(shared_indices, empty_indices)
             elif base_state_type == GENE_ONLY:
-                gene_s = metadata[GENE_PERT]
-                if len(gene_s) > 1:
-                    gene_s = random.choice(gene_s)
-
-                gene_indices = np.where(self.metadata_dict[src][GENE_PERT] == gene_s)[0]
-                selected_indices = list(set(gene_indices) & set(shared_indices))
+                gene_s = random.choice(metadata[GENE_PERT])
+                gene_key = (gene_s[1], gene_s[2])
+                gene_indices = self._gene_pert_indices[src].get(gene_key, np.array([], dtype=np.intp))
+                selected_indices = np.intersect1d(shared_indices, gene_indices)
             elif base_state_type == MOL_ONLY:
-                mol_s = metadata[MOL_PERT]
-                if len(mol_s) > 1:
-                    mol_s = random.choice(mol_s)
-
-                mol_indices = np.where(self.metadata_dict[src][MOL_PERT] == mol_s)[0]
-                selected_indices = list(set(mol_indices) & set(shared_indices))
+                mol_s = random.choice(metadata[MOL_PERT])
+                mol_key = (mol_s[1], mol_s[2])
+                mol_indices = self._mol_pert_indices[src].get(mol_key, np.array([], dtype=np.intp))
+                selected_indices = np.intersect1d(shared_indices, mol_indices)
 
             self.base_state_cache[base_state_type][base_state_hash] = selected_indices
 
@@ -166,7 +170,7 @@ class TaskDataset(Dataset):
 
                 if base_state_type == GENE_ONLY:
                     base_state_gene = random.choice(metadata[GENE_PERT])
-                    base_state_hash = base_state_hash + ([base_state_gene],)
+                    base_state_hash = base_state_hash + (base_state_gene[1], base_state_gene[2])
                     base_state_id = "genetic"
             elif metadata[MOL_ONLY]:
                 p_from_empty, p_from_mol = self.routing_args["mol_mol"][EMPTY], self.routing_args["mol_mol"][MOL_ONLY]
@@ -175,7 +179,7 @@ class TaskDataset(Dataset):
 
                 if base_state_type == MOL_ONLY:
                     base_state_mol = random.choice(metadata[MOL_PERT])
-                    base_state_hash = base_state_hash + ([base_state_mol],)
+                    base_state_hash = base_state_hash + (base_state_mol[1], base_state_mol[2],)
                     base_state_id = "compound"
             else:
                 p_from_empty, p_from_gene = self.routing_args["gene_mol"][EMPTY], self.routing_args["gene_mol"][GENE_ONLY]
@@ -184,7 +188,7 @@ class TaskDataset(Dataset):
                 
                 if base_state_type == GENE_ONLY:
                     base_state_gene = random.choice(metadata[GENE_PERT])
-                    base_state_hash = base_state_hash + ([base_state_gene],)
+                    base_state_hash = base_state_hash + (base_state_gene[1], base_state_gene[2])
                     base_state_id = "genetic"
 
             return base_state_type, base_state_hash, base_state_id
@@ -208,13 +212,36 @@ class TaskDataset(Dataset):
         # TODO...
         raise NotImplementedError
 
+    def _pert_keys(self, val: Any, key_indices: tuple[int, ...]) -> list[tuple]:
+        """Return list of hashable keys for a GENE_PERT or MOL_PERT value (tuple or list of tuples)."""
+        if val is None:
+            return []
+        if isinstance(val, tuple):
+            return [tuple(val[i] for i in key_indices)]
+        return [tuple(t[i] for i in key_indices) for t in val]
+
+    def _build_pert_indices(self) -> None:
+        """Precompute gene_pert and mol_pert key -> row indices per source for O(1) lookup."""
+        gene_key_ix = (1, 2)
+        mol_key_ix = (1, 2)
+        for src, rows in self.metadata_map.items():
+            gene_map: dict[tuple, list[int]] = {}
+            mol_map: dict[tuple, list[int]] = {}
+            for i, row in enumerate(rows):
+                for k in self._pert_keys(row.get(GENE_PERT), gene_key_ix):
+                    gene_map.setdefault(k, []).append(i)
+                for k in self._pert_keys(row.get(MOL_PERT), mol_key_ix):
+                    mol_map.setdefault(k, []).append(i)
+            self._gene_pert_indices[src] = {k: np.array(v) for k, v in gene_map.items()}
+            self._mol_pert_indices[src] = {k: np.array(v) for k, v in mol_map.items()}
+
     def cache_base_state_indices(self) -> None:
         pass
 
     def setup(
         self,
         split_indices_dict: dict[str, list[int]],
-        selected_genes: list[str],
+        selected_ensembl_gene_ids: list[str],
         composition_args: dict[str, bool],
         routing_args: dict[str, dict[str, float]],
         sample_base_states: str = "random",
@@ -247,12 +274,13 @@ class TaskDataset(Dataset):
                 if use_split_filter and src in split_indices_dict and len(split_indices_dict[src]) > 0:
                     if idx not in split_indices_dict[src]:
                         continue
+
                 self.source_index_map.append((src, idx))
 
-        # Identify gene indices
+        # Identify ensembl gene id indices
         self.gene_index_map = {}
         for src, src_var in self.var_dict.items():
-            gene_col = src_var["ensembl_gene_id"]
-            gene_list = gene_col.to_list() if hasattr(gene_col, "to_list") else gene_col.tolist()
-            assert all(g in gene_list for g in selected_genes), f"Missing genes in {src}"
-            self.gene_index_map[src] = np.array([gene_list.index(g) for g in selected_genes])
+            ensembl_gene_id_col = src_var["ensembl_gene_id"]
+            ensembl_gene_id_list = ensembl_gene_id_col.to_list() if hasattr(ensembl_gene_id_col, "to_list") else ensembl_gene_id_col.tolist()
+            assert all(g in ensembl_gene_id_list for g in selected_ensembl_gene_ids), f"Missing ensembl gene ids in {src}"
+            self.gene_index_map[src] = np.array([ensembl_gene_id_list.index(g) for g in selected_ensembl_gene_ids])

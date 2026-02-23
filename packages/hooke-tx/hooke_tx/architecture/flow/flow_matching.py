@@ -57,9 +57,9 @@ class FlowMatching(nn.Module):
         t = torch.rand(
             x0.shape[0], dtype=torch.float32, device=x0.device
         )  # shape (B,) - [0,1)
-        t = t.reshape(-1, 1).expand_as(x0)  # (B,) -> (B, D)
+        t_expanded = t.reshape(-1, 1).expand_as(x0)  # (B,) -> (B, D)
 
-        xt = torch.lerp(x0, x1, t)
+        xt = torch.lerp(x0, x1, t_expanded)
         ut = x1 - x0
 
         ut_pred = self.conditioning_model(xt, t, covariates)

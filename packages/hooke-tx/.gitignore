@@ -1,6 +1,9 @@
+**/__pycache__/
+*.py[cod]
+.vscode/
 wandb/
 
-output/
-output_sweep/
+outputs/
+outputs_sweep/
 
 loc-*

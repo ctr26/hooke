@@ -19,5 +19,7 @@ SOURCE: str = "source"
 INDEX: str = "index"
 
 DATA_SOURCES = {
-    "training_trek__v1_0": "/rxrx/scratch/hooke_tx/trek/training_trek__v1_0"
+    "training_trek__v1_0": "/rxrx/scratch/hooke_tx/trek/training_trek__v1_0",
+    "drugscreen__trekseq__v1_1": "/rxrx/scratch/hooke_tx/trek/drugscreen__trekseq__v1_1",
+    "cross_cell_line_trek__v1_2": "/rxrx/scratch/hooke_tx/trek/cross_cell_line_trek__v1_2"
 }

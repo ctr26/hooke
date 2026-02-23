@@ -5,7 +5,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from hooke_tx.architecture.conditioning.embedders import Identity, Fourier, OneHotEmbedder
+from hooke_tx.architecture.conditioning.embedders import Identity, Projection, Fourier, OneHotEmbedder
 from hooke_tx.architecture.modules.mlp import MLPBlock
 
 from hooke_tx.data.constants import GENE_PERT, MOL_PERT, DOSE, EMPTY, ROUTING, ASSAY, CELL_TYPE, EXPERIMENT, WELL
@@ -13,6 +13,7 @@ from hooke_tx.data.constants import GENE_PERT, MOL_PERT, DOSE, EMPTY, ROUTING, A
 
 EMBEDDER_DICT = {
     "identity": Identity,
+    "projection": Projection,
     "fourier": Fourier,
     "one-hot": OneHotEmbedder,
 }
@@ -24,12 +25,13 @@ class BaseConditioning(nn.Module):
     """
     def __init__(
         self,
+        data_dim: int,
         covariates: dict[str, list[str | float]],
         embedding_args: dict[str, dict[str, Any]],
     ):
         super().__init__()
         # Remove covariates that only appear once
-        covariates = {k: v for k, v in covariates.items() if len(v) > 1}
+        # covariates = {k: v for k, v in covariates.items() if len(v) > 1}
 
         # Define embedders for covariates; map config keys to internal names
         self.embedder_dict = nn.ModuleDict()
@@ -43,18 +45,21 @@ class BaseConditioning(nn.Module):
                 continue
             
             cov_list = covariates.get(input_type, [])
-            self.embedder_dict[input_type] = self._parse_embedder_args(embedder_type, cov_list, args)
+            self.embedder_dict[input_type] = self._parse_embedder_args(embedder_type, cov_list, data_dim, args)
 
 
     def _parse_embedder_args(
         self,
         embedder_type: str,
         cov_list: list,
+        data_dim: int,
         args: dict[str, Any],
     ) -> nn.Module:
         """Build one embedder; only pass kwargs the class accepts."""
         if embedder_type == "identity":
             return Identity()
+        elif embedder_type == "projection":
+            return Projection(in_dim=data_dim, dim=args.get("dim"))
         elif embedder_type == "fourier":
             return Fourier(dim=args.get("dim"), bandwidth=args.get("bandwidth", 1))
         elif embedder_type == "one-hot":
@@ -67,25 +72,20 @@ class BaseConditioning(nn.Module):
         embedding_dict = {}
         for input_name in ["time", "xt", ROUTING, ASSAY, CELL_TYPE, EXPERIMENT, WELL]:
             if input_name in self.embedder_dict:
-                embedding_dict[input_name] = self.embedder_dict[input_name].forward(pre_embedding_dict[input_name])
+                embedding_dict[input_name] = self.embedder_dict[input_name](pre_embedding_dict[input_name])
                 
         # batch perturbations of different length
         batched_gene_perts = []
-        gene_lengths = []
         for perts in pre_embedding_dict[GENE_PERT]:
             length = len(perts)
-            batched_gene_perts.extend([p["ensembl_gene_id"] for p in perts] + [EMPTY] * (3 - length))
+            batched_gene_perts.extend([p[1] for p in perts] + [EMPTY] * (3 - length))
 
         batched_mol_perts = []
         batched_mol_doses = []
         for perts in pre_embedding_dict[MOL_PERT]:
             length = len(perts)
-            batched_mol_perts.extend([p["smiles"] for p in perts] + [EMPTY] * (3 - length))
-            batched_mol_doses.extend([p["concentration"] for p in perts] + [EMPTY] * (3 - length))
-
-        batched_gene_perts = torch.tensor(batched_gene_perts)
-        batched_mol_perts = torch.tensor(batched_mol_perts)
-        batched_mol_doses = torch.tensor(batched_mol_doses)
+            batched_mol_perts.extend([p[1] for p in perts] + [EMPTY] * (3 - length))
+            batched_mol_doses.extend([p[2] for p in perts] + [EMPTY] * (3 - length))
         
         # Embed
         embedded_batched_gene_perts = self.embedder_dict[GENE_PERT].forward(batched_gene_perts)
@@ -112,6 +112,7 @@ class ConditioningMLP(BaseConditioning):
         post_layers: int = 2,
     ):
         super().__init__(
+            data_dim=data_dim,
             covariates=covariates,
             embedding_args=embedding_args,
         )
@@ -119,6 +120,9 @@ class ConditioningMLP(BaseConditioning):
         self.proj_dict = nn.ModuleDict()
         embedding_args["xt"]["dim"] = data_dim
         for input_type, args in embedding_args.items():
+            if args is None:
+                continue
+            
             embedding_dim = args.get("dim")
             if hidden_dim != embedding_dim:
                 self.proj_dict[input_type] = nn.Linear(embedding_dim, hidden_dim)
@@ -171,7 +175,7 @@ class ConditioningMLP(BaseConditioning):
 
         mlp_p_layers = [
             MLPBlock(
-                in_dim=2*hidden_dim,
+                in_dim=3*hidden_dim,
                 out_dim=hidden_dim,
             )
         ]
@@ -244,8 +248,8 @@ class ConditioningMLP(BaseConditioning):
 
         # mol perturbations
         mol_dose_embeddings = embedding_dict[MOL_PERT] + embedding_dict[DOSE]
-        flattened_mol_dose_embeddings = mol_dose_embeddings.view(mol_dose_embeddings.size(0), -1)
-        flattened_gene_embeddings = embedding_dict[GENE_PERT].view(embedding_dict[GENE_PERT].size(0), -1)
+        flattened_mol_dose_embeddings = mol_dose_embeddings.permute(1, 0, 2).reshape(mol_dose_embeddings.size(1), -1)
+        flattened_gene_embeddings = embedding_dict[GENE_PERT].permute(1, 0, 2).reshape(embedding_dict[GENE_PERT].size(1), -1)
 
         xt_combined = torch.cat(
             [

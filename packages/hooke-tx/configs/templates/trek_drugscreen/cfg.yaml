@@ -4,13 +4,14 @@ constants:
 wandb:
   project: Hooke-Tx
   entity: valencelabs
+  name: trek_drugscreen_v1_1_fold_0
 
 data:
   data_sources:
-    fit: training_trek__v1_0
-    validate: null
-    test: null
-    predict: null
+    fit: drugscreen__trekseq__v1_1
+    validate: drugscreen__trekseq__v1_1
+    test: drugscreen__trekseq__v1_1
+    predict: ${data.data_sources.test}
 
   cache_dir: /rxrx/scratch/hooke_tx
   
@@ -20,53 +21,55 @@ data:
   embedder: null
 
 task: 
-  splits_path: null
-  selected_genes_path: /mnt/ps/home/CORP/frederik.wenkel/projects/hooke-tx/configs/template/selected_ens_ids.txt
+  splits_path: configs/templates/trek_drugscreen/fold_0.json
+  selected_ensembl_gene_ids_path: configs/templates/selected_ens_ids.txt
 
-  # balanced & diverse
-  composition:
-    empty: false
-    neg_control: true
-    pos_control: true
-    gene_only: true
-    mol_only: true
-  routing:
-    gene_mol:
-      empty: 0.5
-      gene_only: 0.5
-    mol_mol:
-      empty: 0.5
-      mol_only: 0.5
-    gene_gene:
-      empty: 0.5
-      gene_only: 0.5
-
-  # drugscreen
+  # # balanced & diverse
   # composition:
   #   empty: false
-  #   neg_control: false
-  #   pos_control: false
-  #   gene_only: false
+  #   neg_control: true
+  #   pos_control: true
+  #   gene_only: true
   #   mol_only: true
   # routing:
   #   gene_mol:
-  #     from_empty: 0.0
-  #     from_gene: 1.0
+  #     empty: 0.5
+  #     gene_only: 0.5
   #   mol_mol:
-  #     from_empty: 1.0
-  #     from_mol: 0.0
-  #   gene_gene: null
+  #     empty: 0.5
+  #     mol_only: 0.5
+  #   gene_gene:
+  #     empty: 0.5
+  #     gene_only: 0.5
+
+  composition:
+    empty: false
+    negative_control: false
+    positive_control: false
+    gene_only: false
+    mol_only: true
+  routing:
+    gene_mol:
+      empty: 0.0
+      gene_only: 1.0
+    mol_mol:
+      empty: 0.0
+      mol_only: 1.0
+    gene_gene:
+      empty: 0.0
+      gene_only: 1.0
 
 model:
   embedding_args:
     time:
       type: fourier
-      dim: 64
+      dim: 128
     xt:
-      type: identity
+      type: projection
+      dim: 128
     gene_pert: &one_hot
       type: one-hot
-      dim: 64
+      dim: 128
     effect_class: null
     mol_pert: *one_hot
     concentration: *one_hot
@@ -88,21 +91,20 @@ model:
 
   
 trainer:
-  seed: ${constants.seed}
   num_workers: 0
-  learning_rate: 1e-4
+  lr: 1e-4
   weight_decay: 1e-4
   max_grad_norm: 1.0
   batch_size_train: 32
   batch_size_eval: 8
-  max_epochs: 1
-  warmup_epochs: 0
+  max_epochs: 10
+  warmup_epochs: 1
   gradient_accumulation_steps: 1
   scheduler: null
 
-accelerator:
-  type: auto
-  devices: 1
+compute:
+  accelerator: auto
+  devices: auto
   precision: 32
 
 checkpoint:

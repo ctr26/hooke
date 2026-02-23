@@ -12,6 +12,14 @@ class Identity(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return x
 
+class Projection(nn.Module):
+    def __init__(self, in_dim: int, dim: int):
+        super().__init__()
+        self.proj = nn.Linear(in_dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.proj(x)
+
 
 class Fourier(nn.Module):
     """
