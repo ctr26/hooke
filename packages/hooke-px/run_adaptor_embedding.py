@@ -1,6 +1,6 @@
-"""Worker script for adapter embedding extraction.
+"""Worker script for transformer encoder embedding extraction.
 
-Extracts TransformerAdaptor embeddings for different conditioning scenarios,
+Extracts TransformerEncoder embeddings for different conditioning scenarios,
 without running the full DiT model or generating images.
 
 Three embedding cases:
@@ -24,12 +24,12 @@ import torch
 import zarr
 from torch.utils.data import DataLoader
 
-from adaptor import DataFrameTokenizer, TransformerAdaptor
+from context_encoders import DataFrameTokenizer, TransformerEncoder
 from main import (
     REC_ID_DIM,
     CONCENTRATION_DIM,
     CELL_TYPE_DIM,
-    IMAGE_TYPE_DIM,
+    ASSAY_TYPE_DIM,
     EXPERIMENT_DIM,
     WELL_ADDRESS_DIM,
 )
@@ -47,57 +47,57 @@ def strip_orig_mod_prefix(state_dict: dict) -> dict:
     return new_state_dict
 
 
-def load_adaptor(
+def load_transformer_encoder(
     checkpoint_path: str,
     device: torch.device,
     hidden_size: int = 1152,
-) -> tuple[TransformerAdaptor, DataFrameTokenizer]:
-    """Load only TransformerAdaptor and tokenizer from checkpoint (not full DiT).
+) -> tuple[TransformerEncoder, DataFrameTokenizer]:
+    """Load only TransformerEncoder and tokenizer from checkpoint (not full DiT).
 
     Args:
         checkpoint_path: Path to the checkpoint file.
-        device: Device to load the adaptor on.
+        device: Device to load the transformer encoder on.
         hidden_size: Hidden size of the model (default 1152 for DiT-XL/2).
 
     Returns:
-        Tuple of (adaptor, tokenizer)
+        Tuple of (transformer_encoder, tokenizer)
     """
     state = torch.load(checkpoint_path, weights_only=False, map_location=device)
 
     # Restore tokenizer from checkpoint
     tokenizer = DataFrameTokenizer.from_state_dict(state["tokenizer"])
 
-    # Build adaptor with fixed vocab sizes (must match training dimensions)
-    adaptor = TransformerAdaptor(
+    # Build transformer encoder with fixed vocab sizes (must match training dimensions)
+    transformer_encoder = TransformerEncoder(
         hidden_size=hidden_size,
         rec_id_dim=REC_ID_DIM,
         concentration_dim=CONCENTRATION_DIM,
         cell_type_dim=CELL_TYPE_DIM,
         experiment_dim=EXPERIMENT_DIM,
-        image_type_dim=IMAGE_TYPE_DIM,
+        assay_type_dim=ASSAY_TYPE_DIM,
         well_address_dim=WELL_ADDRESS_DIM,
     )
 
-    # Extract adaptor weights from EMA state_dict
+    # Extract transformer encoder weights from EMA state_dict
     ema_state = strip_orig_mod_prefix(state["ema"])
 
-    # The EMA state has keys like "module.meta_adaptor.rec_id_embedder.embedding_table.weight"
-    # We need to extract just the meta_adaptor part
-    adaptor_state = {}
-    prefix = "module.meta_adaptor."
+    # The EMA state has keys like "module.transformer_encoder.rec_id_embedder.embedding_table.weight"
+    # We need to extract just the transformer_encoder part
+    transformer_encoder_state = {}
+    prefix = "module.transformer_encoder."
     for key, value in ema_state.items():
         if key.startswith(prefix):
             new_key = key[len(prefix) :]
-            adaptor_state[new_key] = value
+            transformer_encoder_state[new_key] = value
 
-    adaptor.load_state_dict(adaptor_state)
-    adaptor.to(device)
-    adaptor.eval()
+    transformer_encoder.load_state_dict(transformer_encoder_state)
+    transformer_encoder.to(device)
+    transformer_encoder.eval()
 
     log.info(
-        f"Loaded adaptor with {sum(p.numel() for p in adaptor.parameters())} parameters"
+        f"Loaded transformer encoder with {sum(p.numel() for p in transformer_encoder.parameters())} parameters"
     )
-    return adaptor, tokenizer
+    return transformer_encoder, tokenizer
 
 
 class MetadataDataset(torch.utils.data.Dataset):
@@ -139,19 +139,19 @@ class MetadataDataset(torch.utils.data.Dataset):
 
 @torch.inference_mode()
 def compute_embeddings(
-    adaptor: TransformerAdaptor,
+    transformer_encoder: TransformerEncoder,
     batch_meta: dict,
     device: torch.device,
 ) -> np.ndarray:
-    """Forward pass through adaptor only - returns (B, hidden_size) embeddings."""
+    """Forward pass through transformer_encoder only - returns (B, hidden_size) embeddings."""
     meta = {k: v.to(device) for k, v in batch_meta.items()}
-    embedding = adaptor(
+    embedding = transformer_encoder(
         rec_id=meta["rec_id"],
         concentration=meta["concentration"],
         comp_mask=meta["comp_mask"],
         cell_type=meta["cell_type"],
         experiment_label=meta["experiment_label"],
-        image_type=meta["image_type"],
+        assay_type=meta["assay_type"],
         well_address=meta["well_address"],
     )
     return embedding.cpu().numpy()
@@ -159,7 +159,7 @@ def compute_embeddings(
 
 @torch.inference_mode()
 def process_case2_batch(
-    adaptor: TransformerAdaptor,
+    transformer_encoder: TransformerEncoder,
     batch_meta: dict,
     num_well_addresses: int,
     device: torch.device,
@@ -167,7 +167,7 @@ def process_case2_batch(
     """For each row, compute embeddings for all well_address values.
 
     Args:
-        adaptor: The TransformerAdaptor model.
+        transformer_encoder: The TransformerEncoder model.
         batch_meta: Batch of tokenized metadata.
         num_well_addresses: Number of well addresses to iterate over.
         device: Device to compute on.
@@ -187,13 +187,13 @@ def process_case2_batch(
     well_addresses = torch.arange(num_well_addresses, device=device).repeat(B)
     expanded_meta["well_address"] = well_addresses
 
-    embedding = adaptor(
+    embedding = transformer_encoder(
         rec_id=expanded_meta["rec_id"],
         concentration=expanded_meta["concentration"],
         comp_mask=expanded_meta["comp_mask"],
         cell_type=expanded_meta["cell_type"],
         experiment_label=expanded_meta["experiment_label"],
-        image_type=expanded_meta["image_type"],
+        assay_type=expanded_meta["assay_type"],
         well_address=expanded_meta["well_address"],
     )
 
@@ -268,9 +268,9 @@ def run_worker(worker_dir: str, config_path: str):
 
     log.info(f"Processing {len(df_incomplete)} incomplete rows out of {len(df)} total")
 
-    # Load adaptor
+    # Load transformer encoder
     log.info(f"Loading checkpoint: {checkpoint_path}")
-    adaptor, tokenizer = load_adaptor(checkpoint_path, device, hidden_size)
+    transformer_encoder, tokenizer = load_transformer_encoder(checkpoint_path, device, hidden_size)
 
     # Determine which dimensions to marginalize based on case
     if case == 1:
@@ -311,7 +311,7 @@ def run_worker(worker_dir: str, config_path: str):
     )
 
     # Open shared zarr array
-    emb_zarr = zarr.open(f"{zarr_dir}/adaptor_emb.zarr", mode="r+")
+    emb_zarr = zarr.open(f"{zarr_dir}/transformer_encoder_emb.zarr", mode="r+")
 
     # Process batches with incremental progress saving
     num_well_addresses = len(tokenizer.well_address_tokenizer)
@@ -324,11 +324,11 @@ def run_worker(worker_dir: str, config_path: str):
         if case == 2:
             # Compute embeddings for all well addresses
             embeddings = process_case2_batch(
-                adaptor, batch["meta"], num_well_addresses, device
+                transformer_encoder, batch["meta"], num_well_addresses, device
             )
         else:
             # Standard embedding computation
-            embeddings = compute_embeddings(adaptor, batch["meta"], device)
+            embeddings = compute_embeddings(transformer_encoder, batch["meta"], device)
 
         # Write to zarr
         batch_completed = []

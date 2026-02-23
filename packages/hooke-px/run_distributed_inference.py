@@ -15,7 +15,7 @@ Input parquet must have columns:
     - image_path: path to zarr image
     - cell_type: cell type string
     - experiment_label: experiment string
-    - image_type: image type string
+    - assay_type: assay type string
     - well_address: well address string
     - rec_id: list of compound IDs
     - concentration: list of concentrations
@@ -54,7 +54,7 @@ REQUIRED_COLUMNS = [
     "image_path",
     "cell_type",
     "experiment_label",
-    "image_type",
+    "assay_type",
     "well_address",
     "rec_id",
     "concentration",

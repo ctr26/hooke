@@ -33,7 +33,7 @@ from main import (
     REC_ID_DIM,
     CONCENTRATION_DIM,
     CELL_TYPE_DIM,
-    IMAGE_TYPE_DIM,
+    ASSAY_TYPE_DIM,
     EXPERIMENT_DIM,
     WELL_ADDRESS_DIM,
 )
@@ -102,7 +102,7 @@ def load_model(
         concentration_dim=CONCENTRATION_DIM,
         cell_type_dim=CELL_TYPE_DIM,
         experiment_dim=EXPERIMENT_DIM,
-        image_type_dim=IMAGE_TYPE_DIM,
+        assay_type_dim=ASSAY_TYPE_DIM,
         well_address_dim=WELL_ADDRESS_DIM,
         pad_length=tokenizer.pad_length,
     )
@@ -232,10 +232,10 @@ def run_worker(worker_dir: str, config_path: str):
 
     # Load chunk metadata
     df = pl.read_parquet(chunk_path)
-    image_type = df["image_type"].unique()
-    assert len(image_type) == 1, "All rows must have the same image type"
+    assay_type = df["assay_type"].unique()
+    assert len(assay_type) == 1, "All rows must have the same assay type"
 
-    image_type = image_type[0]
+    assay_type = assay_type[0]
     incomplete_mask = ~df["complete"]
     df_incomplete = df.filter(incomplete_mask)
 
@@ -250,7 +250,7 @@ def run_worker(worker_dir: str, config_path: str):
     model, vae, tokenizer = load_model(checkpoint_path, device)
 
     # Initialize feature extractors
-    if image_type == "brightfield_3channel":
+    if assay_type == "brightfield_3channel":
         phenom = PH2BFDetector(device=device)
         log.info("Using PH2BF Embedding")
     else:
