@@ -19,9 +19,23 @@ EMBEDDER_DICT = {
 }
 
 
-class BaseConditioning(nn.Module):
+def _embedder_output_dim(
+    embedder_type: str,
+    input_type: str,
+    data_dim: int,
+    args: dict[str, Any],
+) -> int:
+    """Output feature dim for an embedder (for building proj_dict)."""
+    if embedder_type == "identity":
+        return data_dim if input_type == "xt" else 1
+    
+    return args.get("dim")
+
+
+class EmbeddingModule(nn.Module):
     """
-    Base class for conditioning models.
+    Embeds raw inputs (time, xt, covariates) into a dict of vectors.
+    Output dims can vary per key; use ConditioningModule's proj step to align.
     """
     def __init__(
         self,
@@ -30,23 +44,24 @@ class BaseConditioning(nn.Module):
         embedding_args: dict[str, dict[str, Any]],
     ):
         super().__init__()
-        # Remove covariates that only appear once
-        # covariates = {k: v for k, v in covariates.items() if len(v) > 1}
-
-        # Define embedders for covariates; map config keys to internal names
         self.embedder_dict = nn.ModuleDict()
+        self._output_dims: dict[str, int] = {}
+
         for input_type, args in list(embedding_args.items()):
             if args is None:
                 continue
-            
+
             embedder_type = args.get("type")
-            
             if input_type not in covariates and input_type not in ("time", "xt"):
                 continue
-            
-            cov_list = covariates.get(input_type, [])
-            self.embedder_dict[input_type] = self._parse_embedder_args(embedder_type, cov_list, data_dim, args)
 
+            cov_list = covariates.get(input_type, [])
+            self.embedder_dict[input_type] = self._parse_embedder_args(
+                embedder_type, cov_list, data_dim, args, input_type
+            )
+            self._output_dims[input_type] = _embedder_output_dim(
+                embedder_type, input_type, data_dim, args
+            )
 
     def _parse_embedder_args(
         self,
@@ -54,8 +69,8 @@ class BaseConditioning(nn.Module):
         cov_list: list,
         data_dim: int,
         args: dict[str, Any],
+        input_type: str,
     ) -> nn.Module:
-        """Build one embedder; only pass kwargs the class accepts."""
         if embedder_type == "identity":
             return Identity()
         elif embedder_type == "projection":
@@ -66,15 +81,16 @@ class BaseConditioning(nn.Module):
             return OneHotEmbedder(labels=cov_list, dim=args.get("dim"))
         else:
             raise ValueError(f"Unknown embedder type: {embedder_type}")
-        return embedder
 
-    def forward(self, pre_embedding_dict: dict[str, torch.Tensor]) -> torch.Tensor:
+    def get_output_dims(self) -> dict[str, int]:
+        return dict(self._output_dims)
+
+    def forward(self, pre_embedding_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         embedding_dict = {}
         for input_name in ["time", "xt", ROUTING, ASSAY, CELL_TYPE, EXPERIMENT, WELL]:
             if input_name in self.embedder_dict:
                 embedding_dict[input_name] = self.embedder_dict[input_name](pre_embedding_dict[input_name])
-                
-        # batch perturbations of different length
+
         batched_gene_perts = []
         for perts in pre_embedding_dict[GENE_PERT]:
             length = len(perts)
@@ -86,21 +102,23 @@ class BaseConditioning(nn.Module):
             length = len(perts)
             batched_mol_perts.extend([p[1] for p in perts] + [EMPTY] * (3 - length))
             batched_mol_doses.extend([p[2] for p in perts] + [EMPTY] * (3 - length))
-        
-        # Embed
-        embedded_batched_gene_perts = self.embedder_dict[GENE_PERT].forward(batched_gene_perts)
-        embedded_batched_mol_perts = self.embedder_dict[MOL_PERT].forward(batched_mol_perts)
-        embedded_batched_mol_doses = self.embedder_dict[DOSE].forward(batched_mol_doses)
 
-        # Unbatch by using .view leveraging that all perturbations were padded to lenght 3
-        embedding_dict[GENE_PERT] = embedded_batched_gene_perts.view(3, -1, embedded_batched_gene_perts.size(-1))
-        embedding_dict[MOL_PERT] = embedded_batched_mol_perts.view(3, -1, embedded_batched_mol_perts.size(-1))
-        embedding_dict[DOSE] = embedded_batched_mol_doses.view(3, -1, embedded_batched_mol_doses.size(-1))
+        embedded_gene_perts = self.embedder_dict[GENE_PERT](batched_gene_perts)
+        embedded_mol_perts = self.embedder_dict[MOL_PERT](batched_mol_perts)
+        embedded_mol_doses = self.embedder_dict[DOSE](batched_mol_doses)
+
+        embedding_dict[GENE_PERT] = embedded_gene_perts.view(3, -1, embedded_gene_perts.size(-1))
+        embedding_dict[MOL_PERT] = embedded_mol_perts.view(3, -1, embedded_mol_perts.size(-1))
+        embedding_dict[DOSE] = embedded_mol_doses.view(3, -1, embedded_mol_doses.size(-1))
         
         return embedding_dict
 
 
-class ConditioningMLP(BaseConditioning):
+class ConditioningMLP(nn.Module):
+    """
+    Conditioning module: takes embedding_dict, projects to hidden_dim, then fuses via MLPs.
+    Uses EmbeddingModule for the embedding step; proj_dict is the first step here.
+    """
     def __init__(
         self,
         covariates: dict[str, list[str | float]],
@@ -111,19 +129,16 @@ class ConditioningMLP(BaseConditioning):
         pre_layers: int = 2,
         post_layers: int = 2,
     ):
-        super().__init__(
+        super().__init__()
+        self.embedder = EmbeddingModule(
             data_dim=data_dim,
             covariates=covariates,
             embedding_args=embedding_args,
         )
+        output_dims = self.embedder.get_output_dims()
 
         self.proj_dict = nn.ModuleDict()
-        embedding_args["xt"]["dim"] = data_dim
-        for input_type, args in embedding_args.items():
-            if args is None:
-                continue
-            
-            embedding_dim = args.get("dim")
+        for input_type, embedding_dim in output_dims.items():
             if hidden_dim != embedding_dim:
                 self.proj_dict[input_type] = nn.Linear(embedding_dim, hidden_dim)
 
@@ -236,6 +251,16 @@ class ConditioningMLP(BaseConditioning):
         )
         self.post_mlp = nn.Sequential(*post_mlp_layers)
 
+    def _project_embeddings(self, embedding_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        """First step of conditioning: align all embedding dims to hidden_dim."""
+        out = {}
+        for k, v in embedding_dict.items():
+            if k in self.proj_dict:
+                out[k] = self.proj_dict[k](v)
+            else:
+                out[k] = v
+        return out
+
     def forward(
         self,
         xt: torch.Tensor,
@@ -244,7 +269,8 @@ class ConditioningMLP(BaseConditioning):
     ):
         pre_embedding_dict = {"time": t, "xt": xt}
         pre_embedding_dict.update(covariates)
-        embedding_dict = super().forward(pre_embedding_dict)
+        embedding_dict = self.embedder(pre_embedding_dict)
+        embedding_dict = self._project_embeddings(embedding_dict)
 
         # mol perturbations
         mol_dose_embeddings = embedding_dict[MOL_PERT] + embedding_dict[DOSE]

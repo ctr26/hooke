@@ -65,8 +65,7 @@ model:
       type: fourier
       dim: 128
     xt:
-      type: projection
-      dim: 128
+      type: identity
     gene_pert: &one_hot
       type: one-hot
       dim: 128
