@@ -157,7 +157,7 @@ class JointFlowMatching(nn.Module):
 @ornamentalist.configure(name="flow_model")
 def get_model(
     modality: Literal["px", "tx", "joint"] = ornamentalist.Configurable["px"],
-    tx_feature_dim: int = ornamentalist.Configurable[1024],
+    tx_feature_dim: int = ornamentalist.Configurable[5000],  # Match HVG default
     metadata_config: MetaDataConfig = MetaDataConfig(),
 ) -> JointFlowMatching:
     """Build a JointFlowMatching model with the requested modalities.

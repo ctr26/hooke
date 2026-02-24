@@ -195,7 +195,6 @@ class ConditionedMLP(nn.Module):
         self.mlp_xt = self._build_mlp(data_dim, hidden_dim, latent_dim, xt_layers)
         self.mlp_c = self._build_mlp(cond_dim, hidden_dim, latent_dim, c_layers)
         self.mlp_ut = self._build_mlp(2 * latent_dim, hidden_dim, data_dim, ut_layers)
-        self._zero_init_output()
 
     @staticmethod
     def _build_mlp(in_dim, hidden_dim, out_dim, n_layers):
@@ -207,11 +206,6 @@ class ConditionedMLP(nn.Module):
             dim_in = hidden_dim
         layers.append(nn.Linear(dim_in, out_dim))
         return nn.Sequential(*layers)
-
-    def _zero_init_output(self):
-        last = self.mlp_ut[-1]
-        nn.init.zeros_(last.weight)
-        nn.init.zeros_(last.bias)
 
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         xt_emb = self.mlp_xt(x)
