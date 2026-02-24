@@ -5,7 +5,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Callable, Literal
+from typing import Callable, Literal, Union
 
 import ornamentalist
 import submitit
@@ -16,6 +16,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from hooke_forge.data import dataset
 from hooke_forge.model.tokenizer import DataFrameTokenizer
 from hooke_forge.model.flow_matching import JointFlowMatching, get_model
+from hooke_forge.model.drifting import JointDrifting
 from hooke_forge.training.trainer import TrainState, train
 from hooke_forge.utils.distributed import Distributed
 from hooke_forge.utils.ema import KarrasEMA
@@ -159,7 +160,7 @@ def main(config: ornamentalist.ConfigDict):
         # ------------------------------------------------------------------
         # Build model (dispatches on --flow_model.modality)
         # ------------------------------------------------------------------
-        net: JointFlowMatching = get_model()
+        net: Union[JointFlowMatching, JointDrifting] = get_model()
         # Infer the training modality from which vector fields were created
         active_modalities = list(net.vector_fields.keys())
         has_px = "px" in active_modalities

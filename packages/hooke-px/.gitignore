@@ -130,7 +130,6 @@ checkpoints/
 logs/
 project_folder
 IMPA_reproducibility/
-data/
 .zed/
 .vscode/
 *.png

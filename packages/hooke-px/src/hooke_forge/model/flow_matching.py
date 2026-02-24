@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Union
 
 import ornamentalist
 import torch
@@ -156,20 +156,32 @@ class JointFlowMatching(nn.Module):
 
 @ornamentalist.configure(name="flow_model")
 def get_model(
+    approach: Literal["flow_matching", "drifting"] = ornamentalist.Configurable["flow_matching"],
     modality: Literal["px", "tx", "joint"] = ornamentalist.Configurable["px"],
     tx_feature_dim: int = ornamentalist.Configurable[5000],  # Match HVG default
     metadata_config: MetaDataConfig = MetaDataConfig(),
-) -> JointFlowMatching:
-    """Build a JointFlowMatching model with the requested modalities.
+    # Drifting-specific parameters
+    tau: float = ornamentalist.Configurable[0.1],
+    use_double_normalization: bool = ornamentalist.Configurable[True],
+    use_feature_space: bool = ornamentalist.Configurable[False],
+    multiple_temps: list[float] = ornamentalist.Configurable[[0.02, 0.05, 0.2]],
+    cfg_weight: float = ornamentalist.Configurable[0.0],
+) -> Union[JointFlowMatching, "JointDrifting"]:
+    """Build a generative model with the requested approach and modalities.
 
+    The approach can be either "flow_matching" or "drifting".
     The DiT variant is controlled by ``--model.name`` (e.g. DiT-XL/2).
     The TX variant is controlled by ``--tx_model.name`` (e.g. TX-S).
 
     CLI examples::
 
-        --flow_model.modality=px                     # Px only (default)
-        --flow_model.modality=tx --flow_model.tx_feature_dim=1024
-        --flow_model.modality=joint
+        # Flow matching (existing)
+        --flow_model.approach=flow_matching --flow_model.modality=px
+        --flow_model.approach=flow_matching --flow_model.modality=joint
+
+        # Drifting approach (new)
+        --flow_model.approach=drifting --flow_model.modality=px
+        --flow_model.approach=drifting --flow_model.modality=joint --flow_model.tau=0.05
     """
     dit_cls = get_model_cls()  # uses --model.name config
     hidden_size: int = dit_cls.keywords["hidden_size"]  # type: ignore[union-attr]
@@ -189,8 +201,27 @@ def get_model(
     context_encoder = get_transformer_encoder(
         hidden_size=hidden_size, metadata_config=metadata_config,
     )
-    return JointFlowMatching(
-        hidden_size=hidden_size,
-        context_encoder=context_encoder,
-        vector_fields=vector_fields,
-    )
+
+    # Dispatch based on approach
+    if approach == "flow_matching":
+        return JointFlowMatching(
+            hidden_size=hidden_size,
+            context_encoder=context_encoder,
+            vector_fields=vector_fields,
+        )
+    elif approach == "drifting":
+        # Import here to avoid circular imports
+        from hooke_forge.model.drifting import JointDrifting
+
+        return JointDrifting(
+            hidden_size=hidden_size,
+            context_encoder=context_encoder,
+            vector_fields=vector_fields,
+            tau=tau,
+            use_double_normalization=use_double_normalization,
+            use_feature_space=use_feature_space,
+            multiple_temps=multiple_temps,
+            cfg_weight=cfg_weight,
+        )
+    else:
+        raise ValueError(f"Unknown approach: {approach}")
