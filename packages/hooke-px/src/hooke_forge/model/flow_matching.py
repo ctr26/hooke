@@ -164,7 +164,7 @@ def get_model(
     tau: float = ornamentalist.Configurable[0.1],
     use_double_normalization: bool = ornamentalist.Configurable[True],
     use_feature_space: bool = ornamentalist.Configurable[False],
-    multiple_temps: list[float] = ornamentalist.Configurable[[0.02, 0.05, 0.2]],
+    multiple_temps: list[float] = (0.02, 0.05, 0.2),  # type: ignore  # drifting-only, not exposed to CLI
     cfg_weight: float = ornamentalist.Configurable[0.0],
 ) -> Union[JointFlowMatching, "JointDrifting"]:
     """Build a generative model with the requested approach and modalities.

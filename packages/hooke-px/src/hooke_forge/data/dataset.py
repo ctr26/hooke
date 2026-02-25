@@ -337,6 +337,14 @@ def get_dataloaders(
     from pathlib import Path
 
     df = pl.read_parquet(path)
+
+    # Older parquets use `image_type` instead of `assay_type` — normalise to `assay_type`
+    if "assay_type" not in df.columns and "image_type" in df.columns:
+        _log.info("'assay_type' column not found; using 'image_type' as 'assay_type'")
+        df = df.with_columns(pl.col("image_type").alias("assay_type"))
+    elif "assay_type" not in df.columns:
+        raise KeyError("assay_type missing from columns")
+
     train_df = df.filter(pl.col("split") == "train")
     val_df = df.filter(pl.col("split") == "valid_cp_iid")
 
@@ -406,7 +414,7 @@ def get_tx_dataloaders(
     val_split: str = ornamentalist.Configurable["valid_tx"],
     pad_length: int = 8,
     tokenizer: DataFrameTokenizer | None = None,
-    gene_subset_path: Optional[str] = ornamentalist.Configurable[""],
+    gene_subset_path: str = ornamentalist.Configurable[""],
 ) -> tuple[DataLoader, DataLoader | None, DataFrameTokenizer]:
     """Get Tx train (and optionally validation) dataloaders.
 
