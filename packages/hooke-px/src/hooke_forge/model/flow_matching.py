@@ -156,7 +156,7 @@ class JointFlowMatching(nn.Module):
 
 @ornamentalist.configure(name="flow_model")
 def get_model(
-    approach: Literal["flow_matching", "drifting"] = ornamentalist.Configurable["flow_matching"],
+    approach: Literal["flow_matching", "drifting", "mean_flow"] = ornamentalist.Configurable["flow_matching"],
     modality: Literal["px", "tx", "joint"] = ornamentalist.Configurable["px"],
     tx_feature_dim: int = ornamentalist.Configurable[5000],  # Match HVG default
     metadata_config: MetaDataConfig = MetaDataConfig(),
@@ -166,7 +166,15 @@ def get_model(
     use_feature_space: bool = ornamentalist.Configurable[False],
     multiple_temps: list[float] = (0.02, 0.05, 0.2),  # type: ignore  # drifting-only, not exposed to CLI
     cfg_weight: float = ornamentalist.Configurable[0.0],
-) -> Union[JointFlowMatching, "JointDrifting"]:
+    # MeanFlow-specific parameters (paper §3.1 & §3.2)
+    mf_lognorm_mean: float = ornamentalist.Configurable[0.0],
+    mf_lognorm_std: float = ornamentalist.Configurable[1.0],
+    mf_r_neq_t_ratio: float = ornamentalist.Configurable[0.25],
+    mf_adaptive_loss_power: float = ornamentalist.Configurable[1.0],
+    mf_adaptive_loss_eps: float = ornamentalist.Configurable[1e-3],
+    mf_cfg_omega: float = ornamentalist.Configurable[1.0],
+    mf_cfg_kappa: float = ornamentalist.Configurable[0.0],
+) -> Union[JointFlowMatching, "JointDrifting", "JointMeanFlow"]:
     """Build a generative model with the requested approach and modalities.
 
     The approach can be either "flow_matching" or "drifting".
@@ -179,9 +187,16 @@ def get_model(
         --flow_model.approach=flow_matching --flow_model.modality=px
         --flow_model.approach=flow_matching --flow_model.modality=joint
 
-        # Drifting approach (new)
+        # Drifting approach
         --flow_model.approach=drifting --flow_model.modality=px
         --flow_model.approach=drifting --flow_model.modality=joint --flow_model.tau=0.05
+
+        # MeanFlow (new) — 1-NFE training from scratch
+        --flow_model.approach=mean_flow --flow_model.modality=joint
+        --flow_model.approach=mean_flow --flow_model.modality=joint \\
+            --flow_model.mf_r_neq_t_ratio=0.25 \\
+            --flow_model.mf_adaptive_loss_power=1.0 \\
+            --flow_model.mf_cfg_omega=2.0
     """
     dit_cls = get_model_cls()  # uses --model.name config
     hidden_size: int = dit_cls.keywords["hidden_size"]  # type: ignore[union-attr]
@@ -222,6 +237,21 @@ def get_model(
             use_feature_space=use_feature_space,
             multiple_temps=multiple_temps,
             cfg_weight=cfg_weight,
+        )
+    elif approach == "mean_flow":
+        from hooke_forge.model.mean_flow import JointMeanFlow
+
+        return JointMeanFlow(
+            hidden_size=hidden_size,
+            context_encoder=context_encoder,
+            vector_fields=vector_fields,
+            lognorm_mean=mf_lognorm_mean,
+            lognorm_std=mf_lognorm_std,
+            r_neq_t_ratio=mf_r_neq_t_ratio,
+            adaptive_loss_power=mf_adaptive_loss_power,
+            adaptive_loss_eps=mf_adaptive_loss_eps,
+            cfg_omega=mf_cfg_omega,
+            cfg_kappa=mf_cfg_kappa,
         )
     else:
         raise ValueError(f"Unknown approach: {approach}")
