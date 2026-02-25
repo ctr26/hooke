@@ -343,8 +343,7 @@ def get_dataloaders(
         _log.info("'assay_type' column not found; using 'image_type' as 'assay_type'")
         df = df.with_columns(pl.col("image_type").alias("assay_type"))
     elif "assay_type" not in df.columns:
-        _log.warning("Neither 'assay_type' nor 'image_type' found; defaulting assay_type='cellpaint'")
-        df = df.with_columns(pl.lit("cellpaint").alias("assay_type"))
+        raise KeyError("assay_type missing from columns")
 
     train_df = df.filter(pl.col("split") == "train")
     val_df = df.filter(pl.col("split") == "valid_cp_iid")
