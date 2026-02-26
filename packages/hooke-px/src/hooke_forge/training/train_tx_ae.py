@@ -35,7 +35,7 @@ from hooke_forge.model.tx_autoencoders import (
     sample_zinb,
     hinge_disc_loss,
 )
-from hooke_forge.training.trainer import log
+from hooke_forge.training.state import log
 from hooke_forge.utils.distributed import Distributed, rank_zero
 from hooke_forge.utils.ema import KarrasEMA
 from hooke_forge.utils.infinite_dataloader import infinite_dataloader
