@@ -1,12 +1,12 @@
 # hooke-forge
 
-Train Diffusion Transformers on phenomics data using flow matching (linear interpolant). Intended to be simple for integration with the rest of Hooke.
+Train Diffusion Transformers on phenomics and transcriptomics data using flow matching (linear interpolant). 
+
+This repo has evolved from `big-img` which lives on for prosperity in this [branch](https://github.com/valence-labs/hooke-forge/tree/depreciated-master).
 
 ## Installation
 
 ```bash
-pip install -e .
-# or
 uv pip install -e .
 ```
 
