@@ -37,6 +37,7 @@ packages = ["src/hooke_forge"]
 
 [project.scripts]
 hooke-train = "hooke_forge.training.train:cli"
+hooke-train-tx-ae = "hooke_forge.training.train_tx_ae:cli"
 hooke-eval = "hooke_forge.evaluation.eval:cli"
 hooke-infer = "hooke_forge.inference.run_distributed:main"
 hooke-gene-select = "hooke_forge.utils.tx_gene_selection:cli"
