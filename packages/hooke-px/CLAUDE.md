@@ -26,10 +26,18 @@ The project is organized into several key modules:
 
 - **model/**: Core model components including DiT architecture, flow matching, context encoders, and tokenizers
 - **training/**: Training orchestration with SLURM integration via submitit
-- **evaluation/**: Offline checkpoint evaluation on various datasets
+  - `state.py`: `TrainState` dataclass, `log()`, `set_metrics_log_path()` — shared training/eval state and logging
+  - `trainer.py`: `train()` — main training loop
+  - `train.py`: SLURM launcher for flow matching training
+  - `train_tx_ae.py`: SLURM launcher for Tx autoencoder training
+- **evaluation/**: Metrics and evaluation routines
+  - `metrics.py`: All metric primitives (FD, FD-sqrtm, FD-infinity, cosine similarity, PRDC, energy distance, retrieval)
+  - `px_metrics.py`: `evaluate_px`, `visualise_phenomics`, `compute_phenomics_metrics`
+  - `tx_metrics.py`: `evaluate_tx`
+  - `eval.py`: Offline checkpoint evaluation script with SLURM launcher
 - **data/**: Dataset loading for cell and treatment (Tx) data
 - **inference/**: Distributed inference pipeline with SLURM-based distributed execution
-- **utils/**: Shared utilities for distributed training, EMA, evaluation metrics, and profiling
+- **utils/**: Shared utilities for distributed training, EMA, encoders, and profiling
 
 The core model is `JointFlowMatching` which supports multiple modalities (images and features) with shared context encoding and time embedding.
 
