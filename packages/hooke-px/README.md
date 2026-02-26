@@ -22,18 +22,22 @@ src/hooke_forge/
 │   ├── flow_matching.py    # JointFlowMatching, get_model factory
 │   ├── context_encoders.py # TransformerEncoder, ScalarEmbedder
 │   └── tokenizer.py        # DataFrameTokenizer, MetaDataConfig
-├── training/               # Training loop and entry point
-│   ├── trainer.py          # TrainState, train(), evaluation helpers
-│   └── train.py            # Launcher / CLI entry point (ex main.py)
-├── evaluation/             # Offline checkpoint evaluation
-│   └── eval.py             # run_eval_on_checkpoints, eval_launcher
+├── training/               # Training loop and entry points
+│   ├── state.py            # TrainState, log(), set_metrics_log_path()
+│   ├── trainer.py          # train() — main training loop
+│   ├── train.py            # SLURM launcher for flow matching training
+│   └── train_tx_ae.py      # SLURM launcher for Tx autoencoder training
+├── evaluation/             # Metrics and evaluation routines
+│   ├── metrics.py          # FD, FD-sqrtm, FD-∞, cosine sim, PRDC, energy distance, retrieval
+│   ├── px_metrics.py       # evaluate_px, visualise_phenomics, compute_phenomics_metrics
+│   ├── tx_metrics.py       # evaluate_tx
+│   └── eval.py             # Offline checkpoint evaluation with SLURM launcher
 ├── data/                   # Dataset and data loading
 │   └── dataset.py          # CellDataset, TxDataset, get_dataloaders
 ├── utils/                  # Shared utilities
 │   ├── distributed.py      # Distributed context manager, rank_zero
 │   ├── ema.py              # KarrasEMA
 │   ├── encoders.py         # DINOv2Detector, Phenom2Detector, StabilityCPEncoder
-│   ├── evaluation.py       # compute_fd, compute_cossim, compute_prdc
 │   ├── infinite_dataloader.py
 │   ├── name_run.py
 │   └── profiler.py

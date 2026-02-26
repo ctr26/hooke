@@ -17,7 +17,8 @@ from hooke_forge.data import dataset
 from hooke_forge.model.tokenizer import DataFrameTokenizer
 from hooke_forge.model.flow_matching import JointFlowMatching, get_model
 from hooke_forge.model.drifting import JointDrifting
-from hooke_forge.training.trainer import TrainState, train
+from hooke_forge.training.state import TrainState
+from hooke_forge.training.trainer import train
 from hooke_forge.utils.distributed import Distributed
 from hooke_forge.utils.ema import KarrasEMA
 from hooke_forge.utils.name_run import generate_random_name

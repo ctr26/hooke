@@ -35,7 +35,7 @@ import submitit
 import wandb
 import zarr
 
-from hooke_forge.utils.evaluation import compute_fd, compute_cossim, compute_prdc
+from hooke_forge.evaluation.metrics import compute_fd, compute_cossim, compute_prdc
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)

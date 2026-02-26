@@ -35,7 +35,12 @@ from hooke_forge.data import dataset
 from hooke_forge.model.tokenizer import DataFrameTokenizer, MetaDataConfig
 from hooke_forge.data.dataset import CellPaintConverter
 from hooke_forge.model.architecture import get_model_cls
-from hooke_forge.training.trainer import compute_metrics, evaluate, set_metrics_log_path, visualise
+from hooke_forge.evaluation.px_metrics import (
+    compute_phenomics_metrics,
+    evaluate_px,
+    visualise_phenomics,
+)
+from hooke_forge.training.state import set_metrics_log_path
 from hooke_forge.utils.distributed import Distributed
 from hooke_forge.utils.ema import KarrasEMA
 from hooke_forge.utils.encoders import StabilityCPEncoder
@@ -285,7 +290,7 @@ def run_eval_on_checkpoints(
             # Visualization (EMA)
             if do_visualise:
                 log.info(f"Running visualisation for step {global_step}")
-                visualise(
+                visualise_phenomics(
                     state=state,
                     loader=val_loader,
                     output_dir=output_dir,
@@ -298,14 +303,14 @@ def run_eval_on_checkpoints(
             # Evaluate loss (EMA and DDP)
             if do_evaluate:
                 log.info(f"Running evaluation for step {global_step}")
-                evaluate(
+                evaluate_px(
                     state=state,
                     loader=val_loader,
                     vae=vae,
                     D=D,
                     use_ema=True,
                 )
-                evaluate(
+                evaluate_px(
                     state=state,
                     loader=val_loader,
                     vae=vae,
@@ -316,7 +321,7 @@ def run_eval_on_checkpoints(
             # Compute metrics (EMA)
             if do_metrics:
                 log.info(f"Computing metrics for step {global_step}")
-                compute_metrics(
+                compute_phenomics_metrics(
                     state=state,
                     name="val",
                     loader=val_loader,
