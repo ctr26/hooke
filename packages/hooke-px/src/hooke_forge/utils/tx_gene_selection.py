@@ -298,12 +298,12 @@ def create_gene_subset(
     # Sample subset for HVG computation (from training data only)
     # Use fixed seed for reproducibility within the same cache key
     np.random.seed(hash(cache_key) % (2**32))
-    sample_size = min(10_000, len(train_zarr_indices))
+    sample_size = min(50_000, len(train_zarr_indices))
     sample_indices = np.random.choice(train_zarr_indices, sample_size, replace=False)
     _log.info(f"Using {sample_size} samples for HVG computation")
 
     # Load expression data for training samples only
-    X_sample = zarr_file[sample_indices]
+    X_sample = np.array([zarr_file[int(i)] for i in sample_indices])
     adata_sample = sc.AnnData(X=X_sample)
     adata_sample.var_names = var_df["gene_symbol"].fill_null("unknown")
 

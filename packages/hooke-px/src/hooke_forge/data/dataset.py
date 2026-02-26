@@ -197,6 +197,26 @@ class CellDataset(torch.utils.data.Dataset):
 
 
 
+_TX_TARGET_SUM: float = 4_000.0  # library-size normalization target (matches hooke-predict)
+
+
+def _normalize_log1p(x: torch.Tensor, target_sum: float = _TX_TARGET_SUM) -> torch.Tensor:
+    """Library-size normalize then log1p-transform a 1-D expression vector.
+
+    Replicates hooke-predict's ``TaskDatasetBase.transform()``:
+      1. Scale counts so the row sums to ``target_sum`` (default 4,000).
+      2. Apply log1p  →  output values in [0, ~8.3] for target_sum=4000.
+
+    Without this step the raw zarr values (up to ~74k, row sum ~1M) produce
+    flow-matching velocities with MSE ~60,000 instead of the expected O(1-10).
+    """
+    row_sum = x.sum()
+    if row_sum == 0:
+        return x
+    x = (x / row_sum) * target_sum
+    return torch.log1p(x)
+
+
 class TxDataset(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -295,8 +315,20 @@ class TxDataset(torch.utils.data.Dataset):
             tx = tx[self.gene_mask][self.hvg_indices]
             tx_control = tx_control[self.gene_mask][self.hvg_indices]
 
+        # Keep raw counts before normalization (used by ZINB loss in Tx AE)
+        tx_raw = tx.clone()
+
+        # Normalize: library-size normalize then log1p, matching hooke-predict's
+        # TaskDatasetBase.transform() (target_sum=4000). The raw zarr contains count
+        # data with per-cell sums ~1M and values up to ~74k. Without this step,
+        # the flow-matching velocity ut = x1 - x0 has magnitude O(1k-10k), which
+        # causes MSE losses of ~60,000 instead of the expected O(1-10).
+        tx = _normalize_log1p(tx)
+        tx_control = _normalize_log1p(tx_control)
+
         sample = {
             "tx": tx,
+            "tx_raw": tx_raw,
             "tx_control": tx_control,
             "meta": self.tokenizer(row),
         }
