@@ -17,6 +17,7 @@ from hooke_forge.data import dataset
 from hooke_forge.model.tokenizer import DataFrameTokenizer
 from hooke_forge.model.flow_matching import JointFlowMatching, get_model
 from hooke_forge.model.drifting import JointDrifting
+from hooke_forge.model.mean_flow import JointMeanFlow
 from hooke_forge.training.state import TrainState
 from hooke_forge.training.trainer import train
 from hooke_forge.utils.distributed import Distributed
@@ -202,7 +203,9 @@ def main(config: ornamentalist.ConfigDict):
         # Set up training state
         # ------------------------------------------------------------------
         net.to(D.device)
-        net = torch.compile(net)  # type: ignore
+        # MeanFlow uses forward-mode AD (JVP) which is incompatible with torch.compile
+        if not isinstance(net, JointMeanFlow):
+            net = torch.compile(net)  # type: ignore
         ddp = DDP(net)
         ema = KarrasEMA(net)
         opt = torch.optim.Adam(
