@@ -496,18 +496,24 @@ def main(config: ornamentalist.ConfigDict):
         existing_tokenizer = load_tokenizer_from_checkpoint(resume_ckpt_dir)
 
         # Data
-        train_loader, val_loader, tokenizer, n_genes = dataset.get_tx_ae_dataloaders(
+        train_loader, val_loader, tokenizer = dataset.get_tx_dataloaders(
             tokenizer=existing_tokenizer,
         )
         assert tokenizer is not None
+
+        # Infer n_genes from first batch
+        sample_batch = next(iter(train_loader))
+        n_genes = sample_batch["tx"].shape[-1]
+        _log.info(f"Inferred n_genes={n_genes} from data")
 
         # Models
         ae, disc = get_tx_ae_models(n_genes=n_genes)
         ae.to(D.device)
         disc.to(D.device)
 
-        ae = torch.compile(ae)  # type: ignore
-        disc = torch.compile(disc)  # type: ignore
+        # Disable torch.compile - causes OOM with large n_genes (60k+)
+        # ae = torch.compile(ae)  # type: ignore
+        # disc = torch.compile(disc)  # type: ignore
 
         ddp_ae = DDP(ae)
         ddp_disc = DDP(disc)
