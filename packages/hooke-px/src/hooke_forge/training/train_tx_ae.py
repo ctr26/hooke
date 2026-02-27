@@ -188,6 +188,8 @@ def train_tx_ae(
     lambda_adv: float = ornamentalist.Configurable[0.1],
     adv_start_step: int = ornamentalist.Configurable[50_000],
     zinb_sample_tau: float = ornamentalist.Configurable[0.1],
+    # TxAM perceptual loss configuration
+    txam_checkpoint_path: str = ornamentalist.Configurable["/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt"],
     # Schedule
     num_steps: int = ornamentalist.Configurable[500_000],
     log_every_n_steps: int = ornamentalist.Configurable[250],
@@ -197,7 +199,10 @@ def train_tx_ae(
     start_step = state.global_step
     data_iter = infinite_dataloader(train_loader, start_step=start_step, fast_resume=True)
 
-    txam_loss = TxAMPerceptualLoss().to(D.device)
+    txam_loss = TxAMPerceptualLoss(
+        checkpoint_path=txam_checkpoint_path,
+        device=D.device,
+    )
 
     running = {
         "zinb": torch.tensor(0.0, device=D.device),

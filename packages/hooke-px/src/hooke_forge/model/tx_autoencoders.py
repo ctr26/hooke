@@ -360,43 +360,157 @@ def hinge_disc_loss(
 
 
 # ---------------------------------------------------------------------------
-# TxAM Perceptual Loss (identity stub)
+# TxAM Perceptual Loss
 # ---------------------------------------------------------------------------
-# TODO: Implement the TxAM Perceptual Loss
 
 class TxAMPerceptualLoss(nn.Module):
-    """Identity-model stub for perceptual loss.
+    """TxAM-based perceptual loss for transcriptomics data.
 
-    Computes MSE in log1p-normalised space.  Designed to be replaced with
-    the real TxAM feature extractor later.
+    Uses a pre-trained TxAM encoder to extract embeddings from transcriptomics
+    data and computes perceptual loss in the TxAM embedding space.
     """
 
-    def __init__(self, target_sum: float = 4_000.0):
+    def __init__(
+        self,
+        checkpoint_path: str = "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt",
+        device: str = "cuda",
+    ):
         super().__init__()
-        self.target_sum = target_sum
+        self.checkpoint_path = checkpoint_path
+        self.device = device
 
-    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
-        row_sum = x.sum(dim=-1, keepdim=True).clamp(min=1e-8)
-        x = (x / row_sum) * self.target_sum
-        return torch.log1p(x)
+        try:
+            # Import TxAM encoder
+            from txam import TxAMEncoder
 
-    @torch.no_grad()
-    def extract_features(self, x: torch.Tensor) -> torch.Tensor:
-        """Stub: identity feature extraction (returns normalised input)."""
-        return self._normalize(x)
+            # Load pre-trained TxAM encoder wrapper
+            txam_encoder = TxAMEncoder.from_pretrained(
+                checkpoint_path=checkpoint_path,
+                device=device
+            )
+
+            # Get the raw PyTorch encoder module for gradient-enabled inference
+            self.encoder = txam_encoder.get_encoder_module()
+            self.preprocessor = txam_encoder.preprocessor
+
+            # Set encoder to evaluation mode and freeze parameters
+            self.encoder.eval()
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+            # Cache preprocessing parameters
+            self.target_library_size = getattr(
+                self.preprocessor, 'target_library_size', 10_000.0
+            )
+
+        except ImportError as e:
+            raise ImportError(
+                f"Failed to import txam: {e}. "
+                "Please ensure txam package is available."
+            ) from e
+
+    def _preprocess_counts(self, counts: torch.Tensor) -> torch.Tensor:
+        """Apply TxAM preprocessing: normalize + log1p transform.
+
+        Args:
+            counts: (B, G) raw counts tensor
+
+        Returns:
+            (B, G) preprocessed tensor
+        """
+        # Normalize per cell to target library size
+        counts_sum = counts.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        normalized = (counts / counts_sum) * self.target_library_size
+
+        # Apply log1p transform
+        return torch.log1p(normalized)
 
     def forward(
         self,
         recon: torch.Tensor,
         real: torch.Tensor,
     ) -> torch.Tensor:
-        """MSE between normalised reconstructed and real counts.
+        """Compute perceptual loss between reconstructed and real transcriptomics data.
 
         Args:
             recon: (B, G) ZINB samples (differentiable).
             real:  (B, G) raw counts.
+
+        Returns:
+            Scalar perceptual loss in TxAM embedding space.
         """
-        recon_norm = self._normalize(recon)
+        # Preprocess both inputs
+        recon_preprocessed = self._preprocess_counts(recon)
+
         with torch.no_grad():
-            real_norm = self._normalize(real)
-        return F.mse_loss(recon_norm, real_norm)
+            real_preprocessed = self._preprocess_counts(real)
+
+        # Extract embeddings using the raw encoder (preserves gradients for recon)
+        recon_embeddings = self.encoder(recon_preprocessed)
+
+        with torch.no_grad():
+            real_embeddings = self.encoder(real_preprocessed)
+
+        # Compute MSE loss between embeddings
+        return F.mse_loss(recon_embeddings, real_embeddings)
+
+
+
+def test_txam_gradient_flow(
+    checkpoint_path: str = "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt",
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+) -> None:
+    """Test that gradients flow correctly through TxAMPerceptualLoss.
+
+    Args:
+        checkpoint_path: Path to TxAM checkpoint
+        device: Device to run test on
+    """
+    print("Testing TxAM perceptual loss gradient flow...")
+
+    try:
+        # Create test loss function
+        loss_fn = TxAMPerceptualLoss(checkpoint_path=checkpoint_path, device=device)
+
+        # Create dummy data with realistic transcriptomics values
+        n_genes = loss_fn.preprocessor.num_genes
+        batch_size = 4
+
+        # Real data (no gradients needed)
+        real_counts = torch.poisson(torch.ones(batch_size, n_genes, device=device) * 5.0)
+
+        # Reconstructed data (needs gradients)
+        recon_counts = torch.poisson(torch.ones(batch_size, n_genes, device=device) * 5.0)
+        recon_counts.requires_grad_(True)
+
+        print(f"Input shape: {recon_counts.shape}")
+        print(f"Target library size: {loss_fn.target_library_size}")
+
+        # Compute loss
+        loss = loss_fn(recon_counts, real_counts)
+
+        print(f"Loss value: {loss.item():.4f}")
+
+        # Test gradient computation
+        loss.backward()
+
+        # Check if gradients were computed
+        if recon_counts.grad is not None:
+            grad_norm = recon_counts.grad.norm().item()
+            grad_mean = recon_counts.grad.mean().item()
+            print(f"Gradient norm: {grad_norm:.4f}")
+            print(f"Gradient mean: {grad_mean:.6f}")
+            print("✓ Gradients computed successfully!")
+            print("✓ TxAM perceptual loss is working correctly!")
+        else:
+            print("✗ No gradients computed - gradient flow is broken!")
+
+    except Exception as e:
+        print(f"✗ Test failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    # Run test if script is executed directly
+    test_txam_gradient_flow()

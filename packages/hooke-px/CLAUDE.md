@@ -83,6 +83,64 @@ Example usage patterns:
 - Flow model parameters: `--flow_model.modality joint --flow_model.tx_feature_dim 1024`
 - Launcher settings: `--launcher.cluster slurm --launcher.nodes 4 --launcher.gpus 8`
 - Data parameters: `--data.batch_size 32 --data.num_workers 8`
+- TxAM perceptual loss: `--txam_checkpoint_path /path/to/txam/checkpoint.pt`
+
+## TxAM Integration
+
+The project integrates TxAM (Transcriptomics Foundation Model) for perceptual loss computation during autoencoder training. The TxAMPerceptualLoss class uses the raw TxAM encoder PyTorch module to extract embeddings with full gradient support, enabling effective perceptual loss training.
+
+### TREK v1 Checkpoint
+
+The integration now uses the TREK v1 checkpoint by default, which provides significant improvements over previous versions:
+- **Input/Output genes**: 60,821 (comprehensive gene coverage)
+- **Embedding size**: 512
+- **Training dataset**: TREK 600k (600k transcriptomics samples from more relevant data)
+- **Model size**: ~1.2GB
+- **Path**: `/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt`
+
+This checkpoint provides better perceptual loss quality by using a model trained on more comprehensive and relevant transcriptomics data while maintaining full backward compatibility with existing workflows.
+
+### Implementation Details
+
+- **Direct PyTorch Integration**: Uses `get_encoder_module()` to access the raw PyTorch encoder
+- **Gradient Preservation**: Full gradient flow through TxAM embeddings for reconstructed data
+- **Manual Preprocessing**: Implements TxAM's normalize + log1p preprocessing in PyTorch
+- **Frozen TxAM Weights**: TxAM encoder parameters are frozen during training
+
+### Configuration Options
+
+- `--txam_checkpoint_path`: Path to TxAM checkpoint file (default: "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt")
+
+### Setup Requirements
+
+1. **TxAM Package**: Ensure the `txam` package is available in your environment
+2. **Checkpoint Access**: Verify access to TxAM checkpoint files
+3. **GPU Memory**: TxAM encoder requires additional GPU memory during training
+
+### Usage in Training
+
+```bash
+# Train Tx autoencoder with TxAM perceptual loss (uses TREK v1 by default)
+hooke-train-tx-ae \
+  --lambda_perc 1.0 \
+  --output_dir outputs/tx_ae_with_txam_trek
+
+# Train with custom checkpoint path (for backward compatibility)
+hooke-train-tx-ae \
+  --txam_checkpoint_path /rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_v0.3.10.2/checkpoint.pt \
+  --lambda_perc 1.0 \
+  --output_dir outputs/tx_ae_with_txam_old
+
+# Test gradient flow with TREK v1
+python -m hooke_forge.model.tx_autoencoders
+```
+
+### Migration Notes
+
+- **Existing scripts**: Continue to work unchanged with TREK v1 benefits
+- **Custom checkpoints**: Use `--txam_checkpoint_path` to specify different checkpoint
+- **Backward compatibility**: Old checkpoints remain fully supported
+- **Performance**: TREK v1 may use slightly more GPU memory (~1.2GB vs ~718MB)
 
 ## Development Workflow
 
@@ -101,6 +159,7 @@ Example usage patterns:
 - **wandb**: Experiment tracking
 - **zarr**: Data storage format
 - **timm**: Vision model components
+- **txam**: TxAM encoder for perceptual loss computation
 
 ## Testing
 
