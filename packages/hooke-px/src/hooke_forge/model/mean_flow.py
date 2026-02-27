@@ -273,7 +273,15 @@ class JointMeanFlow(nn.Module):
 
         # Tangents: dz/dt = v_eff,  dr/dt = 0,  dt/dt = 1
         tangents = (v_eff, torch.zeros_like(r), torch.ones_like(t))
-        u, dudt = jvp(u_fn, (z, r, t), tangents)
+
+        # Disable flash attention for JVP - it doesn't support forward-mode AD
+        # Use math fallback instead which supports all AD modes
+        with torch.backends.cuda.sdp_kernel(
+            enable_flash=False,
+            enable_math=True,
+            enable_mem_efficient=False
+        ):
+            u, dudt = jvp(u_fn, (z, r, t), tangents)
         return u, dudt
 
     # ------------------------------------------------------------------
