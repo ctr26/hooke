@@ -106,10 +106,12 @@ This checkpoint provides better perceptual loss quality by using a model trained
 - **Gradient Preservation**: Full gradient flow through TxAM embeddings for reconstructed data
 - **Manual Preprocessing**: Implements TxAM's normalize + log1p preprocessing in PyTorch
 - **Frozen TxAM Weights**: TxAM encoder parameters are frozen during training
+- **Gene Alignment**: Automatic reordering/padding of input genes to match TxAM model expectations
 
 ### Configuration Options
 
 - `--txam_checkpoint_path`: Path to TxAM checkpoint file (default: "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt")
+- `--txam_input_gene_names`: List of gene names in input data order for automatic alignment (optional, assumes correct order if not provided)
 
 ### Setup Requirements
 
@@ -133,6 +135,12 @@ hooke-train-tx-ae \
 
 # Test gradient flow with TREK v1
 python -m hooke_forge.model.tx_autoencoders
+
+# Train with gene alignment (if your data has different gene order)
+hooke-train-tx-ae \
+  --lambda_perc 1.0 \
+  --txam_input_gene_names '["GENE1", "GENE2", ...]' \
+  --output_dir outputs/tx_ae_with_gene_alignment
 ```
 
 ### Migration Notes

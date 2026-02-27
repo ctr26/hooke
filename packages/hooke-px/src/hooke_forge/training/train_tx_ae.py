@@ -190,6 +190,7 @@ def train_tx_ae(
     zinb_sample_tau: float = ornamentalist.Configurable[0.1],
     # TxAM perceptual loss configuration
     txam_checkpoint_path: str = ornamentalist.Configurable["/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt"],
+    txam_input_gene_names: list[str] | None = ornamentalist.Configurable[None],
     # Schedule
     num_steps: int = ornamentalist.Configurable[500_000],
     log_every_n_steps: int = ornamentalist.Configurable[250],
@@ -202,6 +203,7 @@ def train_tx_ae(
     txam_loss = TxAMPerceptualLoss(
         checkpoint_path=txam_checkpoint_path,
         device=D.device,
+        input_gene_names=txam_input_gene_names,
     )
 
     running = {

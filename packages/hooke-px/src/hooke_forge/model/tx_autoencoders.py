@@ -374,6 +374,7 @@ class TxAMPerceptualLoss(nn.Module):
         self,
         checkpoint_path: str = "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt",
         device: str = "cuda",
+        input_gene_names: list[str] | None = None,
     ):
         super().__init__()
         self.checkpoint_path = checkpoint_path
@@ -409,6 +410,19 @@ class TxAMPerceptualLoss(nn.Module):
                 "Please ensure txam package is available."
             ) from e
 
+        # --- Gene alignment (one-time) ---
+        if input_gene_names is not None:
+            model_genes = self.preprocessor.gene_names
+            model_gene_to_idx = {g: i for i, g in enumerate(input_gene_names)}
+            # For each model gene, find its column in the input (or -1 if missing)
+            idx = []
+            for g in model_genes:
+                idx.append(model_gene_to_idx.get(g, -1))
+            self.register_buffer(
+                '_align_idx', torch.tensor(idx, dtype=torch.long)
+            )
+        # If input_gene_names is None, no _align_idx buffer is created
+
     def _preprocess_counts(self, counts: torch.Tensor) -> torch.Tensor:
         """Apply TxAM preprocessing: normalize + log1p transform.
 
@@ -425,6 +439,16 @@ class TxAMPerceptualLoss(nn.Module):
         # Apply log1p transform
         return torch.log1p(normalized)
 
+    def _align(self, x: torch.Tensor) -> torch.Tensor:
+        """Reorder/pad input columns to match model gene order."""
+        if not hasattr(self, '_align_idx'):
+            return x
+        # Pad a zero column at the end for missing genes (index == -1)
+        padded = F.pad(x, (0, 1), value=0.0)          # (B, G_input+1)
+        idx = self._align_idx.clamp(min=-1) % padded.shape[1]
+        # gather is not needed; advanced indexing works and is differentiable
+        return padded[:, idx]                           # (B, G_model)
+
     def forward(
         self,
         recon: torch.Tensor,
@@ -439,6 +463,10 @@ class TxAMPerceptualLoss(nn.Module):
         Returns:
             Scalar perceptual loss in TxAM embedding space.
         """
+        # Align gene order to match model expectations
+        recon = self._align(recon)
+        real = self._align(real)
+
         # Preprocess both inputs
         recon_preprocessed = self._preprocess_counts(recon)
 
