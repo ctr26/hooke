@@ -96,6 +96,18 @@ def parse_args():
         default="inchikey",
         help="Column for perturbation grouping in map building (default: inchikey)",
     )
+    parser.add_argument(
+        "--representations",
+        nargs="+",
+        default=None,
+        help="Representations to extract (default: auto-detect from modality)",
+    )
+    parser.add_argument(
+        "--tx-zarr-path",
+        type=str,
+        default="",
+        help="Path to tx feature zarr (required for tx modality)",
+    )
     return parser.parse_args()
 
 
@@ -157,6 +169,8 @@ def main():
             batch_size=args.batch_size,
             partition=args.partition,
             qos=args.qos,
+            representations=args.representations,
+            tx_zarr_path=args.tx_zarr_path,
         )
     else:
         log.info("Skipping inference (--skip-inference)")

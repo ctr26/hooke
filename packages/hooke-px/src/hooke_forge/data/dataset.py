@@ -123,18 +123,6 @@ class CellDataset(torch.utils.data.Dataset):
         size: int,
         multiscale: bool = False,
     ):
-        required_cols = [
-            "image_path",
-            "cell_type",
-            "experiment_label",
-            "assay_type",
-            "well_address",
-            "rec_id",
-            "concentration",
-        ]
-        assert all(col in metadata.columns for col in required_cols), (
-            f"metadata must have the following columns: {required_cols}"
-        )
         self.metadata = metadata
         self.transforms = get_transforms(train, size)
         self.multiscale = multiscale
@@ -216,37 +204,14 @@ class TxDataset(torch.utils.data.Dataset):
         self,
         metadata: pl.DataFrame,
         tokenizer: DataFrameTokenizer,
-        zarr_path: str | Path = Path(
-            "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"
-        ),
-        gene_subset_path: str | Path | None = None,
+        zarr_path: str | Path = Path("/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"),
+        gene_subset_path: Optional[str | Path] = None,
+        train: bool = True,
     ):
-        required_cols = [
-            "zarr_row_idx",
-            "batch_center",
-            "is_negative_control",
-            "cell_type",
-            "experiment_label",
-            "assay_type",
-            "well_address",
-            "rec_id",
-            "concentration",
-        ]
-        assert all(col in metadata.columns for col in required_cols), (
-            f"metadata must have the following columns: {required_cols}"
-        )
+        self.train = train
         self.metadata = metadata
         self.tokenizer = tokenizer
-        lookup_df = metadata.group_by("batch_center").agg(
-            [pl.col("zarr_row_idx").filter(pl.col("is_negative_control")).alias("control_indices")]
-        )
-        control_map = dict(zip(lookup_df["batch_center"], lookup_df["control_indices"]))
-        self.control_map = {k: v.to_list() for k, v in control_map.items()}
-        # remove batch centers with no controls
-        self.skip = [k for k, v in self.control_map.items() if len(v) == 0]
-        _log.warning(f"Skipping {len(self.skip)} batch centers with no controls")
         self.zarr_file = zarr.open(zarr_path)
-        self.all_controls = self.metadata.filter(pl.col("is_negative_control"))["zarr_row_idx"].unique()
 
         # Gene subset initialization
         self.gene_subset_path = gene_subset_path
@@ -254,8 +219,35 @@ class TxDataset(torch.utils.data.Dataset):
         self.hvg_indices = None
 
         if gene_subset_path is not None:
-            # Load pre-computed gene selection
             self._load_gene_subset(gene_subset_path)
+
+        if train:
+            required_cols = [
+                "zarr_row_idx",
+                "batch_center",
+                "is_negative_control",
+                "cell_type",
+                "experiment_label",
+                "assay_type",
+                "well_address",
+                "rec_id",
+                "concentration",
+            ]
+            assert all(col in metadata.columns for col in required_cols), (
+                f"metadata must have the following columns: {required_cols}"
+            )
+            lookup_df = (
+                metadata.group_by("batch_center")
+                .agg([
+                    pl.col("zarr_row_idx").filter(pl.col("is_negative_control")).alias("control_indices")
+                ])
+            )
+            control_map = dict(zip(lookup_df["batch_center"],
+                                        lookup_df["control_indices"]))
+            self.control_map = {k: v.to_list() for k, v in control_map.items()}
+            self.skip = [k for k, v in self.control_map.items() if len(v) == 0]
+            _log.warning(f"Skipping {len(self.skip)} batch centers with no controls")
+            self.all_controls = self.metadata.filter(pl.col("is_negative_control"))["zarr_row_idx"].unique()
 
     def _load_gene_subset(self, gene_subset_path: str | Path) -> None:
         """Load pre-computed gene subset from .npz file."""
@@ -291,41 +283,41 @@ class TxDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index: int):
         row = self.metadata.row(index, named=True)
+
+        if not self.train:
+            # Inference mode: only need metadata for conditioning
+            sample = {"meta": self.tokenizer(row)}
+            if "zarr_index" in row:
+                sample["zarr_index"] = row["zarr_index"]
+            return sample
+
+        # Load features
+        tx = torch.from_numpy(self.zarr_file[row["zarr_row_idx"]])
+
+        # Apply gene subset filtering if configured
+        if self.gene_subset_path is not None:
+            tx = tx[self.gene_mask][self.hvg_indices]
+
+        # Training mode: pair with control
         if row["batch_center"] in self.skip:
-            # TODO: get rid of this - it's a hack but it only affects two samples.
-            # If we have no controls, just sample a random control from the entire dataset
             control = self.metadata.row(random.choice(self.all_controls), named=True)
         else:
             control = self.metadata.row(random.choice(self.control_map[row["batch_center"]]), named=True)
 
-        # Load features
-        tx = torch.from_numpy(self.zarr_file[row["zarr_row_idx"]])
         tx_control = torch.from_numpy(self.zarr_file[control["zarr_row_idx"]])
-
-        # Apply gene subset filtering if configured
         if self.gene_subset_path is not None:
-            # First apply gene mask (remove ERCC), then HVG indices
-            tx = tx[self.gene_mask][self.hvg_indices]
             tx_control = tx_control[self.gene_mask][self.hvg_indices]
 
-        # Keep raw counts before normalization (used by ZINB loss in Tx AE)
         tx_raw = tx.clone()
-
-        # Normalize: library-size normalize then log1p, matching hooke-predict's
-        # TaskDatasetBase.transform() (target_sum=4000). The raw zarr contains count
-        # data with per-cell sums ~1M and values up to ~74k. Without this step,
-        # the flow-matching velocity ut = x1 - x0 has magnitude O(1k-10k), which
-        # causes MSE losses of ~60,000 instead of the expected O(1-10).
         tx = _normalize_log1p(tx)
         tx_control = _normalize_log1p(tx_control)
 
-        sample = {
+        return {
             "tx": tx,
             "tx_raw": tx_raw,
             "tx_control": tx_control,
             "meta": self.tokenizer(row),
         }
-        return sample
 
 
 @dataclasses.dataclass(frozen=True)

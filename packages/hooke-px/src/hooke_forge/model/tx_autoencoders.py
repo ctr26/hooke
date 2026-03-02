@@ -384,73 +384,32 @@ class TxAMPerceptualLoss(nn.Module):
         input_gene_names: list[str] | None = None,
     ):
         super().__init__()
-        self.checkpoint_path = checkpoint_path
-        self.device = device
+        from hooke_forge.utils.encoders import TxAMEncoder
 
-        try:
-            # Import TxAM encoder
-            from txam import TxAMEncoder
-
-            # Load pre-trained TxAM encoder wrapper
-            txam_encoder = TxAMEncoder.from_pretrained(checkpoint_path=checkpoint_path, device=device)
-
-            # Get the raw PyTorch encoder module for gradient-enabled inference
-            self.encoder = txam_encoder.get_encoder_module()
-            self.preprocessor = txam_encoder.preprocessor
-
-            # Set encoder to evaluation mode and freeze parameters
-            self.encoder.eval()
-            for param in self.encoder.parameters():
-                param.requires_grad = False
-
-            # Cache preprocessing parameters
-            self.target_library_size = getattr(self.preprocessor, "target_library_size", 10_000.0)
-
-        except ImportError as e:
-            raise ImportError(f"Failed to import txam: {e}. Please ensure txam package is available.") from e
+        self._txam = TxAMEncoder(device=torch.device(device), checkpoint_path=checkpoint_path)
 
         # --- Gene alignment (one-time) ---
         if input_gene_names is not None:
-            model_genes = self.preprocessor.gene_names
+            model_genes = self._txam.gene_names
             model_gene_to_idx = {g: i for i, g in enumerate(input_gene_names)}
-            # For each model gene, find its column in the input (or -1 if missing)
-            idx = []
-            for g in model_genes:
-                idx.append(model_gene_to_idx.get(g, -1))
+            idx = [model_gene_to_idx.get(g, -1) for g in model_genes]
             self.register_buffer("_align_idx", torch.tensor(idx, dtype=torch.long))
-        # If input_gene_names is None, no _align_idx buffer is created
 
     def _preprocess_counts(self, counts: torch.Tensor) -> torch.Tensor:
-        """Apply TxAM preprocessing: normalize + log1p transform.
-
-        Args:
-            counts: (B, G) raw counts tensor
-
-        Returns:
-            (B, G) preprocessed tensor
-        """
-        # Normalize per cell to target library size
+        """Apply TxAM preprocessing: normalize + log1p transform."""
         counts_sum = counts.sum(dim=1, keepdim=True).clamp(min=1e-8)
-        normalized = (counts / counts_sum) * self.target_library_size
-
-        # Apply log1p transform
+        normalized = (counts / counts_sum) * self._txam.target_library_size
         return torch.log1p(normalized)
 
     def _align(self, x: torch.Tensor) -> torch.Tensor:
         """Reorder/pad input columns to match model gene order."""
         if not hasattr(self, "_align_idx"):
             return x
-        # Pad a zero column at the end for missing genes (index == -1)
-        padded = F.pad(x, (0, 1), value=0.0)  # (B, G_input+1)
+        padded = F.pad(x, (0, 1), value=0.0)
         idx = self._align_idx.clamp(min=-1) % padded.shape[1]
-        # gather is not needed; advanced indexing works and is differentiable
-        return padded[:, idx]  # (B, G_model)
+        return padded[:, idx]
 
-    def forward(
-        self,
-        recon: torch.Tensor,
-        real: torch.Tensor,
-    ) -> torch.Tensor:
+    def forward(self, recon: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
         """Compute perceptual loss between reconstructed and real transcriptomics data.
 
         Args:
@@ -460,23 +419,18 @@ class TxAMPerceptualLoss(nn.Module):
         Returns:
             Scalar perceptual loss in TxAM embedding space.
         """
-        # Align gene order to match model expectations
         recon = self._align(recon)
         real = self._align(real)
 
-        # Preprocess both inputs
         recon_preprocessed = self._preprocess_counts(recon)
-
         with torch.no_grad():
             real_preprocessed = self._preprocess_counts(real)
 
-        # Extract embeddings using the raw encoder (preserves gradients for recon)
-        recon_embeddings = self.encoder(recon_preprocessed)
-
+        # Use the raw encoder directly (preserves gradients for recon)
+        recon_embeddings = self._txam.encoder(recon_preprocessed)
         with torch.no_grad():
-            real_embeddings = self.encoder(real_preprocessed)
+            real_embeddings = self._txam.encoder(real_preprocessed)
 
-        # Compute MSE loss between embeddings
         return F.mse_loss(recon_embeddings, real_embeddings)
 
 
@@ -497,7 +451,7 @@ def test_txam_gradient_flow(
         loss_fn = TxAMPerceptualLoss(checkpoint_path=checkpoint_path, device=device)
 
         # Create dummy data with realistic transcriptomics values
-        n_genes = loss_fn.preprocessor.num_genes
+        n_genes = len(loss_fn._txam.gene_names)
         batch_size = 4
 
         # Real data (no gradients needed)
@@ -508,7 +462,7 @@ def test_txam_gradient_flow(
         recon_counts.requires_grad_(True)
 
         print(f"Input shape: {recon_counts.shape}")
-        print(f"Target library size: {loss_fn.target_library_size}")
+        print(f"Target library size: {loss_fn._txam.target_library_size}")
 
         # Compute loss
         loss = loss_fn(recon_counts, real_counts)

@@ -14,52 +14,58 @@ import submitit
 import zarr
 import numcodecs
 
+from hooke_forge.inference.run_worker import (
+    REPRESENTATION_DIMS,
+    DEFAULT_PX_REPRESENTATIONS,
+    DEFAULT_TX_REPRESENTATIONS,
+    TX_ASSAY_TYPES,
+    detect_modality,
+)
+
 log = logging.getLogger(__name__)
 
-# Feature dimensions
-PHENOM_DIM = 1664
-DINO_DIM = 1024
-PRED_CHANNELS = 6
-PRED_IMG_SIZE = 256
-
-# Required columns in input parquet
-REQUIRED_COLUMNS = [
-    "image_path",
+# Common metadata columns required for all modalities
+_COMMON_COLUMNS = [
     "cell_type",
     "experiment_label",
-    "image_type",
     "well_address",
     "rec_id",
     "concentration",
 ]
 
+# Additional columns per modality
+_PX_COLUMNS = ["image_path", "image_type"]
+_TX_COLUMNS = ["zarr_row_idx"]
+
+
+def _get_required_columns(modality: str) -> list[str]:
+    extra = _TX_COLUMNS if modality == "tx" else _PX_COLUMNS
+    return _COMMON_COLUMNS + extra
+
 
 def prepare_metadata(
     input_parquet: Path,
     output_dir: Path,
+    modality: str,
     split_filter: str | None = None,
     source_filter: str | None = None,
 ) -> pl.DataFrame:
     """Prepare input parquet for inference.
 
     Adds zarr_index and complete columns. Optionally filters by split/source.
-
-    Args:
-        input_parquet: Path to input parquet file
-        output_dir: Output directory (saves prepared_metadata.parquet)
-        split_filter: Optional filter for split column
-        source_filter: Optional filter for source column
-
-    Returns:
-        Prepared DataFrame
     """
     df = pl.read_parquet(input_parquet).rechunk()
     log.info(f"Loaded input parquet: {len(df)} rows")
 
+    # Normalise assay_type / image_type
+    if "assay_type" not in df.columns and "image_type" in df.columns:
+        df = df.with_columns(pl.col("image_type").alias("assay_type"))
+
     # Validate required columns
-    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    required = _get_required_columns(modality)
+    missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"Missing required columns: {missing}")
+        raise ValueError(f"Missing required columns for {modality} modality: {missing}")
 
     # Apply filters
     if split_filter is not None and "split" in df.columns:
@@ -118,85 +124,51 @@ def create_zarr_arrays(
     output_dir: Path,
     num_obs: int,
     num_samples: int,
-    num_real_samples: int,
+    representations: list[str],
+    tx_feature_dim: int | None = None,
 ) -> None:
-    """Initialize shared zarr arrays for feature storage."""
+    """Initialize shared zarr arrays for the requested representations only."""
     zarr_dir = output_dir / "features"
     zarr_dir.mkdir(exist_ok=True)
 
     compressor = numcodecs.Blosc(cname="zstd", clevel=3, shuffle=numcodecs.Blosc.SHUFFLE)
 
-    real_phenom_path = zarr_dir / "real_phenom.zarr"
-    mode = "r+" if real_phenom_path.exists() else "w"
-
-    # Real features
-    if num_real_samples > 1:
-        real_shape = (num_obs, num_real_samples)
-        real_chunks = (1, num_real_samples)
-    else:
-        real_shape = (num_obs,)
-        real_chunks = (1,)
-
-    zarr.open(
-        str(zarr_dir / "real_phenom.zarr"),
-        mode=mode,
-        shape=real_shape + (PHENOM_DIM,),
-        chunks=real_chunks + (PHENOM_DIM,),
-        dtype="float32",
-        compressor=compressor,
-        zarr_format=2,
-    )
-    zarr.open(
-        str(zarr_dir / "real_dino.zarr"),
-        mode=mode,
-        shape=real_shape + (DINO_DIM,),
-        chunks=real_chunks + (DINO_DIM,),
-        dtype="float32",
-        compressor=compressor,
-        zarr_format=2,
-    )
-
-    # Predicted features
     if num_samples > 1:
-        pred_shape = (num_obs, num_samples)
-        pred_chunks = (1, num_samples)
+        sample_shape = (num_obs, num_samples)
+        sample_chunks = (1, num_samples)
     else:
-        pred_shape = (num_obs,)
-        pred_chunks = (1,)
+        sample_shape = (num_obs,)
+        sample_chunks = (1,)
 
-    zarr.open(
-        str(zarr_dir / "pred_phenom.zarr"),
-        mode=mode,
-        shape=pred_shape + (PHENOM_DIM,),
-        chunks=pred_chunks + (PHENOM_DIM,),
-        dtype="float32",
-        compressor=compressor,
-        zarr_format=2,
-    )
-    zarr.open(
-        str(zarr_dir / "pred_dino.zarr"),
-        mode=mode,
-        shape=pred_shape + (DINO_DIM,),
-        chunks=pred_chunks + (DINO_DIM,),
-        dtype="float32",
-        compressor=compressor,
-        zarr_format=2,
-    )
+    for name in representations:
+        dim, dtype = REPRESENTATION_DIMS[name]
 
-    # Predicted images
-    pred_images_path = zarr_dir / "pred_images.zarr"
-    images_mode = "r+" if pred_images_path.exists() else "w"
-    zarr.open(
-        str(pred_images_path),
-        mode=images_mode,
-        shape=pred_shape + (PRED_CHANNELS, PRED_IMG_SIZE, PRED_IMG_SIZE),
-        chunks=pred_chunks + (PRED_CHANNELS, PRED_IMG_SIZE, PRED_IMG_SIZE),
-        dtype="uint8",
-        compressor=compressor,
-        zarr_format=2,
-    )
+        # pred_tx has runtime-determined dimension
+        if dim is None:
+            if tx_feature_dim is None:
+                raise ValueError(f"tx_feature_dim must be provided for {name}")
+            dim = (tx_feature_dim,)
 
-    log.info(f"{'Opened existing' if mode == 'r+' else 'Created'} zarr arrays at {zarr_dir}")
+        # real_* features are never multi-sampled
+        if name.startswith("real_"):
+            shape = (num_obs,) + dim
+            chunks = (1,) + dim
+        else:
+            shape = sample_shape + dim
+            chunks = sample_chunks + dim
+
+        zarr_path = zarr_dir / f"{name}.zarr"
+        mode = "r+" if zarr_path.exists() else "w"
+        zarr.open(
+            str(zarr_path),
+            mode=mode,
+            shape=shape,
+            chunks=chunks,
+            dtype=dtype,
+            compressor=compressor,
+            zarr_format=2,
+        )
+        log.info(f"{'Opened' if mode == 'r+' else 'Created'} {name}.zarr shape={shape}")
 
 
 def create_worker_directories(
@@ -338,12 +310,15 @@ def run_distributed_inference(
     input_parquet: Path,
     output_dir: Path,
     model_config: dict | None = None,
+    flow_model_config: dict | None = None,
     num_workers: int = 100,
     num_samples: int = 36,
     num_real_samples: int = 1,
     batch_size: int = 3,
     partition: str = "hopper",
     qos: str | None = None,
+    representations: list[str] | None = None,
+    tx_zarr_path: str = "",
 ) -> Path:
     """Run distributed inference pipeline.
 
@@ -351,13 +326,16 @@ def run_distributed_inference(
         checkpoint_path: Path to model checkpoint
         input_parquet: Path to input metadata parquet
         output_dir: Output directory
-        model_config: Optional model config dict
+        model_config: Optional model config dict (e.g. {"name": "DiT-XL/2"})
+        flow_model_config: Optional flow_model config dict (e.g. {"modality": "tx"})
         num_workers: Number of SLURM workers
-        num_samples: Samples per image for predictions
+        num_samples: Samples per observation for predictions
         num_real_samples: Samples for real image features
         batch_size: Batch size per worker
         partition: SLURM partition
         qos: SLURM QOS
+        representations: List of representations to extract (auto-detected if None)
+        tx_zarr_path: Path to tx feature zarr (required for tx modality)
 
     Returns:
         Path to output directory
@@ -371,6 +349,18 @@ def run_distributed_inference(
     log.info(f"  Output: {output_dir}")
     log.info(f"  Workers: {num_workers}")
 
+    # Auto-detect modality from input parquet
+    peek_df = pl.read_parquet(input_parquet, n_rows=1)
+    assay_col = "assay_type" if "assay_type" in peek_df.columns else "image_type"
+    assay_type = peek_df[assay_col][0]
+    modality = detect_modality(assay_type)
+    log.info(f"  Modality: {modality} (assay_type={assay_type})")
+
+    # Default representations
+    if representations is None:
+        representations = DEFAULT_TX_REPRESENTATIONS if modality == "tx" else DEFAULT_PX_REPRESENTATIONS
+    log.info(f"  Representations: {representations}")
+
     # Check for resume
     prepared_path = output_dir / "prepared_metadata.parquet"
     if prepared_path.exists():
@@ -381,9 +371,15 @@ def run_distributed_inference(
         log.info(f"Found {num_complete}/{len(df)} already complete")
         df.write_parquet(prepared_path)
     else:
-        df = prepare_metadata(input_parquet, output_dir)
+        df = prepare_metadata(input_parquet, output_dir, modality=modality)
 
     N = len(df)
+
+    # Determine tx_feature_dim if needed
+    tx_feature_dim = None
+    if "pred_tx" in representations:
+        fm_cfg = flow_model_config or {}
+        tx_feature_dim = fm_cfg.get("tx_feature_dim", 5000)
 
     # Create worker config
     worker_conf = {
@@ -394,17 +390,21 @@ def run_distributed_inference(
             "num_real_image_samples": num_real_samples,
             "batch_size": batch_size,
             "num_workers": 4,
+            "representations": representations,
+            "tx_zarr_path": tx_zarr_path,
         }
     }
     if model_config:
         worker_conf["model"] = model_config
+    if flow_model_config:
+        worker_conf["flow_model"] = flow_model_config
 
     config_path = output_dir / "config.json"
     with open(config_path, "w") as f:
         json.dump(worker_conf, f, indent=2)
 
-    # Create zarr arrays
-    create_zarr_arrays(output_dir, N, num_samples, num_real_samples)
+    # Create zarr arrays for requested representations only
+    create_zarr_arrays(output_dir, N, num_samples, representations, tx_feature_dim)
 
     # Create worker directories
     worker_dirs = create_worker_directories(df, num_workers, output_dir)

@@ -1,14 +1,14 @@
 """Worker script for distributed inference.
 
-Each worker processes a chunk of images assigned to it, computes embeddings,
-and writes results to a shared zarr file.
+Each worker processes a chunk of observations assigned to it, generates
+predictions for the requested modality (px or tx), extracts representations,
+and writes results to shared zarr arrays.
 
 Usage:
     python run_inference_worker.py --worker_dir /path/to/worker_0 --config /path/to/config.json
 """
 
 import argparse
-import dataclasses
 import json
 import logging
 import os
@@ -21,41 +21,228 @@ import zarr
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from hooke_forge.data.dataset import (
-    IMG_SIZE,
-    CellDataset,
-    CellPaintConverter,
-    MetaVocab,
-)
-from hooke_forge.model.architecture import get_model_cls
-from hooke_forge.model.tokenizer import DataFrameTokenizer, MetaDataConfig
-from hooke_forge.training.trainer import generate
+from hooke_forge.model.tokenizer import DataFrameTokenizer
+from hooke_forge.data.dataset import CellDataset, CellPaintConverter, IMG_SIZE, TxDataset
 from hooke_forge.utils.ema import KarrasEMA
-from hooke_forge.utils.encoders import DINOv2Detector, PH2BFDetector, Phenom2Detector, StabilityCPEncoder
-
-_meta_defaults = MetaDataConfig()
-REC_ID_DIM = _meta_defaults.rec_id_dim
-CONCENTRATION_DIM = _meta_defaults.concentration_dim
-CELL_TYPE_DIM = _meta_defaults.cell_type_dim
-ASSAY_TYPE_DIM = _meta_defaults.assay_type_dim
-EXPERIMENT_DIM = _meta_defaults.experiment_dim
-WELL_ADDRESS_DIM = _meta_defaults.well_address_dim
+from hooke_forge.utils.encoders import (
+    DINOv2Detector,
+    Phenom2Detector,
+    PH2BFDetector,
+    StabilityCPEncoder,
+    TxAMEncoder,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
-# Feature dimensions
-PHENOM_DIM = 1664
-DINO_DIM = 1024
+# ---------------------------------------------------------------------------
+# Representation registry
+# ---------------------------------------------------------------------------
+
+REPRESENTATION_DIMS: dict[str, tuple[tuple[int, ...], str]] = {
+    "pred_phenom": ((1664,), "float32"),
+    "pred_dino": ((1024,), "float32"),
+    "pred_images": ((6, 256, 256), "uint8"),
+    "pred_tx": (None, "float32"),  # dim set at runtime from model
+    "pred_txam": ((512,), "float32"),
+    "real_phenom": ((1664,), "float32"),
+    "real_dino": ((1024,), "float32"),
+}
+
+DEFAULT_PX_REPRESENTATIONS = ["pred_phenom", "pred_images"]
+DEFAULT_TX_REPRESENTATIONS = ["pred_tx"]
+
+TX_ASSAY_TYPES = {"trek"}
+
+
+def detect_modality(assay_type: str) -> str:
+    return "tx" if assay_type.lower() in TX_ASSAY_TYPES else "px"
+
+
+# ---------------------------------------------------------------------------
+# Model loading
+# ---------------------------------------------------------------------------
 
 
 def strip_orig_mod_prefix(state_dict: dict) -> dict:
     """Strip _orig_mod prefix from state dict keys (added by torch.compile)."""
-    new_state_dict = {}
-    for key, value in state_dict.items():
-        new_key = key.replace("._orig_mod", "")
-        new_state_dict[new_key] = value
-    return new_state_dict
+    return {k.replace("._orig_mod", ""): v for k, v in state_dict.items()}
+
+
+def load_model(checkpoint_path: str, device: torch.device):
+    """Load the model from checkpoint using get_model() factory.
+
+    Returns (model, tokenizer).
+    """
+    state = torch.load(checkpoint_path, weights_only=False, map_location=device)
+    tokenizer = DataFrameTokenizer.from_state_dict(state["tokenizer"])
+
+    from hooke_forge.model.flow_matching import get_model
+
+    model = get_model()
+    model.to(device)
+
+    ema = KarrasEMA(model)
+    ema.load_state_dict(strip_orig_mod_prefix(state["ema"]))
+    model = ema.module
+    model.eval()
+    return model, tokenizer
+
+
+# ---------------------------------------------------------------------------
+# Extractor builders
+# ---------------------------------------------------------------------------
+
+
+def build_extractors(representations: list[str], assay_type: str, device: torch.device) -> dict:
+    """Build only the extractors needed for the requested representations.
+
+    Returns {name: callable} dict.
+    """
+    extractors = {}
+
+    # VAE is needed for any px representation that requires decoded images
+    needs_vae = any(r in representations for r in ("pred_images", "pred_phenom", "pred_dino"))
+    if needs_vae:
+        extractors["_vae"] = StabilityCPEncoder(device=device)
+
+    needs_phenom = any(r in representations for r in ("pred_phenom", "real_phenom"))
+    if needs_phenom:
+        if assay_type == "brightfield_3channel":
+            extractors["_phenom"] = PH2BFDetector(device=device)
+            log.info("Using PH2BF Embedding")
+        else:
+            extractors["_phenom"] = Phenom2Detector(device=device)
+            log.info("Using Phenom2 Embedding")
+
+    needs_dino = any(r in representations for r in ("pred_dino", "real_dino"))
+    if needs_dino:
+        extractors["_dino"] = DINOv2Detector(device=device)
+        extractors["_cp2rgb"] = CellPaintConverter(device=device)
+
+    if "pred_txam" in representations:
+        extractors["_txam"] = TxAMEncoder(device=device)
+
+    return extractors
+
+
+# ---------------------------------------------------------------------------
+# Batch processing
+# ---------------------------------------------------------------------------
+
+
+@torch.inference_mode()
+def process_batch_px(
+    *,
+    model,
+    batch: dict,
+    device: torch.device,
+    extractors: dict,
+    representations: list[str],
+    num_samples: int,
+) -> dict:
+    """Process a px batch: generate latents → VAE decode → extract representations."""
+    px1 = batch["img"].to(device, non_blocking=True)
+    meta = {k: v.to(device, non_blocking=True) for k, v in batch["meta"].items()}
+    zarr_indices = batch["zarr_index"].numpy()
+    B = px1.shape[0]
+
+    vae = extractors.get("_vae")
+    phenom = extractors.get("_phenom")
+    dino = extractors.get("_dino")
+    cp2rgb = extractors.get("_cp2rgb")
+
+    # Generate predictions
+    if num_samples > 1:
+        meta_rep = {k: v.repeat_interleave(num_samples, dim=0) for k, v in meta.items()}
+        px0 = torch.randn(B * num_samples, 8, 32, 32, device=device)
+        preds_latent, _ = model.generate("px", x0=px0, meta=meta_rep)
+    else:
+        px0 = torch.randn(B, 8, 32, 32, device=device)
+        preds_latent, _ = model.generate("px", x0=px0, meta=meta)
+
+    # Decode latents to images if needed
+    needs_decode = any(r in representations for r in ("pred_images", "pred_phenom", "pred_dino"))
+    preds = vae.decode(preds_latent) if needs_decode else None
+
+    results = {"zarr_indices": zarr_indices}
+
+    # Extract real image features
+    if "real_phenom" in representations:
+        real_feats = phenom(px1).cpu().numpy()
+        results["real_phenom"] = real_feats
+
+    if "real_dino" in representations:
+        real_dino = dino(cp2rgb(px1.to(torch.uint8))).cpu().numpy()
+        results["real_dino"] = real_dino
+
+    # Extract predicted features
+    if "pred_phenom" in representations:
+        feat = phenom(preds).cpu().numpy()
+        if num_samples > 1:
+            feat = feat.reshape(B, num_samples, -1)
+        results["pred_phenom"] = feat
+
+    if "pred_dino" in representations:
+        feat = dino(cp2rgb(preds)).cpu().numpy()
+        if num_samples > 1:
+            feat = feat.reshape(B, num_samples, -1)
+        results["pred_dino"] = feat
+
+    if "pred_images" in representations:
+        imgs = preds.cpu().numpy()
+        if num_samples > 1:
+            imgs = imgs.reshape(B, num_samples, *imgs.shape[1:])
+        results["pred_images"] = imgs
+
+    return results
+
+
+@torch.inference_mode()
+def process_batch_tx(
+    *,
+    model,
+    batch: dict,
+    device: torch.device,
+    extractors: dict,
+    representations: list[str],
+    num_samples: int,
+    tx_feature_dim: int,
+) -> dict:
+    """Process a tx batch: generate tx vectors → extract representations."""
+    meta = {k: v.to(device, non_blocking=True) for k, v in batch["meta"].items()}
+    zarr_indices = batch["zarr_index"].numpy()
+    B = meta["rec_id"].shape[0]
+
+    if num_samples > 1:
+        meta_rep = {k: v.repeat_interleave(num_samples, dim=0) for k, v in meta.items()}
+        tx0 = torch.randn(B * num_samples, tx_feature_dim, device=device)
+        preds, _ = model.generate("tx", x0=tx0, meta=meta_rep)
+    else:
+        tx0 = torch.randn(B, tx_feature_dim, device=device)
+        preds, _ = model.generate("tx", x0=tx0, meta=meta)
+
+    results = {"zarr_indices": zarr_indices}
+
+    if "pred_tx" in representations:
+        tx_out = preds.cpu().numpy()
+        if num_samples > 1:
+            tx_out = tx_out.reshape(B, num_samples, -1)
+        results["pred_tx"] = tx_out
+
+    if "pred_txam" in representations:
+        txam = extractors["_txam"]
+        feat = txam(preds).cpu().numpy()
+        if num_samples > 1:
+            feat = feat.reshape(B, num_samples, -1)
+        results["pred_txam"] = feat
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Worker config & main loop
+# ---------------------------------------------------------------------------
 
 
 @ornamentalist.configure()
@@ -66,6 +253,8 @@ def get_worker_config(
     num_real_image_samples: int = ornamentalist.Configurable[1],
     batch_size: int = ornamentalist.Configurable[4],
     num_workers: int = ornamentalist.Configurable[4],
+    representations: list = ornamentalist.Configurable[[]],
+    tx_zarr_path: str = ornamentalist.Configurable[""],
 ):
     return (
         checkpoint_path,
@@ -74,124 +263,9 @@ def get_worker_config(
         num_real_image_samples,
         batch_size,
         num_workers,
+        representations,
+        tx_zarr_path,
     )
-
-
-def load_model(
-    checkpoint_path: str,
-    device: torch.device,
-):
-    """Load the model and VAE from checkpoint.
-
-    Args:
-        checkpoint_path: Path to the checkpoint file.
-        device: Device to load the model on.
-
-    Returns:
-        Tuple of (model, vae, tokenizer)
-    """
-    # Load checkpoint
-    state = torch.load(checkpoint_path, weights_only=False, map_location=device)
-
-    # Restore tokenizer from checkpoint
-    tokenizer = DataFrameTokenizer.from_state_dict(state["tokenizer"])
-
-    # Build vocab from tokenizer
-    vocab = MetaVocab(
-        rec_id_dim=REC_ID_DIM,
-        concentration_dim=CONCENTRATION_DIM,
-        cell_type_dim=CELL_TYPE_DIM,
-        experiment_dim=EXPERIMENT_DIM,
-        assay_type_dim=ASSAY_TYPE_DIM,
-        well_address_dim=WELL_ADDRESS_DIM,
-        pad_length=tokenizer.pad_length,
-    )
-
-    # Create model with correct vocab sizes (exclude pad_length which is not a model param)
-    model_cls = get_model_cls()
-    vocab_dict = dataclasses.asdict(vocab)
-    del vocab_dict["pad_length"]
-    net = model_cls(
-        input_size=32,
-        in_channels=8,
-        learn_sigma=False,
-        **vocab_dict,
-    )
-    net.to(device)
-
-    # Load EMA weights (strip _orig_mod prefix if checkpoint was saved with torch.compile)
-    ema = KarrasEMA(net)
-    ema_state = strip_orig_mod_prefix(state["ema"])
-    ema.load_state_dict(ema_state)
-
-    model = ema.module
-    model.eval()
-
-    vae = StabilityCPEncoder(device=device)
-    return model, vae, tokenizer
-
-
-@torch.inference_mode()
-def process_batch(
-    *,
-    model,
-    vae: StabilityCPEncoder,
-    batch: dict,
-    device: torch.device,
-    phenom: Phenom2Detector,
-    dino: DINOv2Detector,
-    cp2rgb: CellPaintConverter,
-    num_samples: int,
-) -> dict:
-    """Process a single batch and return features."""
-    px1 = batch["img"].to(device, non_blocking=True)
-    meta = {k: v.to(device, non_blocking=True) for k, v in batch["meta"].items()}
-    zarr_indices = batch["zarr_index"].numpy()
-
-    # Allow multiple real image crops per example (B, S, C, H, W)
-    if px1.ndim == 5:
-        B, S, C, H, W = px1.shape
-    else:
-        B, C, H, W = px1.shape
-
-    # Extract real image features
-    # real_phenom = phenom(px1_flat).cpu().numpy()
-    # real_dino = dino(cp2rgb(px1_flat.to(torch.uint8))).cpu().numpy()
-    # if S > 1:
-    #     real_phenom = real_phenom.reshape(B, S, PHENOM_DIM)
-    #     real_dino = real_dino.reshape(B, S, DINO_DIM)
-    # else:
-    #     real_phenom = real_phenom.reshape(B, PHENOM_DIM)
-    #     real_dino = real_dino.reshape(B, DINO_DIM)
-
-    if num_samples > 1:
-        # Generate multiple samples per image (DART-style)
-        meta_rep = {k: v.repeat_interleave(num_samples, dim=0) for k, v in meta.items()}
-        px0 = torch.randn(B * num_samples, 8, 32, 32, device=device)
-        preds, _ = generate(model=model, x0=px0, meta1=meta_rep)
-        preds = vae.decode(preds)
-
-        # Extract features and reshape to (B, num_samples, dim)
-        pred_phenom = phenom(preds).cpu().numpy().reshape(B, num_samples, PHENOM_DIM)
-        # pred_dino = dino(cp2rgb(preds)).cpu().numpy().reshape(B, num_samples, DINO_DIM)
-        pred_images = preds.cpu().numpy().reshape(B, num_samples, preds.shape[1], preds.shape[2], preds.shape[3])
-    else:
-        # Single sample per image
-        px0 = torch.randn(B, 8, 32, 32, device=device)
-        preds, _ = generate(model=model, x0=px0, meta1=meta)
-        preds = vae.decode(preds)
-
-        pred_phenom = phenom(preds).cpu().numpy()
-        pred_images = preds.cpu().numpy()
-
-    return {
-        "zarr_indices": zarr_indices,
-        # "real_phenom": real_phenom,
-        # "real_dino": real_dino,
-        "pred_phenom": pred_phenom,
-        # "pred_dino": pred_dino,
-        "pred_images": pred_images,
-    }
 
 
 def run_worker(worker_dir: str, config_path: str):
@@ -201,13 +275,11 @@ def run_worker(worker_dir: str, config_path: str):
     with open(config_path) as f:
         config = json.load(f)
 
-    # Initialize ornamentalist
     if "model" not in config:
         config["model"] = {"name": "DiT-XL/2"}
 
     ornamentalist.setup(config, force=True)
 
-    # Get injected parameters
     (
         checkpoint_path,
         zarr_dir,
@@ -215,6 +287,8 @@ def run_worker(worker_dir: str, config_path: str):
         num_real_samples,
         batch_size,
         num_workers,
+        representations,
+        tx_zarr_path,
     ) = get_worker_config()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -224,10 +298,19 @@ def run_worker(worker_dir: str, config_path: str):
 
     # Load chunk metadata
     df = pl.read_parquet(chunk_path)
-    assay_type = df["assay_type"].unique()
+    assay_col = "assay_type" if "assay_type" in df.columns else "image_type"
+    assay_type = df[assay_col].unique()
     assert len(assay_type) == 1, "All rows must have the same assay type"
-
     assay_type = assay_type[0]
+
+    modality = detect_modality(assay_type)
+    log.info(f"Detected modality: {modality} (assay_type={assay_type})")
+
+    # Default representations if not specified
+    if not representations:
+        representations = DEFAULT_TX_REPRESENTATIONS if modality == "tx" else DEFAULT_PX_REPRESENTATIONS
+    log.info(f"Representations: {representations}")
+
     incomplete_mask = ~df["complete"]
     df_incomplete = df.filter(incomplete_mask)
 
@@ -237,27 +320,29 @@ def run_worker(worker_dir: str, config_path: str):
 
     log.info(f"Processing {len(df_incomplete)} incomplete rows out of {len(df)} total")
 
-    # Load model (also returns tokenizer from checkpoint)
+    # Load model
     log.info(f"Loading checkpoint: {checkpoint_path}")
-    model, vae, tokenizer = load_model(checkpoint_path, device)
+    model, tokenizer = load_model(checkpoint_path, device)
 
-    # Initialize feature extractors
-    if assay_type == "brightfield_3channel":
-        phenom = PH2BFDetector(device=device)
-        log.info("Using PH2BF Embedding")
+    # Build extractors
+    extractors = build_extractors(representations, assay_type, device)
+
+    # Create dataset and loader
+    if modality == "tx":
+        dataset_obj = TxDataset(
+            metadata=df_incomplete,
+            tokenizer=tokenizer,
+            zarr_path=tx_zarr_path,
+            train=False,
+        )
     else:
-        phenom = Phenom2Detector(device=device)
-        log.info("Using Phenom2 Embedding")
-    dino = DINOv2Detector(device=device)
-    cp2rgb = CellPaintConverter(device=device)
+        dataset_obj = CellDataset(
+            metadata=df_incomplete,
+            tokenizer=tokenizer,
+            train=False,
+            size=IMG_SIZE,
+        )
 
-    # Create dataset and loader for incomplete rows only
-    dataset_obj = CellDataset(
-        metadata=df_incomplete,
-        tokenizer=tokenizer,
-        train=False,
-        size=IMG_SIZE,
-    )
     loader = DataLoader(
         dataset_obj,
         batch_size=batch_size,
@@ -267,34 +352,50 @@ def run_worker(worker_dir: str, config_path: str):
         drop_last=False,
     )
 
-    # Open shared zarr arrays
-    # real_phenom_zarr = zarr.open(os.path.join(zarr_dir, "real_phenom.zarr"), mode="r+")
-    # real_dino_zarr = zarr.open(os.path.join(zarr_dir, "real_dino.zarr"), mode="r+")
-    pred_phenom_zarr = zarr.open(os.path.join(zarr_dir, "pred_phenom.zarr"), mode="r+")
-    # pred_dino_zarr = zarr.open(os.path.join(zarr_dir, "pred_dino.zarr"), mode="r+")
-    pred_images_zarr = zarr.open(os.path.join(zarr_dir, "pred_images.zarr"), mode="r+")
+    # Open shared zarr arrays for requested representations
+    zarr_arrays = {}
+    for name in representations:
+        zarr_path = os.path.join(zarr_dir, f"{name}.zarr")
+        zarr_arrays[name] = zarr.open(zarr_path, mode="r+")
+
+    # Determine tx_feature_dim from model if needed
+    tx_feature_dim = None
+    if modality == "tx":
+        tx_vf = model.vector_fields.get("tx")
+        if tx_vf is not None:
+            tx_feature_dim = tx_vf.data_dim
+        else:
+            cfg = ornamentalist.get_config()
+            tx_feature_dim = cfg.get("flow_model", {}).get("tx_feature_dim", 5000)
 
     # Process batches
     completed_indices = []
     for batch in tqdm(loader, desc="Processing batches"):
-        results = process_batch(
-            model=model,
-            vae=vae,
-            batch=batch,
-            device=device,
-            phenom=phenom,
-            dino=dino,
-            cp2rgb=cp2rgb,
-            num_samples=num_samples,
-        )
+        if modality == "tx":
+            results = process_batch_tx(
+                model=model,
+                batch=batch,
+                device=device,
+                extractors=extractors,
+                representations=representations,
+                num_samples=num_samples,
+                tx_feature_dim=tx_feature_dim,
+            )
+        else:
+            results = process_batch_px(
+                model=model,
+                batch=batch,
+                device=device,
+                extractors=extractors,
+                representations=representations,
+                num_samples=num_samples,
+            )
 
         # Write to zarr
         for i, idx in enumerate(results["zarr_indices"]):
-            # real_phenom_zarr[idx] = results["real_phenom"][i]
-            # real_dino_zarr[idx] = results["real_dino"][i]
-            pred_phenom_zarr[idx] = results["pred_phenom"][i]
-            # pred_dino_zarr[idx] = results["pred_dino"][i]
-            pred_images_zarr[idx] = results["pred_images"][i]
+            for name in representations:
+                if name in results:
+                    zarr_arrays[name][idx] = results[name][i]
             completed_indices.append(idx)
 
     # Mark completed rows in the parquet file
@@ -307,7 +408,6 @@ def run_worker(worker_dir: str, config_path: str):
     )
     df.write_parquet(chunk_path)
 
-    # Verify all complete
     if df["complete"].all():
         log.info("All rows complete")
     else:

@@ -129,3 +129,32 @@ class PH2BFDetector:
             x = x[:, :3, :, :]
         x = x.to(self.device, non_blocking=True)
         return self.model(x)
+
+
+class TxAMEncoder:
+    """Standalone TxAM feature extractor: raw counts (B, G) → embeddings (B, 512)."""
+
+    EMBEDDING_DIM = 512
+
+    def __init__(
+        self,
+        device: torch.device,
+        checkpoint_path: str = "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt",
+    ):
+        from txam import TxAMEncoder as _TxAMEncoder
+
+        txam = _TxAMEncoder.from_pretrained(checkpoint_path=checkpoint_path, device=str(device))
+        self.encoder = txam.get_encoder_module()
+        self.encoder.eval()
+        for p in self.encoder.parameters():
+            p.requires_grad = False
+        self.target_library_size = getattr(txam.preprocessor, "target_library_size", 10_000.0)
+        self.gene_names = getattr(txam.preprocessor, "gene_names", None)
+        self.device = device
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalize + log1p, then encode.
+        Input: (B, G) raw counts. Output: (B, 512) embeddings."""
+        counts_sum = x.sum(dim=1, keepdim=True).clamp(min=1e-8)
+        x = torch.log1p((x / counts_sum) * self.target_library_size)
+        return self.encoder(x.to(self.device))

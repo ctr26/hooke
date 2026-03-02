@@ -11,13 +11,11 @@ import zarr
 
 log = logging.getLogger(__name__)
 
-ZARR_PRIORITY = [
-    "pred_phenom.zarr",
-    "pred_dino.zarr",
-    "pred_images.zarr",
-    "real_dino.zarr",
-    "real_phenom.zarr",
-]
+def _discover_zarr_arrays(zarr_dir: Path) -> list[str]:
+    """Discover available zarr arrays in the features directory."""
+    if not zarr_dir.exists():
+        return []
+    return sorted(p.name for p in zarr_dir.iterdir() if p.name.endswith(".zarr"))
 
 
 def check_completion(output_dir: Path) -> tuple[int, int]:
@@ -62,14 +60,12 @@ def validate_zarr_consistency(output_dir: Path) -> bool:
     n_metadata = len(df)
 
     # Check first available zarr
-    for zarr_name in ZARR_PRIORITY:
-        zarr_path = zarr_dir / zarr_name
-        if zarr_path.exists():
-            arr = zarr.open(str(zarr_path), mode="r")
-            n_zarr = arr.shape[0]
-            return n_metadata == n_zarr
+    candidates = _discover_zarr_arrays(zarr_dir)
+    if not candidates:
+        return False
 
-    return False
+    arr = zarr.open(str(zarr_dir / candidates[0]), mode="r")
+    return n_metadata == arr.shape[0]
 
 
 def _pick_zarr_array(zarr_dir: Path, zarr_name: str | None = None):
@@ -80,12 +76,12 @@ def _pick_zarr_array(zarr_dir: Path, zarr_name: str | None = None):
             raise FileNotFoundError(f"Requested zarr not found: {path}")
         return zarr_name, zarr.open(str(path), mode="r")
 
-    for candidate in ZARR_PRIORITY:
-        path = zarr_dir / candidate
-        if path.exists():
-            return candidate, zarr.open(str(path), mode="r")
+    candidates = _discover_zarr_arrays(zarr_dir)
+    if not candidates:
+        raise FileNotFoundError(f"No zarr arrays found in {zarr_dir}")
 
-    raise FileNotFoundError(f"No zarr arrays found in {zarr_dir}. Looked for: {ZARR_PRIORITY}")
+    name = candidates[0]
+    return name, zarr.open(str(zarr_dir / name), mode="r")
 
 
 def _compute_nonzero_mask(arr, batch_rows: int = 256) -> np.ndarray:
