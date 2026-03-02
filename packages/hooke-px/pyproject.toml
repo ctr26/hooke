@@ -26,6 +26,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "wandb>=0.21.0",
     "zarr>=3.1.5",
+    # Note: txam package should be installed separately from local txam-inference repository
 ]
 
 [build-system]
@@ -50,5 +51,5 @@ dev = [
 hooke-train = "hooke_forge.training.train:cli"
 hooke-train-tx-ae = "hooke_forge.training.train_tx_ae:cli"
 hooke-eval = "hooke_forge.evaluation.eval:cli"
-hooke-infer = "hooke_forge.inference.run_distributed:main"
+hooke-infer = "hooke_forge.inference.run:main"
 hooke-gene-select = "hooke_forge.utils.tx_gene_selection:cli"

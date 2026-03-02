@@ -12,6 +12,7 @@ from pathlib import Path
 import polars as pl
 import submitit
 import zarr
+import numcodecs
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +39,6 @@ def prepare_metadata(
     output_dir: Path,
     split_filter: str | None = None,
     source_filter: str | None = None,
-    vcb_dataset: str | None = None,
 ) -> pl.DataFrame:
     """Prepare input parquet for inference.
 
@@ -49,20 +49,12 @@ def prepare_metadata(
         output_dir: Output directory (saves prepared_metadata.parquet)
         split_filter: Optional filter for split column
         source_filter: Optional filter for source column
-        vcb_dataset: Optional VCB dataset type to transform obs parquet
 
     Returns:
         Prepared DataFrame
     """
     df = pl.read_parquet(input_parquet).rechunk()
     log.info(f"Loaded input parquet: {len(df)} rows")
-
-    # Apply VCB transformation if specified
-    if vcb_dataset:
-        from hooke_forge.inference.vcb_datasets import transform_vcb_dataset
-
-        df = transform_vcb_dataset(df, vcb_dataset)
-        log.info(f"Applied VCB transformation for '{vcb_dataset}'")
 
     # Validate required columns
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
@@ -132,7 +124,7 @@ def create_zarr_arrays(
     zarr_dir = output_dir / "features"
     zarr_dir.mkdir(exist_ok=True)
 
-    compressor = zarr.Blosc(cname="zstd", clevel=3, shuffle=zarr.Blosc.SHUFFLE)
+    compressor = numcodecs.Blosc(cname="zstd", clevel=3, shuffle=numcodecs.Blosc.SHUFFLE)
 
     real_phenom_path = zarr_dir / "real_phenom.zarr"
     mode = "r+" if real_phenom_path.exists() else "w"
@@ -152,6 +144,7 @@ def create_zarr_arrays(
         chunks=real_chunks + (PHENOM_DIM,),
         dtype="float32",
         compressor=compressor,
+        zarr_format=2,
     )
     zarr.open(
         str(zarr_dir / "real_dino.zarr"),
@@ -160,6 +153,7 @@ def create_zarr_arrays(
         chunks=real_chunks + (DINO_DIM,),
         dtype="float32",
         compressor=compressor,
+        zarr_format=2,
     )
 
     # Predicted features
@@ -177,6 +171,7 @@ def create_zarr_arrays(
         chunks=pred_chunks + (PHENOM_DIM,),
         dtype="float32",
         compressor=compressor,
+        zarr_format=2,
     )
     zarr.open(
         str(zarr_dir / "pred_dino.zarr"),
@@ -185,6 +180,7 @@ def create_zarr_arrays(
         chunks=pred_chunks + (DINO_DIM,),
         dtype="float32",
         compressor=compressor,
+        zarr_format=2,
     )
 
     # Predicted images
@@ -197,6 +193,7 @@ def create_zarr_arrays(
         chunks=pred_chunks + (PRED_CHANNELS, PRED_IMG_SIZE, PRED_IMG_SIZE),
         dtype="uint8",
         compressor=compressor,
+        zarr_format=2,
     )
 
     log.info(f"{'Opened existing' if mode == 'r+' else 'Created'} zarr arrays at {zarr_dir}")
@@ -347,7 +344,6 @@ def run_distributed_inference(
     batch_size: int = 3,
     partition: str = "hopper",
     qos: str | None = None,
-    vcb_dataset: str | None = None,
 ) -> Path:
     """Run distributed inference pipeline.
 
@@ -362,7 +358,6 @@ def run_distributed_inference(
         batch_size: Batch size per worker
         partition: SLURM partition
         qos: SLURM QOS
-        vcb_dataset: Optional VCB dataset type to transform obs parquet
 
     Returns:
         Path to output directory
@@ -386,7 +381,7 @@ def run_distributed_inference(
         log.info(f"Found {num_complete}/{len(df)} already complete")
         df.write_parquet(prepared_path)
     else:
-        df = prepare_metadata(input_parquet, output_dir, vcb_dataset=vcb_dataset)
+        df = prepare_metadata(input_parquet, output_dir)
 
     N = len(df)
 

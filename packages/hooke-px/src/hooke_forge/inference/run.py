@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Unified inference pipeline for big-img model evaluation.
-
-Combines checkpoint discovery, distributed inference, validation, and VCB
-preparation into a single workflow.
+"""Inference pipeline: checkpoint -> distributed inference -> validation -> map building.
 
 Usage:
     python -m hooke_forge.inference.run \
@@ -10,8 +7,7 @@ Usage:
         --step 200000 \
         --dataset /path/to/metadata.parquet \
         --output-base /path/to/metrics \
-        --ground-truth-dir /path/to/vcb_ground_truth \
-        --task-id phenorescue
+        --build-maps
 """
 
 import argparse
@@ -27,7 +23,9 @@ log = logging.getLogger(__name__)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run inference pipeline from checkpoint to VCB-ready data")
+    parser = argparse.ArgumentParser(
+        description="Run inference pipeline from checkpoint to map building"
+    )
     parser.add_argument(
         "--training-dir",
         type=Path,
@@ -43,27 +41,14 @@ def parse_args():
     parser.add_argument(
         "--dataset",
         type=Path,
-        default=None,
-        help="Input parquet with observations (optional if --vcb-dataset provided)",
+        required=True,
+        help="Input parquet with observations",
     )
     parser.add_argument(
         "--output-base",
         type=Path,
         required=True,
-        help="Base output directory (creates step_{N}/ subdirectory)",
-    )
-    parser.add_argument(
-        "--ground-truth-dir",
-        type=Path,
-        required=True,
-        help="VCB ground truth dataset directory",
-    )
-    parser.add_argument(
-        "--task-id",
-        type=str,
-        required=True,
-        choices=["virtual_map", "phenorescue"],
-        help="VCB task (determines biological_context)",
+        help="Base output directory (creates {data_version}/{model_config}/step_{N}/ subdirectory)",
     )
     parser.add_argument(
         "--num-workers",
@@ -98,26 +83,19 @@ def parse_args():
     parser.add_argument(
         "--skip-inference",
         action="store_true",
-        help="Skip inference, only run validation and VCB prep",
+        help="Skip inference, only run validation and map building",
     )
     parser.add_argument(
-        "--vcb-dataset",
+        "--build-maps",
+        action="store_true",
+        help="Build perturbation similarity maps after inference",
+    )
+    parser.add_argument(
+        "--perturbation-col",
         type=str,
-        choices=["drugscreen", "cross_cell_line"],
-        default=None,
-        help="VCB dataset type (transforms obs parquet to inference format)",
+        default="inchikey",
+        help="Column for perturbation grouping in map building (default: inchikey)",
     )
-    parser.add_argument(
-        "--include-validation",
-        action="store_true",
-        help="Include validation observations in predictions (may cause VCB mismatches)",
-    )
-    parser.add_argument(
-        "--create-test-only",
-        action="store_true",
-        help="Force creation of test-only predictions (default when test+valid detected)",
-    )
-
     return parser.parse_args()
 
 
@@ -128,20 +106,10 @@ def main():
     from hooke_forge.inference.checkpoint import extract_model_config, find_checkpoint
     from hooke_forge.inference.distributed import run_distributed_inference
     from hooke_forge.inference.lineage import get_model_lineage
-    from hooke_forge.inference.prepare_eval import prepare_for_vcb, print_vcb_command
-    from hooke_forge.inference.validation import check_completion, recover_completion_status
-    from hooke_forge.inference.vcb_datasets import get_vcb_obs_path
-
-    # Resolve dataset path
-    if args.dataset is None and args.vcb_dataset is None:
-        log.error("Must provide either --dataset or --vcb-dataset")
-        sys.exit(1)
-
-    if args.dataset is None:
-        # Use default VCB obs path
-        args.dataset = Path(get_vcb_obs_path(args.vcb_dataset))
-        log.info(f"Using VCB dataset: {args.vcb_dataset}")
-        log.info(f"  obs path: {args.dataset}")
+    from hooke_forge.inference.validation import (
+        check_completion,
+        recover_completion_status,
+    )
 
     # Step 1: Find checkpoint
     log.info("=" * 60)
@@ -165,10 +133,11 @@ def main():
     log.info(f"Model architecture: {lineage['model_config']}")
     log.info(f"Lineage depth: {len(lineage['lineage_chain'])} training runs")
 
-    # Construct structured output path:
-    # {base_path}/{data_version}/{task}/{model_config}/step_{step}
     output_dir = (
-        args.output_base / lineage["data_version"] / args.task_id / lineage["model_config"] / f"step_{args.step}"
+        args.output_base
+        / lineage["data_version"]
+        / lineage["model_config"]
+        / f"step_{args.step}"
     )
     log.info(f"Output directory: {output_dir}")
 
@@ -188,7 +157,6 @@ def main():
             batch_size=args.batch_size,
             partition=args.partition,
             qos=args.qos,
-            vcb_dataset=args.vcb_dataset,
         )
     else:
         log.info("Skipping inference (--skip-inference)")
@@ -214,111 +182,23 @@ def main():
             log.error("Re-run without --skip-inference to complete remaining rows")
             sys.exit(1)
 
-    # Step 5: Prepare for VCB
+    # Step 5: Build maps
+    if args.build_maps:
+        log.info("=" * 60)
+        log.info("Step 5: Building perturbation similarity maps")
+        log.info("=" * 60)
+
+        from hooke_forge.evaluation.map_building import build_maps_from_inference
+
+        maps = build_maps_from_inference(
+            output_dir=output_dir,
+            perturbation_cols=[args.perturbation_col],
+        )
+        log.info(f"Built {len(maps)} maps")
+
     log.info("=" * 60)
-    log.info("Step 5: Preparing for VCB evaluation")
+    log.info("Complete!")
     log.info("=" * 60)
-
-    eval_dir = output_dir / "eval"
-
-    # Check splits to determine what to create
-    try:
-        import polars as pl
-
-        pred_metadata = pl.read_parquet(output_dir / "prepared_metadata.parquet")
-        split_values = pred_metadata["split"].unique().to_list()
-        has_test = any(s.startswith("test") for s in split_values)
-        has_valid = any(s.startswith("valid") for s in split_values)
-    except Exception as e:
-        log.warning(f"Could not check observation splits: {e}")
-        has_test = has_valid = False
-
-    both_splits_exist = has_test and has_valid
-
-    if both_splits_exist and args.include_validation:
-        # Create both test-only and with-validation predictions
-        log.info("Creating both test-only and with-validation predictions")
-
-        # Test-only (default/recommended)
-        prepare_for_vcb(
-            predictions_dir=output_dir,
-            ground_truth_dir=args.ground_truth_dir,
-            output_dir=eval_dir,
-            task_id=args.task_id,
-            lineage=lineage,
-            test_only=True,
-        )
-
-        # With validation (user requested)
-        prepare_for_vcb(
-            predictions_dir=output_dir,
-            ground_truth_dir=args.ground_truth_dir,
-            output_dir=eval_dir,
-            task_id=args.task_id,
-            lineage=lineage,
-            test_only=False,
-        )
-
-        # Print next steps
-        log.info("=" * 60)
-        log.info("Complete!")
-        log.info("=" * 60)
-
-        print_vcb_command(
-            eval_dir,
-            args.ground_truth_dir,
-            args.task_id,
-            pred_dir_name="predictions",
-            split_file_name="split.json",
-            note=" (RECOMMENDED - test-only)",
-        )
-
-        print_vcb_command(
-            eval_dir,
-            args.ground_truth_dir,
-            args.task_id,
-            pred_dir_name="predictions_with_valid",
-            split_file_name="split_with_valid.json",
-            note=" (with validation - may cause mismatches)",
-        )
-
-    else:
-        # Create single set of predictions
-        if both_splits_exist:
-            # Default: test-only
-            test_only = True
-            log.info("Creating test-only predictions (default - VCB expects test-only)")
-            log.info("  Use --include-validation to also create predictions with validation")
-        else:
-            # Only one type of split available
-            test_only = False
-            if has_test:
-                log.info("Only test observations found")
-            elif has_valid:
-                log.info("Only validation observations found")
-            else:
-                log.info("No test/validation splits found - using all observations")
-
-        prepare_for_vcb(
-            predictions_dir=output_dir,
-            ground_truth_dir=args.ground_truth_dir,
-            output_dir=eval_dir,
-            task_id=args.task_id,
-            lineage=lineage,
-            test_only=test_only,
-        )
-
-        # Print next steps
-        log.info("=" * 60)
-        log.info("Complete!")
-        log.info("=" * 60)
-
-        pred_dir = "predictions" if test_only else "predictions_with_valid"
-        split_file = "split.json" if test_only else "split_with_valid.json"
-
-        print_vcb_command(
-            eval_dir, args.ground_truth_dir, args.task_id, pred_dir_name=pred_dir, split_file_name=split_file
-        )
 
 
 if __name__ == "__main__":

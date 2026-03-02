@@ -1,9 +1,9 @@
 #!/bin/bash
-# Launch distributed inference for multi-sample evaluation on multiple checkpoints
+# Launch distributed inference for ARPE19 evaluation
 #
 # Usage:
-#   ./scripts/launch_inference.sh          # Launch all jobs in background
-#   ./scripts/launch_inference.sh --wait   # Launch and wait for completion
+#   ./scripts/launch_inference-arpe19.sh          # Launch all jobs in background
+#   ./scripts/launch_inference-arpe19.sh --wait   # Launch and wait for completion
 
 TRAINING_DIR="/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/outputs/1768305605/12583183"
 OUTPUT_BASE="/mnt/ps/home/CORP/jason.hartford/project/big-x/metrics/hooke-mini-v6/arpe19/XL"
