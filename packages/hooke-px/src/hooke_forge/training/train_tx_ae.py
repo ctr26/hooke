@@ -7,7 +7,6 @@ Mirrors the structure of train.py but with:
 """
 
 import dataclasses
-import json
 import logging
 import os
 import pathlib
@@ -16,7 +15,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Callable, Literal
+from collections.abc import Callable
+from typing import Literal
 
 import ornamentalist
 import submitit
@@ -26,14 +26,14 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 
 from hooke_forge.data import dataset
-from hooke_forge.model.tokenizer import DataFrameTokenizer, MetaDataConfig
+from hooke_forge.model.tokenizer import DataFrameTokenizer
 from hooke_forge.model.tx_autoencoders import (
-    TxPerceiverAE,
-    TxDiscriminator,
     TxAMPerceptualLoss,
-    zinb_nll,
-    sample_zinb,
+    TxDiscriminator,
+    TxPerceiverAE,
     hinge_disc_loss,
+    sample_zinb,
+    zinb_nll,
 )
 from hooke_forge.training.state import log
 from hooke_forge.utils.distributed import Distributed, rank_zero
@@ -43,6 +43,7 @@ from hooke_forge.utils.name_run import generate_random_name
 
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__name__)
+
 
 @dataclasses.dataclass
 class TxAETrainState:
@@ -93,11 +94,7 @@ class TxAETrainState:
 
     def load_latest_ckpt(self, dir: str, device: torch.device, strict: bool = True) -> None:
         pattern = r"step_(\d+).ckpt"
-        fnames = [
-            f.name
-            for f in os.scandir(dir)
-            if f.is_file() and re.fullmatch(pattern, f.name)
-        ]
+        fnames = [f.name for f in os.scandir(dir) if f.is_file() and re.fullmatch(pattern, f.name)]
         if len(fnames) == 0:
             _log.info("No existing Tx AE checkpoints found in %s, skipping load.", dir)
             return
@@ -124,29 +121,32 @@ def evaluate_tx_ae(
     num_samples = torch.tensor(0, device=D.device)
 
     for batch in tqdm(
-        loader, desc="Evaluating Tx AE", total=len(loader),
-        unit="step", disable=D.rank != 0,
+        loader,
+        desc="Evaluating Tx AE",
+        total=len(loader),
+        unit="step",
+        disable=D.rank != 0,
     ):
         meta = {k: v.to(D.device, non_blocking=True) for k, v in batch["meta"].items()}
         tx_raw = batch["tx_raw"].to(D.device, non_blocking=True)
 
         _z, zinb_params = ae(
-            tx_raw, meta["cell_type"], meta["assay_type"], train=False,
+            tx_raw,
+            meta["cell_type"],
+            meta["assay_type"],
+            train=False,
         )
         nll = zinb_nll(
-            zinb_params["log_mu"], zinb_params["log_theta"],
-            zinb_params["logit_pi"], tx_raw,
+            zinb_params["log_mu"],
+            zinb_params["log_theta"],
+            zinb_params["logit_pi"],
+            tx_raw,
         )
 
         # Reconstruction MAE in log1p-normalised space
-        mu_hat = (
-            (1.0 - torch.sigmoid(zinb_params["logit_pi"]))
-            * torch.exp(zinb_params["log_mu"])
-        )
+        mu_hat = (1.0 - torch.sigmoid(zinb_params["logit_pi"])) * torch.exp(zinb_params["log_mu"])
         target_sum = 4_000.0
-        mu_norm = torch.log1p(
-            mu_hat / mu_hat.sum(dim=-1, keepdim=True).clamp(min=1e-8) * target_sum
-        )
+        mu_norm = torch.log1p(mu_hat / mu_hat.sum(dim=-1, keepdim=True).clamp(min=1e-8) * target_sum)
         tx_norm = batch["tx"].to(D.device, non_blocking=True)
         mae = (mu_norm - tx_norm).abs().mean()
 
@@ -189,7 +189,9 @@ def train_tx_ae(
     adv_start_step: int = ornamentalist.Configurable[50_000],
     zinb_sample_tau: float = ornamentalist.Configurable[0.1],
     # TxAM perceptual loss configuration
-    txam_checkpoint_path: str = ornamentalist.Configurable["/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt"],
+    txam_checkpoint_path: str = ornamentalist.Configurable[
+        "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt"
+    ],
     txam_input_gene_names: list[str] | None = ornamentalist.Configurable[None],
     # Schedule
     num_steps: int = ornamentalist.Configurable[500_000],
@@ -236,16 +238,23 @@ def train_tx_ae(
 
         # ---- Generator step ----
         _z, zinb_params = state.ddp_ae(
-            tx_raw, meta["cell_type"], meta["assay_type"], train=True,
+            tx_raw,
+            meta["cell_type"],
+            meta["assay_type"],
+            train=True,
         )
         l_zinb = zinb_nll(
-            zinb_params["log_mu"], zinb_params["log_theta"],
-            zinb_params["logit_pi"], tx_raw,
+            zinb_params["log_mu"],
+            zinb_params["log_theta"],
+            zinb_params["logit_pi"],
+            tx_raw,
         )
 
         zinb_samples = sample_zinb(
-            zinb_params["log_mu"], zinb_params["log_theta"],
-            zinb_params["logit_pi"], tau=zinb_sample_tau,
+            zinb_params["log_mu"],
+            zinb_params["log_theta"],
+            zinb_params["logit_pi"],
+            tau=zinb_sample_tau,
         )
 
         l_perc = txam_loss(zinb_samples, tx_raw)
@@ -261,7 +270,8 @@ def train_tx_ae(
         state.opt_ae.zero_grad()
         l_total.backward()
         grad_norm_ae = torch.nn.utils.clip_grad_norm_(
-            state.ddp_ae.parameters(), max_norm=1.0,
+            state.ddp_ae.parameters(),
+            max_norm=1.0,
         )
         state.opt_ae.step()
         state.ema_ae.update(model=state.ddp_ae.module, step=state.global_step + 1)
@@ -272,14 +282,16 @@ def train_tx_ae(
         if adv_active:
             real_logits = state.ddp_disc(tx_raw, ae_module.gene_input)
             fake_logits_d = state.ddp_disc(
-                zinb_samples.detach(), ae_module.gene_input,
+                zinb_samples.detach(),
+                ae_module.gene_input,
             )
             l_disc = hinge_disc_loss(real_logits, fake_logits_d)
 
             state.opt_disc.zero_grad()
             l_disc.backward()
             grad_norm_disc = torch.nn.utils.clip_grad_norm_(
-                state.ddp_disc.parameters(), max_norm=1.0,
+                state.ddp_disc.parameters(),
+                max_norm=1.0,
             )
             state.opt_disc.step()
 
@@ -307,14 +319,13 @@ def train_tx_ae(
                 "train/adv_g_loss": (running["adv_g"] / num_samples).item(),
                 "train/disc_loss": (running["disc"] / num_samples).item(),
                 "train/total_loss": (
-                    (running["zinb"] + lambda_perc * running["perc"]
-                     + lambda_adv * running["adv_g"]) / num_samples
+                    (running["zinb"] + lambda_perc * running["perc"] + lambda_adv * running["adv_g"]) / num_samples
                 ).item(),
                 "train/grad_norm_ae": grad_norm_ae.item(),
                 "train/grad_norm_disc": grad_norm_disc.item(),
                 "train/throughput": (num_samples / elapsed).item()
-                    if isinstance(num_samples, torch.Tensor)
-                    else num_samples / elapsed,
+                if isinstance(num_samples, torch.Tensor)
+                else num_samples / elapsed,
                 "train/adv_active": float(adv_active),
             }
             log(step=state.global_step, data=log_data)
@@ -346,11 +357,7 @@ def load_tokenizer_from_checkpoint(ckpt_dir: str) -> DataFrameTokenizer | None:
     pattern = r"step_(\d+).ckpt"
     if not os.path.exists(ckpt_dir):
         return None
-    fnames = [
-        f.name
-        for f in os.scandir(ckpt_dir)
-        if f.is_file() and re.fullmatch(pattern, f.name)
-    ]
+    fnames = [f.name for f in os.scandir(ckpt_dir) if f.is_file() and re.fullmatch(pattern, f.name)]
     if len(fnames) == 0:
         return None
     latest = max(fnames, key=lambda x: int(re.fullmatch(pattern, x).group(1)))
@@ -461,7 +468,8 @@ def main(config: ornamentalist.ConfigDict):
             try:
                 subprocess.run(
                     ["scontrol", "update", f"JobId={job_env.job_id}", f"JobName={name}"],
-                    check=True, capture_output=True,
+                    check=True,
+                    capture_output=True,
                 )
                 _log.info("Renamed SLURM job to '%s'", name)
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -523,10 +531,16 @@ def main(config: ornamentalist.ConfigDict):
         ema_ae = KarrasEMA(ae)
 
         opt_ae = torch.optim.Adam(
-            ae.parameters(), lr=1e-4, betas=(0.9, 0.95), eps=1e-8,
+            ae.parameters(),
+            lr=1e-4,
+            betas=(0.9, 0.95),
+            eps=1e-8,
         )
         opt_disc = torch.optim.Adam(
-            disc.parameters(), lr=1e-4, betas=(0.9, 0.95), eps=1e-8,
+            disc.parameters(),
+            lr=1e-4,
+            betas=(0.9, 0.95),
+            eps=1e-8,
         )
 
         state = TxAETrainState(

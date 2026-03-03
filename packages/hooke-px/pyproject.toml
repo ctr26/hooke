@@ -35,6 +35,17 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/hooke_forge"]
 
+[tool.ruff]
+exclude = ["*.ipynb"]
+target-version = "py313"
+line-length = 120
+lint.select = ["E", "F", "W", "I", "UP"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.4",
+]
+
 [project.scripts]
 hooke-train = "hooke_forge.training.train:cli"
 hooke-train-tx-ae = "hooke_forge.training.train_tx_ae:cli"

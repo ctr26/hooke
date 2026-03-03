@@ -22,8 +22,9 @@ import pathlib
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Literal
 
 import ornamentalist
 import submitit
@@ -32,14 +33,14 @@ import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from hooke_forge.data import dataset
-from hooke_forge.model.tokenizer import DataFrameTokenizer, MetaDataConfig
 from hooke_forge.data.dataset import CellPaintConverter
-from hooke_forge.model.architecture import get_model_cls
 from hooke_forge.evaluation.px_metrics import (
     compute_phenomics_metrics,
     evaluate_px,
     visualise_phenomics,
 )
+from hooke_forge.model.architecture import get_model_cls
+from hooke_forge.model.tokenizer import DataFrameTokenizer, MetaDataConfig
 from hooke_forge.training.state import set_metrics_log_path
 from hooke_forge.utils.distributed import Distributed
 from hooke_forge.utils.ema import KarrasEMA
@@ -65,11 +66,7 @@ def _list_checkpoints(dir_path: str) -> list[str]:
     pattern = r"step_(\d+).ckpt"
     if not os.path.isdir(dir_path):
         raise FileNotFoundError(f"Checkpoint directory not found: {dir_path}")
-    files = [
-        f.name
-        for f in os.scandir(dir_path)
-        if f.is_file() and re.fullmatch(pattern, f.name)
-    ]
+    files = [f.name for f in os.scandir(dir_path) if f.is_file() and re.fullmatch(pattern, f.name)]
     if len(files) == 0:
         raise FileNotFoundError(f"No checkpoints matching 'step_*.ckpt' in {dir_path}")
     # Sort by step number
@@ -270,9 +267,7 @@ def run_eval_on_checkpoints(
 
             # Create a minimal state object for trainer functions
             # We need to extract global_step from checkpoint
-            state_dict = torch.load(
-                ckpt_path, weights_only=False, map_location=D.device
-            )
+            state_dict = torch.load(ckpt_path, weights_only=False, map_location=D.device)
             global_step = state_dict["global_step"]
 
             # Create a simple namespace to hold state
@@ -283,9 +278,7 @@ def run_eval_on_checkpoints(
                     self.global_step = global_step
                     self.tokenizer = tokenizer
 
-            state = EvalState(
-                ddp=ddp, ema=ema, global_step=global_step, tokenizer=tokenizer
-            )
+            state = EvalState(ddp=ddp, ema=ema, global_step=global_step, tokenizer=tokenizer)
 
             # Visualization (EMA)
             if do_visualise:
@@ -429,9 +422,7 @@ def eval_launcher(
 
 def cli():
     configs = ornamentalist.cli()
-    assert all(
-        config["eval_launcher"] == configs[0]["eval_launcher"] for config in configs
-    )
+    assert all(config["eval_launcher"] == configs[0]["eval_launcher"] for config in configs)
     ornamentalist.setup(configs[0], force=True)
     eval_launcher(configs=configs)
 

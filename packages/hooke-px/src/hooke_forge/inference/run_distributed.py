@@ -35,7 +35,7 @@ import submitit
 import wandb
 import zarr
 
-from hooke_forge.evaluation.metrics import compute_fd, compute_cossim, compute_prdc
+from hooke_forge.evaluation.metrics import compute_cossim, compute_fd, compute_prdc
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -110,10 +110,7 @@ def validate_input_parquet(df: pl.DataFrame) -> None:
     """Validate that input parquet has all required columns."""
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
-        raise ValueError(
-            f"Input parquet missing required columns: {missing}. "
-            f"Required: {REQUIRED_COLUMNS}"
-        )
+        raise ValueError(f"Input parquet missing required columns: {missing}. Required: {REQUIRED_COLUMNS}")
 
 
 def prepare_metadata(
@@ -170,9 +167,7 @@ def merge_worker_progress(df: pl.DataFrame, output_dir: Path) -> pl.DataFrame:
     if not existing_workers:
         return df
 
-    log.info(
-        f"Found {len(existing_workers)} existing worker directories, merging progress"
-    )
+    log.info(f"Found {len(existing_workers)} existing worker directories, merging progress")
 
     completed_indices = set()
     for worker_dir in existing_workers:
@@ -238,9 +233,7 @@ def create_worker_directories(
     return worker_dirs
 
 
-def create_shared_zarr(
-    output_dir: Path, N: int, num_samples: int, num_real_samples: int
-) -> None:
+def create_shared_zarr(output_dir: Path, N: int, num_samples: int, num_real_samples: int) -> None:
     """Initialize shared zarr arrays for feature storage (or open existing)."""
     zarr_dir = output_dir / "features"
     zarr_dir.mkdir(exist_ok=True)
@@ -250,12 +243,8 @@ def create_shared_zarr(
     real_phenom_path = zarr_dir / "real_phenom.zarr"
     mode = "r+" if real_phenom_path.exists() else "w"
 
-    real_phenom_shape = (
-        (N, num_real_samples, PHENOM_DIM) if num_real_samples > 1 else (N, PHENOM_DIM)
-    )
-    real_phenom_chunks = (
-        (1, num_real_samples, PHENOM_DIM) if num_real_samples > 1 else (1, PHENOM_DIM)
-    )
+    real_phenom_shape = (N, num_real_samples, PHENOM_DIM) if num_real_samples > 1 else (N, PHENOM_DIM)
+    real_phenom_chunks = (1, num_real_samples, PHENOM_DIM) if num_real_samples > 1 else (1, PHENOM_DIM)
     zarr.open(
         str(zarr_dir / "real_phenom.zarr"),
         mode=mode,
@@ -264,12 +253,8 @@ def create_shared_zarr(
         dtype="float32",
         compressor=compressor,
     )
-    real_dino_shape = (
-        (N, num_real_samples, DINO_DIM) if num_real_samples > 1 else (N, DINO_DIM)
-    )
-    real_dino_chunks = (
-        (1, num_real_samples, DINO_DIM) if num_real_samples > 1 else (1, DINO_DIM)
-    )
+    real_dino_shape = (N, num_real_samples, DINO_DIM) if num_real_samples > 1 else (N, DINO_DIM)
+    real_dino_chunks = (1, num_real_samples, DINO_DIM) if num_real_samples > 1 else (1, DINO_DIM)
     zarr.open(
         str(zarr_dir / "real_dino.zarr"),
         mode=mode,
@@ -440,17 +425,13 @@ def monitor_progress(
         if completed == total_workers:
             incomplete_workers = total_workers - dirs_completed
             if incomplete_workers > 0:
-                log.warning(
-                    f"{incomplete_workers} workers still incomplete after all jobs completed"
-                )
+                log.warning(f"{incomplete_workers} workers still incomplete after all jobs completed")
             break
 
     log.info("All workers complete!")
 
 
-def compute_final_metrics(
-    output_dir: Path, num_samples: int, num_real_samples: int
-) -> dict:
+def compute_final_metrics(output_dir: Path, num_samples: int, num_real_samples: int) -> dict:
     """Load features from zarr and compute metrics."""
     zarr_dir = output_dir / "features"
 
@@ -540,9 +521,7 @@ def distributed_inference(
     num_real_image_samples = max(1, int(num_real_image_samples))
 
     if metrics_only:
-        metrics = compute_final_metrics(
-            output_dir, num_samples_per_image, num_real_image_samples
-        )
+        metrics = compute_final_metrics(output_dir, num_samples_per_image, num_real_image_samples)
         if use_wandb:
             wandb.log(metrics)
             wandb.finish()
@@ -606,9 +585,7 @@ def distributed_inference(
         log.info(f"Launching {len(worker_dirs)} workers")
         actual_qos = qos if qos != "default" else None
 
-        jobs = launch_workers(
-            worker_dirs, config_path, output_dir, partition, actual_qos
-        )
+        jobs = launch_workers(worker_dirs, config_path, output_dir, partition, actual_qos)
 
         monitor_progress(
             jobs,
@@ -622,9 +599,7 @@ def distributed_inference(
             log.info("Cleaning up worker directories")
             shutil.rmtree(workers_dir)
 
-    metrics = compute_final_metrics(
-        output_dir, num_samples_per_image, num_real_image_samples
-    )
+    metrics = compute_final_metrics(output_dir, num_samples_per_image, num_real_image_samples)
 
     if use_wandb:
         wandb.log(metrics)

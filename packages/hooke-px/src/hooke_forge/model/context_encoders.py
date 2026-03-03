@@ -1,16 +1,13 @@
 """Conditioning layers for the DiT generator."""
 
+import logging
 import math
 
-from hooke_forge.model.tokenizer import MetaDataConfig
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import polars as pl
-from hooke_forge.model.layers import TransformerCore
 
-import logging
+from hooke_forge.model.layers import TransformerCore
+from hooke_forge.model.tokenizer import MetaDataConfig
 
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__name__)
@@ -33,16 +30,12 @@ class ScalarEmbedder(nn.Module):
         # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
         half = dim // 2
         freqs = torch.exp(
-            -math.log(max_period)
-            * torch.arange(start=0, end=half, dtype=torch.float32, device=t.device)
-            / half
+            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32, device=t.device) / half
         )
         args = t[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
-            embedding = torch.cat(
-                [embedding, torch.zeros_like(embedding[:, :1])], dim=-1
-            )
+            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
         return embedding
 
     def forward(self, t):
@@ -64,9 +57,7 @@ class LabelEmbedder(nn.Module):
     def token_drop(self, labels, force_drop_ids=None):
         """Drops labels to enable classifier-free guidance."""
         if force_drop_ids is None:
-            drop_ids = (
-                torch.rand(labels.shape[0], device=labels.device) < self.dropout_prob
-            )
+            drop_ids = torch.rand(labels.shape[0], device=labels.device) < self.dropout_prob
         else:
             drop_ids = force_drop_ids == 1
         # Handle 2D labels (e.g., sequence of tokens) by adding broadcast dimension
@@ -82,6 +73,7 @@ class LabelEmbedder(nn.Module):
         embeddings = self.embedding_table(labels)
         return embeddings
 
+
 class TransformerEncoder(nn.Module):
     def __init__(
         self,
@@ -95,9 +87,7 @@ class TransformerEncoder(nn.Module):
         dropout_prob=0.15,
     ):
         super().__init__()
-        self.rec_id_embedder = LabelEmbedder(
-            num_classes=rec_id_dim, hidden_size=hidden_size, dropout_prob=dropout_prob
-        )
+        self.rec_id_embedder = LabelEmbedder(num_classes=rec_id_dim, hidden_size=hidden_size, dropout_prob=dropout_prob)
         self.concentration_embedder = LabelEmbedder(
             num_classes=concentration_dim,
             hidden_size=hidden_size,
@@ -113,21 +103,15 @@ class TransformerEncoder(nn.Module):
             hidden_size=hidden_size,
             dropout_prob=dropout_prob,
         )
-        self.assay_type_embedder = LabelEmbedder(
-            num_classes=assay_type_dim, hidden_size=hidden_size, dropout_prob=0.0
-        )
+        self.assay_type_embedder = LabelEmbedder(num_classes=assay_type_dim, hidden_size=hidden_size, dropout_prob=0.0)
         self.well_address_embedder = LabelEmbedder(
             num_classes=well_address_dim,
             hidden_size=hidden_size,
             dropout_prob=dropout_prob,
         )
 
-        self.transformer = TransformerCore(
-            n_embd=hidden_size, n_layer=12, n_head=16, dropout=0.0
-        )
-        self.class_token = nn.Parameter(
-            torch.randn(1, 1, hidden_size) * 0.02, requires_grad=True
-        )
+        self.transformer = TransformerCore(n_embd=hidden_size, n_layer=12, n_head=16, dropout=0.0)
+        self.class_token = nn.Parameter(torch.randn(1, 1, hidden_size) * 0.02, requires_grad=True)
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -154,9 +138,7 @@ class TransformerEncoder(nn.Module):
             comp_mask = torch.ones_like(rec_id, dtype=torch.bool)
 
         # drop whole sequences (per-sample) for CFG training/inference
-        rec_id_emb = self.rec_id_embedder(
-            rec_id, train=self.training, force_drop_ids=force_drop_rec_conc
-        )
+        rec_id_emb = self.rec_id_embedder(rec_id, train=self.training, force_drop_ids=force_drop_rec_conc)
         concentration_emb = self.concentration_embedder(
             concentration, train=self.training, force_drop_ids=force_drop_rec_conc
         )
@@ -164,13 +146,9 @@ class TransformerEncoder(nn.Module):
             [
                 rec_id_emb + concentration_emb,
                 self.cell_type_embedder(cell_type, train=self.training).unsqueeze(1),
-                self.experiment_embedder(
-                    experiment_label, train=self.training
-                ).unsqueeze(1),
+                self.experiment_embedder(experiment_label, train=self.training).unsqueeze(1),
                 self.assay_type_embedder(assay_type, train=self.training).unsqueeze(1),
-                self.well_address_embedder(well_address, train=self.training).unsqueeze(
-                    1
-                ),
+                self.well_address_embedder(well_address, train=self.training).unsqueeze(1),
                 self.class_token.expand(rec_id.shape[0], -1, -1),
             ],
             dim=1,
@@ -190,6 +168,7 @@ class TransformerEncoder(nn.Module):
         transformer_output = self.transformer(transformer_input, mask=keep)
         return transformer_output[:, -1, :]
 
+
 def get_transformer_encoder(hidden_size: int, metadata_config: MetaDataConfig = MetaDataConfig()):
     return TransformerEncoder(
         hidden_size=hidden_size,
@@ -200,4 +179,3 @@ def get_transformer_encoder(hidden_size: int, metadata_config: MetaDataConfig = 
         assay_type_dim=metadata_config.assay_type_dim,
         well_address_dim=metadata_config.well_address_dim,
     )
-

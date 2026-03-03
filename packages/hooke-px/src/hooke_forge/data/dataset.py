@@ -1,11 +1,10 @@
 import dataclasses
-import random
-from typing import Callable, Optional
 import logging
-import numcodecs
+import random
+from collections.abc import Callable
 from pathlib import Path
 
-import diffusers
+import numcodecs
 import numpy as np
 import ornamentalist
 import polars as pl
@@ -13,6 +12,7 @@ import torch
 import zarr
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.transforms import v2
+
 from hooke_forge.model.tokenizer import DataFrameTokenizer
 
 numcodecs.blosc.use_threads = False
@@ -78,9 +78,7 @@ class CellPaintConverter:
         return x
 
 
-def crop_zarr(
-    zarr_array: zarr.Array, top: int, left: int, height: int, width: int
-) -> torch.Tensor:
+def crop_zarr(zarr_array: zarr.Array, top: int, left: int, height: int, width: int) -> torch.Tensor:
     """Takes a zarr array and returns a cropped uint8 torch tensor (C x H x W)
     (only loads the relevant crop into memory)."""
     zarr_array_cropped = zarr_array[top : (top + height), left : (left + width), :]
@@ -96,9 +94,7 @@ def center_crop_zarr(zarr_array: zarr.Array, size: int) -> torch.Tensor:
     return crop_zarr(zarr_array, top, left, size, size)
 
 
-def random_crop_zarr(
-    zarr_array: zarr.Array, size: int, border: int = 0
-) -> torch.Tensor:
+def random_crop_zarr(zarr_array: zarr.Array, size: int, border: int = 0) -> torch.Tensor:
     h, w, _ = zarr_array.shape
     top = int(torch.randint(border, h - (size + border), (1,)).item())
     left = int(torch.randint(border, w - (size + border), (1,)).item())
@@ -195,8 +191,6 @@ class CellDataset(torch.utils.data.Dataset):
             return self._get_fallback_sample()
 
 
-
-
 _TX_TARGET_SUM: float = 4_000.0  # library-size normalization target (matches hooke-predict)
 
 
@@ -222,8 +216,10 @@ class TxDataset(torch.utils.data.Dataset):
         self,
         metadata: pl.DataFrame,
         tokenizer: DataFrameTokenizer,
-        zarr_path: str | Path = Path("/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"),
-        gene_subset_path: Optional[str | Path] = None,
+        zarr_path: str | Path = Path(
+            "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"
+        ),
+        gene_subset_path: str | Path | None = None,
     ):
         required_cols = [
             "zarr_row_idx",
@@ -241,14 +237,10 @@ class TxDataset(torch.utils.data.Dataset):
         )
         self.metadata = metadata
         self.tokenizer = tokenizer
-        lookup_df = (
-            metadata.group_by("batch_center")
-            .agg([
-                pl.col("zarr_row_idx").filter(pl.col("is_negative_control")).alias("control_indices")
-            ])
+        lookup_df = metadata.group_by("batch_center").agg(
+            [pl.col("zarr_row_idx").filter(pl.col("is_negative_control")).alias("control_indices")]
         )
-        control_map = dict(zip(lookup_df["batch_center"],
-                                    lookup_df["control_indices"]))
+        control_map = dict(zip(lookup_df["batch_center"], lookup_df["control_indices"]))
         self.control_map = {k: v.to_list() for k, v in control_map.items()}
         # remove batch centers with no controls
         self.skip = [k for k, v in self.control_map.items() if len(v) == 0]
@@ -285,25 +277,26 @@ class TxDataset(torch.utils.data.Dataset):
                 metadata = data["metadata"].item() if data["metadata"].ndim > 0 else data["metadata"]
                 if isinstance(metadata, dict) and "config" in metadata:
                     config = metadata["config"]
-                    _log.info(f"Gene subset config: strategy={config.get('select_strategy', 'unknown')}, "
-                             f"n_features={config.get('n_features', 'unknown')}")
+                    _log.info(
+                        f"Gene subset config: strategy={config.get('select_strategy', 'unknown')}, "
+                        f"n_features={config.get('n_features', 'unknown')}"
+                    )
 
         except Exception as e:
             _log.error(f"Failed to load gene subset from {gene_subset_path}: {e}")
             raise ValueError(f"Could not load gene subset file: {e}")
-
 
     def __len__(self):
         return len(self.metadata)
 
     def __getitem__(self, index: int):
         row = self.metadata.row(index, named=True)
-        if row['batch_center'] in self.skip:
+        if row["batch_center"] in self.skip:
             # TODO: get rid of this - it's a hack but it only affects two samples.
             # If we have no controls, just sample a random control from the entire dataset
             control = self.metadata.row(random.choice(self.all_controls), named=True)
         else:
-            control = self.metadata.row(random.choice(self.control_map[row['batch_center']]), named=True)
+            control = self.metadata.row(random.choice(self.control_map[row["batch_center"]]), named=True)
 
         # Load features
         tx = torch.from_numpy(self.zarr_file[row["zarr_row_idx"]])
@@ -333,6 +326,7 @@ class TxDataset(torch.utils.data.Dataset):
             "meta": self.tokenizer(row),
         }
         return sample
+
 
 @dataclasses.dataclass(frozen=True)
 class MetaVocab:
@@ -365,8 +359,6 @@ def get_dataloaders(
                    This is useful for finetuning on a subset of data while preserving
                    the original vocabulary.
     """
-    import json
-    from pathlib import Path
 
     df = pl.read_parquet(path)
 
@@ -463,9 +455,7 @@ def get_tx_dataloaders(
     # Prepare rec_id / concentration from perturbations column if needed
     if "rec_id" not in df.columns and "perturbations" in df.columns:
         df = df.with_columns(
-            rec_id=pl.col("perturbations").list.eval(
-                pl.element().struct.field("source_id")
-            ),
+            rec_id=pl.col("perturbations").list.eval(pl.element().struct.field("source_id")),
             concentration=pl.col("perturbations").list.eval(
                 pl.element().struct.field("concentration").cast(pl.Float64).cast(pl.String)
             ),
@@ -489,7 +479,7 @@ def get_tx_dataloaders(
         train_df,
         tokenizer=tokenizer,
         zarr_path=zarr_path,
-        gene_subset_path=gene_subset_path if gene_subset_path else None
+        gene_subset_path=gene_subset_path if gene_subset_path else None,
     )
     train_sampler = DistributedSampler(train_ds, shuffle=True)
     train_loader = DataLoader(
@@ -509,7 +499,7 @@ def get_tx_dataloaders(
             val_df,
             tokenizer=tokenizer,
             zarr_path=zarr_path,
-            gene_subset_path=gene_subset_path if gene_subset_path else None
+            gene_subset_path=gene_subset_path if gene_subset_path else None,
         )
         val_sampler = DistributedSampler(val_ds, shuffle=False)
         val_loader = DataLoader(

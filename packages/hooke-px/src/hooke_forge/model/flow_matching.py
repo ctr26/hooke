@@ -1,12 +1,22 @@
-from typing import Literal, Union
+from typing import TYPE_CHECKING, Literal, Union
 
 import ornamentalist
 import torch
-from torch import nn
 import torch.nn.functional as F
 import torchdiffeq
-from hooke_forge.model.context_encoders import get_transformer_encoder, TransformerEncoder, ScalarEmbedder, MetaDataConfig
+from torch import nn
+
 from hooke_forge.model.architecture import get_model_cls, get_tx_model_cls
+from hooke_forge.model.context_encoders import (
+    MetaDataConfig,
+    ScalarEmbedder,
+    TransformerEncoder,
+    get_transformer_encoder,
+)
+
+if TYPE_CHECKING:
+    from hooke_forge.model.drifting import JointDrifting
+    from hooke_forge.model.mean_flow import JointMeanFlow
 
 
 class JointFlowMatching(nn.Module):
@@ -72,7 +82,10 @@ class JointFlowMatching(nn.Module):
             t = t.expand(x.shape[0])
         if cfg == 0.0:  # unconditional
             return self._forward_vector_field(
-                modality, x=x, t=t, meta=meta,
+                modality,
+                x=x,
+                t=t,
+                meta=meta,
                 force_drop_rec_conc=torch.ones(x.shape[0], device=x.device, dtype=torch.long),
             )
         if cfg == 1.0:  # conditional
@@ -80,7 +93,10 @@ class JointFlowMatching(nn.Module):
 
         pred_cond = self._forward_vector_field(modality, x=x, t=t, meta=meta, force_drop_rec_conc=None)
         pred_null = self._forward_vector_field(
-            modality, x=x, t=t, meta=meta,
+            modality,
+            x=x,
+            t=t,
+            meta=meta,
             force_drop_rec_conc=torch.ones(x.shape[0], device=x.device, dtype=torch.long),
         )
         return pred_null + cfg * (pred_cond - pred_null)
@@ -154,6 +170,7 @@ class JointFlowMatching(nn.Module):
 # Factory
 # ---------------------------------------------------------------------------
 
+
 @ornamentalist.configure(name="flow_model")
 def get_model(
     approach: Literal["flow_matching", "drifting", "mean_flow"] = ornamentalist.Configurable["flow_matching"],
@@ -204,7 +221,9 @@ def get_model(
     vector_fields: dict[str, nn.Module] = {}
     if modality in ("px", "joint"):
         vector_fields["px"] = dit_cls(
-            input_size=32, in_channels=8, learn_sigma=False,
+            input_size=32,
+            in_channels=8,
+            learn_sigma=False,
         )
     if modality in ("tx", "joint"):
         tx_cls = get_tx_model_cls()  # uses --tx_model.name config
@@ -214,7 +233,8 @@ def get_model(
         )
 
     context_encoder = get_transformer_encoder(
-        hidden_size=hidden_size, metadata_config=metadata_config,
+        hidden_size=hidden_size,
+        metadata_config=metadata_config,
     )
 
     # Dispatch based on approach

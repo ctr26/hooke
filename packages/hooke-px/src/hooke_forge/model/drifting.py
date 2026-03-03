@@ -11,13 +11,12 @@ Key differences from flow matching:
 """
 
 import math
-from typing import Literal
 
 import torch
-from torch import nn
 import torch.nn.functional as F
-from hooke_forge.model.context_encoders import TransformerEncoder, ScalarEmbedder
-from hooke_forge.model.architecture import get_model_cls, get_tx_model_cls
+from torch import nn
+
+from hooke_forge.model.context_encoders import ScalarEmbedder, TransformerEncoder
 
 
 class JointDrifting(nn.Module):
@@ -107,7 +106,7 @@ class JointDrifting(nn.Module):
             # Paper's double normalization: softmax over both dimensions
             A_row = logits.softmax(dim=-1)  # Normalize over y-axis
             A_col = logits.softmax(dim=-2)  # Normalize over x-axis
-            A = torch.sqrt(A_row * A_col)   # Geometric mean
+            A = torch.sqrt(A_row * A_col)  # Geometric mean
         else:
             # Simple softmax normalization
             A = logits.softmax(dim=-1)
@@ -119,7 +118,6 @@ class JointDrifting(nn.Module):
         # Need to handle the original shape
         if x.dim() > 2:  # For images or higher-dim tensors
             # Reshape for batch matrix multiplication
-            x_reshaped = x.view(x.shape[0], -1)
             y_pos_reshaped = y_pos.view(y_pos.shape[0], -1)
             y_neg_reshaped = y_neg.view(y_neg.shape[0], -1)
 
@@ -166,9 +164,7 @@ class JointDrifting(nn.Module):
             phi_y_neg_norm = phi_y_neg / S
 
             # Compute drift in normalized feature space
-            drift_feats = self.compute_drift_velocity(
-                phi_x_norm, phi_y_pos_norm, phi_y_neg_norm, tau
-            )
+            drift_feats = self.compute_drift_velocity(phi_x_norm, phi_y_pos_norm, phi_y_neg_norm, tau)
 
             # Drift normalization
             lambda_norm = self._compute_drift_scale(drift_feats)
@@ -190,7 +186,7 @@ class JointDrifting(nn.Module):
         """Drift normalization scale (Appendix eq.)."""
         # Normalize so E[||V||²/C] ≈ 1
         C = drift.shape[-1] if drift.dim() == 2 else drift.numel() // drift.shape[0]
-        return torch.sqrt((drift.view(drift.shape[0], -1).norm(dim=-1)**2 / C).mean())
+        return torch.sqrt((drift.view(drift.shape[0], -1).norm(dim=-1) ** 2 / C).mean())
 
     # ------------------------------------------------------------------
     # Feature encoders (optional)
@@ -327,11 +323,7 @@ class JointDrifting(nn.Module):
                  cfg=0.0 means fully unconditional. Unlike flow matching,
                  drifting preserves 1-NFE even with cfg=0.0 (no extra forward pass).
         """
-        force_drop = (
-            torch.ones(x0.shape[0], device=x0.device, dtype=torch.long)
-            if cfg == 0.0
-            else None
-        )
+        force_drop = torch.ones(x0.shape[0], device=x0.device, dtype=torch.long) if cfg == 0.0 else None
         x = self._forward_without_drift(modality, x0, meta, force_drop_rec_conc=force_drop)
 
         return x, 1  # Always 1 NFE (function evaluation)

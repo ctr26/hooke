@@ -26,15 +26,15 @@ Options:
     --create-test-only     Force test-only predictions (default when test+valid detected)
 """
 
-from hooke_forge.inference.checkpoint import find_checkpoint, extract_model_config
-from hooke_forge.inference.validation import check_completion, recover_completion_status
-from hooke_forge.inference.prepare_eval import prepare_for_vcb
+from hooke_forge.inference.checkpoint import extract_model_config, find_checkpoint
 from hooke_forge.inference.lineage import get_model_lineage, parse_config_from_log
+from hooke_forge.inference.prepare_eval import prepare_for_vcb
+from hooke_forge.inference.validation import check_completion, recover_completion_status
 from hooke_forge.inference.vcb_datasets import (
     VCB_DATASETS,
-    transform_vcb_dataset,
     get_vcb_dataset_types,
     get_vcb_obs_path,
+    transform_vcb_dataset,
 )
 
 __all__ = [

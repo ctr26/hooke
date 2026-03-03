@@ -53,14 +53,8 @@ def train(
     start_step = state.global_step
 
     # Build infinite iterators for the active modalities
-    px_iter = (
-        infinite_dataloader(px_train_loader, start_step=start_step, fast_resume=True)
-        if has_px else None
-    )
-    tx_iter = (
-        infinite_dataloader(tx_train_loader, start_step=start_step, fast_resume=True)
-        if has_tx else None
-    )
+    px_iter = infinite_dataloader(px_train_loader, start_step=start_step, fast_resume=True) if has_px else None
+    tx_iter = infinite_dataloader(tx_train_loader, start_step=start_step, fast_resume=True) if has_tx else None
 
     # Only create the (expensive) VAE / colour converter when Px is active
     vae: StabilityCPEncoder | None = StabilityCPEncoder(device=D.device) if has_px else None
@@ -149,10 +143,7 @@ def train(
                 running_losses[m] = torch.tensor(0.0, device=D.device)
 
             # Convenience "train/loss" key = total weighted loss
-            total = sum(
-                (tx_loss_weight if m == "tx" else 1.0) * log_data[f"train/{m}_loss"]
-                for m in losses
-            )
+            total = sum((tx_loss_weight if m == "tx" else 1.0) * log_data[f"train/{m}_loss"] for m in losses)
             log_data["train/loss"] = total
             num_samples = torch.tensor(0, device=D.device)
             log(step=state.global_step, data=log_data)

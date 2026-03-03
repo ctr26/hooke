@@ -8,10 +8,10 @@ import numpy as np
 import sklearn.metrics
 from scipy import linalg
 
-
 # ---------------------------------------------------------------------------
 # Statistics helpers
 # ---------------------------------------------------------------------------
+
 
 def compute_statistics(reps):
     mu = np.mean(reps, axis=0)
@@ -30,6 +30,7 @@ def compute_cossim(reps1, reps2):
 # ---------------------------------------------------------------------------
 # Frechet Distance
 # ---------------------------------------------------------------------------
+
 
 def compute_fd(reps1, reps2):
     """Fast FD using eigenvalue decomposition (no sqrtm)."""
@@ -63,17 +64,15 @@ def compute_fd_infinity(reps1, reps2, num_points=15):
     """FD extrapolated to infinite sample size via linear fit on 1/N."""
     mu1, sigma1 = compute_statistics(reps1)
 
-    fd_batches = np.linspace(
-        min(5000, max(len(reps2) // 10, 2)), len(reps2), num_points
-    ).astype("int32")
+    fd_batches = np.linspace(min(5000, max(len(reps2) // 10, 2)), len(reps2), num_points).astype("int32")
 
     rng = np.random.default_rng()
-    fds = np.array([
-        compute_fd_sqrtm_from_stats(
-            mu1, sigma1, *compute_statistics(rng.choice(reps2, n, replace=False))
-        )
-        for n in fd_batches
-    ])
+    fds = np.array(
+        [
+            compute_fd_sqrtm_from_stats(mu1, sigma1, *compute_statistics(rng.choice(reps2, n, replace=False)))
+            for n in fd_batches
+        ]
+    )
 
     # Linear fit: FD(N) = FD_inf + slope / N  =>  polyfit on (1/N, FD)
     coeffs = np.polyfit(1.0 / fd_batches, fds, deg=1)
@@ -96,6 +95,7 @@ def compute_fd_sqrtm_from_stats(mu1, sigma1, mu2, sigma2, eps=1e-6):
 # Energy distance (MMD)
 # ---------------------------------------------------------------------------
 
+
 def compute_e_distance(x, y):
     """Energy distance between two sets of samples."""
     sigma_X = ((x[:, None, :] - x[None, :, :]) ** 2).sum(-1).mean()
@@ -108,12 +108,11 @@ def compute_e_distance(x, y):
 # PRDC (Precision, Recall, Density, Coverage)
 # ---------------------------------------------------------------------------
 
+
 def compute_pairwise_distance(data_x, data_y=None):
     if data_y is None:
         data_y = data_x
-    dists = sklearn.metrics.pairwise_distances(
-        data_x, data_y, metric="euclidean", n_jobs=8
-    )
+    dists = sklearn.metrics.pairwise_distances(data_x, data_y, metric="euclidean", n_jobs=8)
     return dists
 
 
@@ -131,33 +130,19 @@ def compute_nearest_neighbour_distances(input_features, nearest_k):
 
 
 def compute_prdc(real_features, fake_features, nearest_k):
-    real_nearest_neighbour_distances = compute_nearest_neighbour_distances(
-        real_features, nearest_k
-    )
-    fake_nearest_neighbour_distances = compute_nearest_neighbour_distances(
-        fake_features, nearest_k
-    )
+    real_nearest_neighbour_distances = compute_nearest_neighbour_distances(real_features, nearest_k)
+    fake_nearest_neighbour_distances = compute_nearest_neighbour_distances(fake_features, nearest_k)
     distance_real_fake = compute_pairwise_distance(real_features, fake_features)
 
-    precision = (
-        (distance_real_fake < np.expand_dims(real_nearest_neighbour_distances, axis=1))
-        .any(axis=0)
-        .mean()
-    )
+    precision = (distance_real_fake < np.expand_dims(real_nearest_neighbour_distances, axis=1)).any(axis=0).mean()
 
-    recall = (
-        (distance_real_fake < np.expand_dims(fake_nearest_neighbour_distances, axis=0))
-        .any(axis=1)
-        .mean()
-    )
+    recall = (distance_real_fake < np.expand_dims(fake_nearest_neighbour_distances, axis=0)).any(axis=1).mean()
 
     density = (1.0 / float(nearest_k)) * (
         distance_real_fake < np.expand_dims(real_nearest_neighbour_distances, axis=1)
     ).sum(axis=0).mean()
 
-    coverage = (
-        distance_real_fake.min(axis=1) < real_nearest_neighbour_distances
-    ).mean()
+    coverage = (distance_real_fake.min(axis=1) < real_nearest_neighbour_distances).mean()
 
     d = dict(precision=precision, recall=recall, density=density, coverage=coverage)
     return d
@@ -166,6 +151,7 @@ def compute_prdc(real_features, fake_features, nearest_k):
 # ---------------------------------------------------------------------------
 # Retrieval
 # ---------------------------------------------------------------------------
+
 
 def compute_retrieval(distance_matrix):
     """Normalized retrieval score from a pairwise distance matrix.

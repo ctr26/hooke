@@ -1,5 +1,6 @@
-import torch
 import diffusers
+import torch
+
 
 class StabilityCPEncoder:
     def __init__(self, device: torch.device, compile: bool = True):
@@ -38,6 +39,7 @@ class StabilityCPEncoder:
         x = x.clip(0, 255).to(torch.uint8)
         return x
 
+
 class DINOv2Detector:
     def __init__(self, device: torch.device):
         self.model = torch.hub.load(
@@ -50,12 +52,8 @@ class DINOv2Detector:
         assert isinstance(self.model, torch.nn.Module)
         self.model.eval().requires_grad_(False).to(device)
 
-        self.MEAN = torch.tensor(
-            [0.485, 0.456, 0.406], device=device, dtype=torch.float32
-        ).view(1, -1, 1, 1)
-        self.STD = torch.tensor(
-            [0.229, 0.224, 0.225], device=device, dtype=torch.float32
-        ).view(1, -1, 1, 1)
+        self.MEAN = torch.tensor([0.485, 0.456, 0.406], device=device, dtype=torch.float32).view(1, -1, 1, 1)
+        self.STD = torch.tensor([0.229, 0.224, 0.225], device=device, dtype=torch.float32).view(1, -1, 1, 1)
 
     def __call__(self, x):
         """Extract features using DinoV2.
@@ -93,6 +91,7 @@ def rewire_graph_to_return_z(model_to_modify: torch.jit.ScriptModule):
     graph.registerOutput(z_tensor_node)
     return model_to_modify
 
+
 class Phenom2Detector:
     def __init__(self, device: torch.device, rewire: bool = False):
         self.device = device
@@ -116,9 +115,7 @@ class PH2BFDetector:
         from pathlib import Path
 
         self.device = device
-        model_path = Path(
-            "/rxrx/data/valence/hooke-models/PH2-BF/inference_model/model.pth"
-        )
+        model_path = Path("/rxrx/data/valence/hooke-models/PH2-BF/inference_model/model.pth")
         self.model = torch.jit.load(str(model_path), map_location=device)
         if rewire:
             self.model = rewire_graph_to_return_z(self.model)

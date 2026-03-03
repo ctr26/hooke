@@ -14,8 +14,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Gamma
 
-from hooke_forge.model.layers import SetBlock, Block, TransformerCore
 from hooke_forge.model.context_encoders import LabelEmbedder
+from hooke_forge.model.layers import Block, SetBlock, TransformerCore
+
 
 class GeneInputProjection(nn.Module):
     """Embeds each gene as a D-dim token from its scalar count and a learned
@@ -101,6 +102,7 @@ def zinb_nll(
     log_prob = torch.where(x < 0.5, zero_case, nonzero_case)
     return -log_prob.mean()
 
+
 def sample_zinb(
     log_mu: torch.Tensor,
     log_theta: torch.Tensor,
@@ -134,6 +136,7 @@ def sample_zinb(
     mask = torch.sigmoid((-logit_pi + gumbel_noise) / tau)
 
     return rate * mask
+
 
 class TxPerceiverAE(nn.Module):
     """Perceiver-style autoencoder for transcriptomics data.
@@ -188,16 +191,18 @@ class TxPerceiverAE(nn.Module):
         )
 
         # Self-attention layers on (K+2) tokens
-        self.layers = nn.ModuleList([
-            Block(
-                n_embd=n_embd,
-                bias=bias,
-                is_causal=False,
-                dropout=dropout,
-                n_head=n_heads,
-            )
-            for _ in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                Block(
+                    n_embd=n_embd,
+                    bias=bias,
+                    is_causal=False,
+                    dropout=dropout,
+                    n_head=n_heads,
+                )
+                for _ in range(n_layers)
+            ]
+        )
 
         # Decoder: expand K slots -> G gene tokens
         self.decoder_set_block = SetBlock(
@@ -230,9 +235,7 @@ class TxPerceiverAE(nn.Module):
         n_res = len(self.layers)
         for pn, p in self.named_parameters():
             if pn.endswith("c_proj.weight"):
-                torch.nn.init.normal_(
-                    p, mean=0.0, std=0.02 / math.sqrt(2 * n_res)
-                )
+                torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * n_res))
 
     def encode(
         self,
@@ -248,11 +251,14 @@ class TxPerceiverAE(nn.Module):
         cell_emb = self.cell_type_embedder(cell_type, train=train)  # (B, D)
         assay_emb = self.assay_type_embedder(assay_type, train=train)  # (B, D)
 
-        x = torch.cat([
-            slots,
-            cell_emb.unsqueeze(1),
-            assay_emb.unsqueeze(1),
-        ], dim=1)  # (B, K+2, D)
+        x = torch.cat(
+            [
+                slots,
+                cell_emb.unsqueeze(1),
+                assay_emb.unsqueeze(1),
+            ],
+            dim=1,
+        )  # (B, K+2, D)
 
         for block in self.layers:
             x = block(x)
@@ -363,6 +369,7 @@ def hinge_disc_loss(
 # TxAM Perceptual Loss
 # ---------------------------------------------------------------------------
 
+
 class TxAMPerceptualLoss(nn.Module):
     """TxAM-based perceptual loss for transcriptomics data.
 
@@ -385,10 +392,7 @@ class TxAMPerceptualLoss(nn.Module):
             from txam import TxAMEncoder
 
             # Load pre-trained TxAM encoder wrapper
-            txam_encoder = TxAMEncoder.from_pretrained(
-                checkpoint_path=checkpoint_path,
-                device=device
-            )
+            txam_encoder = TxAMEncoder.from_pretrained(checkpoint_path=checkpoint_path, device=device)
 
             # Get the raw PyTorch encoder module for gradient-enabled inference
             self.encoder = txam_encoder.get_encoder_module()
@@ -400,15 +404,10 @@ class TxAMPerceptualLoss(nn.Module):
                 param.requires_grad = False
 
             # Cache preprocessing parameters
-            self.target_library_size = getattr(
-                self.preprocessor, 'target_library_size', 10_000.0
-            )
+            self.target_library_size = getattr(self.preprocessor, "target_library_size", 10_000.0)
 
         except ImportError as e:
-            raise ImportError(
-                f"Failed to import txam: {e}. "
-                "Please ensure txam package is available."
-            ) from e
+            raise ImportError(f"Failed to import txam: {e}. Please ensure txam package is available.") from e
 
         # --- Gene alignment (one-time) ---
         if input_gene_names is not None:
@@ -418,9 +417,7 @@ class TxAMPerceptualLoss(nn.Module):
             idx = []
             for g in model_genes:
                 idx.append(model_gene_to_idx.get(g, -1))
-            self.register_buffer(
-                '_align_idx', torch.tensor(idx, dtype=torch.long)
-            )
+            self.register_buffer("_align_idx", torch.tensor(idx, dtype=torch.long))
         # If input_gene_names is None, no _align_idx buffer is created
 
     def _preprocess_counts(self, counts: torch.Tensor) -> torch.Tensor:
@@ -441,13 +438,13 @@ class TxAMPerceptualLoss(nn.Module):
 
     def _align(self, x: torch.Tensor) -> torch.Tensor:
         """Reorder/pad input columns to match model gene order."""
-        if not hasattr(self, '_align_idx'):
+        if not hasattr(self, "_align_idx"):
             return x
         # Pad a zero column at the end for missing genes (index == -1)
-        padded = F.pad(x, (0, 1), value=0.0)          # (B, G_input+1)
+        padded = F.pad(x, (0, 1), value=0.0)  # (B, G_input+1)
         idx = self._align_idx.clamp(min=-1) % padded.shape[1]
         # gather is not needed; advanced indexing works and is differentiable
-        return padded[:, idx]                           # (B, G_model)
+        return padded[:, idx]  # (B, G_model)
 
     def forward(
         self,
@@ -483,10 +480,9 @@ class TxAMPerceptualLoss(nn.Module):
         return F.mse_loss(recon_embeddings, real_embeddings)
 
 
-
 def test_txam_gradient_flow(
     checkpoint_path: str = "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt",
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    device: str = "cuda" if torch.cuda.is_available() else "cpu",
 ) -> None:
     """Test that gradients flow correctly through TxAMPerceptualLoss.
 
@@ -536,6 +532,7 @@ def test_txam_gradient_flow(
     except Exception as e:
         print(f"✗ Test failed with error: {e}")
         import traceback
+
         traceback.print_exc()
 
 

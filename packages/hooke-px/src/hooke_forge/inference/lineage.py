@@ -10,12 +10,11 @@ import ast
 import logging
 import re
 from pathlib import Path
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
 
-def parse_config_from_log(log_path: Path) -> Optional[dict]:
+def parse_config_from_log(log_path: Path) -> dict | None:
     """Parse config dict from INFO:__main__:config={...} line.
 
     Args:
@@ -31,7 +30,7 @@ def parse_config_from_log(log_path: Path) -> Optional[dict]:
                 match = pattern.search(line)
                 if match:
                     return ast.literal_eval(match.group(1))
-    except (OSError, IOError) as e:
+    except OSError as e:
         log.warning(f"Could not read log file {log_path}: {e}")
     return None
 
@@ -67,7 +66,7 @@ def get_job_id_from_checkpoint_path(checkpoint_path: str) -> tuple[str, str]:
         return "", ""
 
 
-def find_log_file(training_dir: Path) -> Optional[Path]:
+def find_log_file(training_dir: Path) -> Path | None:
     """Find the rank 0 log file for a training directory.
 
     Args:

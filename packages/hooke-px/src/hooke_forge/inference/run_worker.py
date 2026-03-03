@@ -21,17 +21,17 @@ import zarr
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from hooke_forge.model.tokenizer import DataFrameTokenizer, MetaDataConfig
 from hooke_forge.data.dataset import (
+    IMG_SIZE,
     CellDataset,
     CellPaintConverter,
-    IMG_SIZE,
     MetaVocab,
 )
 from hooke_forge.model.architecture import get_model_cls
+from hooke_forge.model.tokenizer import DataFrameTokenizer, MetaDataConfig
 from hooke_forge.training.trainer import generate
 from hooke_forge.utils.ema import KarrasEMA
-from hooke_forge.utils.encoders import DINOv2Detector, Phenom2Detector, PH2BFDetector, StabilityCPEncoder
+from hooke_forge.utils.encoders import DINOv2Detector, PH2BFDetector, Phenom2Detector, StabilityCPEncoder
 
 _meta_defaults = MetaDataConfig()
 REC_ID_DIM = _meta_defaults.rec_id_dim
@@ -151,11 +151,8 @@ def process_batch(
     # Allow multiple real image crops per example (B, S, C, H, W)
     if px1.ndim == 5:
         B, S, C, H, W = px1.shape
-        px1_flat = px1.reshape(B * S, C, H, W)
     else:
         B, C, H, W = px1.shape
-        S = 1
-        px1_flat = px1
 
     # Extract real image features
     # real_phenom = phenom(px1_flat).cpu().numpy()
@@ -176,12 +173,8 @@ def process_batch(
 
         # Extract features and reshape to (B, num_samples, dim)
         pred_phenom = phenom(preds).cpu().numpy().reshape(B, num_samples, PHENOM_DIM)
-        #pred_dino = dino(cp2rgb(preds)).cpu().numpy().reshape(B, num_samples, DINO_DIM)
-        pred_images = (
-            preds.cpu()
-            .numpy()
-            .reshape(B, num_samples, preds.shape[1], preds.shape[2], preds.shape[3])
-        )
+        # pred_dino = dino(cp2rgb(preds)).cpu().numpy().reshape(B, num_samples, DINO_DIM)
+        pred_images = preds.cpu().numpy().reshape(B, num_samples, preds.shape[1], preds.shape[2], preds.shape[3])
     else:
         # Single sample per image
         px0 = torch.randn(B, 8, 32, 32, device=device)
@@ -189,15 +182,14 @@ def process_batch(
         preds = vae.decode(preds)
 
         pred_phenom = phenom(preds).cpu().numpy()
-        pred_dino = dino(cp2rgb(preds)).cpu().numpy()
         pred_images = preds.cpu().numpy()
 
     return {
         "zarr_indices": zarr_indices,
-        #"real_phenom": real_phenom,
-        #"real_dino": real_dino,
+        # "real_phenom": real_phenom,
+        # "real_dino": real_dino,
         "pred_phenom": pred_phenom,
-        #"pred_dino": pred_dino,
+        # "pred_dino": pred_dino,
         "pred_images": pred_images,
     }
 
@@ -276,10 +268,10 @@ def run_worker(worker_dir: str, config_path: str):
     )
 
     # Open shared zarr arrays
-    #real_phenom_zarr = zarr.open(os.path.join(zarr_dir, "real_phenom.zarr"), mode="r+")
-    #real_dino_zarr = zarr.open(os.path.join(zarr_dir, "real_dino.zarr"), mode="r+")
+    # real_phenom_zarr = zarr.open(os.path.join(zarr_dir, "real_phenom.zarr"), mode="r+")
+    # real_dino_zarr = zarr.open(os.path.join(zarr_dir, "real_dino.zarr"), mode="r+")
     pred_phenom_zarr = zarr.open(os.path.join(zarr_dir, "pred_phenom.zarr"), mode="r+")
-    #pred_dino_zarr = zarr.open(os.path.join(zarr_dir, "pred_dino.zarr"), mode="r+")
+    # pred_dino_zarr = zarr.open(os.path.join(zarr_dir, "pred_dino.zarr"), mode="r+")
     pred_images_zarr = zarr.open(os.path.join(zarr_dir, "pred_images.zarr"), mode="r+")
 
     # Process batches
@@ -298,10 +290,10 @@ def run_worker(worker_dir: str, config_path: str):
 
         # Write to zarr
         for i, idx in enumerate(results["zarr_indices"]):
-            #real_phenom_zarr[idx] = results["real_phenom"][i]
-            #real_dino_zarr[idx] = results["real_dino"][i]
+            # real_phenom_zarr[idx] = results["real_phenom"][i]
+            # real_dino_zarr[idx] = results["real_dino"][i]
             pred_phenom_zarr[idx] = results["pred_phenom"][i]
-            #pred_dino_zarr[idx] = results["pred_dino"][i]
+            # pred_dino_zarr[idx] = results["pred_dino"][i]
             pred_images_zarr[idx] = results["pred_images"][i]
             completed_indices.append(idx)
 
@@ -325,9 +317,7 @@ def run_worker(worker_dir: str, config_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Distributed inference worker")
-    parser.add_argument(
-        "--worker_dir", type=str, required=True, help="Path to worker directory"
-    )
+    parser.add_argument("--worker_dir", type=str, required=True, help="Path to worker directory")
     parser.add_argument("--config", type=str, required=True, help="Path to config JSON")
     args = parser.parse_args()
 

@@ -191,8 +191,6 @@ def compute_phenomics_metrics(
             n = N
 
         prdc = compute_prdc(real_features_dino, pred_features_dino, nearest_k=5)
-        prdc_preds = {
-            f"{name}_metrics/{prefix}_{k}_dinov2@{n}": v for k, v in prdc.items()
-        }
+        prdc_preds = {f"{name}_metrics/{prefix}_{k}_dinov2@{n}": v for k, v in prdc.items()}
         log(step=state.global_step, data=prdc_preds)
     D.barrier()

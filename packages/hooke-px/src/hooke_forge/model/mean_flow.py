@@ -34,24 +34,19 @@ that 1-NFE sampling is preserved even when guidance is used.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 import torch.nn as nn
 from torch.func import functional_call, jvp
 
 from hooke_forge.model.context_encoders import (
-    TransformerEncoder,
     ScalarEmbedder,
-    MetaDataConfig,
-    get_transformer_encoder,
+    TransformerEncoder,
 )
-from hooke_forge.model.architecture import get_model_cls, get_tx_model_cls
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _logit_normal_sample(
     n: int,
@@ -98,8 +93,8 @@ def _adaptive_weight(
     Gradient is detached so w is treated as a constant during θ-backprop.
     Shape: (B, 1, 1, ...) ready for broadcasting with ``error``.
     """
-    sq_norm = error.detach().pow(2).flatten(1).sum(1)      # (B,)
-    w = 1.0 / (sq_norm + eps).pow(power)                   # (B,)
+    sq_norm = error.detach().pow(2).flatten(1).sum(1)  # (B,)
+    w = 1.0 / (sq_norm + eps).pow(power)  # (B,)
     # Reshape for broadcasting against (B, ...)
     return w.reshape(-1, *([1] * (error.ndim - 1)))
 
@@ -107,6 +102,7 @@ def _adaptive_weight(
 # ---------------------------------------------------------------------------
 # Main model
 # ---------------------------------------------------------------------------
+
 
 class JointMeanFlow(nn.Module):
     """Average-velocity generative model supporting one or more modalities.
@@ -171,7 +167,7 @@ class JointMeanFlow(nn.Module):
         t: torch.Tensor,
         r: torch.Tensor,
         meta: dict[str, torch.Tensor],
-        force_drop_rec_conc: Optional[torch.Tensor] = None,
+        force_drop_rec_conc: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Build adaLN conditioning vector  c = emb(t) + emb(Δt) + emb(meta)."""
         return (
@@ -196,7 +192,7 @@ class JointMeanFlow(nn.Module):
         r: torch.Tensor,
         t: torch.Tensor,
         meta: dict[str, torch.Tensor],
-        force_drop_rec_conc: Optional[torch.Tensor] = None,
+        force_drop_rec_conc: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Evaluate u_θ(z, r, t).  Returns tensor with same shape as z."""
         cond = self._cond(t, r, meta, force_drop_rec_conc)
@@ -214,7 +210,7 @@ class JointMeanFlow(nn.Module):
         t: torch.Tensor,
         v_eff: torch.Tensor,
         meta: dict[str, torch.Tensor],
-        force_drop_rec_conc: Optional[torch.Tensor] = None,
+        force_drop_rec_conc: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute  (u, du/dt)  via  torch.func.jvp.
 
@@ -232,31 +228,33 @@ class JointMeanFlow(nn.Module):
         # Prefix helpers ---------------------------------------------------
         def _p(prefix: str) -> tuple[dict, dict]:
             n = len(prefix) + 1
-            p = {k[n:]: v for k, v in params.items()  if k.startswith(prefix + ".")}
+            p = {k[n:]: v for k, v in params.items() if k.startswith(prefix + ".")}
             b = {k[n:]: v for k, v in buffers.items() if k.startswith(prefix + ".")}
             return p, b
 
         # Capture everything the pure function will need
-        t_emb_mod   = self.t_embedder
-        dt_emb_mod  = self.dt_embedder
-        ctx_mod     = self.context_encoder
-        vf_mod      = self.vector_fields[modality]
+        t_emb_mod = self.t_embedder
+        dt_emb_mod = self.dt_embedder
+        ctx_mod = self.context_encoder
+        vf_mod = self.vector_fields[modality]
 
-        t_emb_p,  t_emb_b  = _p("t_embedder")
+        t_emb_p, t_emb_b = _p("t_embedder")
         dt_emb_p, dt_emb_b = _p("dt_embedder")
-        ctx_p,    ctx_b    = _p("context_encoder")
+        ctx_p, ctx_b = _p("context_encoder")
         vf_key = f"vector_fields.{modality}"
-        vf_p,     vf_b     = _p(vf_key)
+        vf_p, vf_b = _p(vf_key)
 
         meta_copy = meta
         fdrc = force_drop_rec_conc
 
         def u_fn(z_: torch.Tensor, r_: torch.Tensor, t_: torch.Tensor) -> torch.Tensor:
             """Pure (stateless) function of (z, r, t) for JVP."""
-            t_emb  = functional_call(t_emb_mod,  (t_emb_p,  t_emb_b),  (t_,))
+            t_emb = functional_call(t_emb_mod, (t_emb_p, t_emb_b), (t_,))
             dt_emb = functional_call(dt_emb_mod, (dt_emb_p, dt_emb_b), (t_ - r_,))
             meta_emb = functional_call(
-                ctx_mod, (ctx_p, ctx_b), (),
+                ctx_mod,
+                (ctx_p, ctx_b),
+                (),
                 kwargs=dict(
                     rec_id=meta_copy["rec_id"],
                     concentration=meta_copy["concentration"],
@@ -276,11 +274,7 @@ class JointMeanFlow(nn.Module):
 
         # Disable flash attention for JVP - it doesn't support forward-mode AD
         # Use math fallback instead which supports all AD modes
-        with torch.backends.cuda.sdp_kernel(
-            enable_flash=False,
-            enable_math=True,
-            enable_mem_efficient=False
-        ):
+        with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_math=True, enable_mem_efficient=False):
             u, dudt = jvp(u_fn, (z, r, t), tangents)
         return u, dudt
 
@@ -310,7 +304,11 @@ class JointMeanFlow(nn.Module):
 
         # Unconditional arm  (r = t  →  Δt = 0)
         u_uncond = self._forward_u(
-            modality, z, r=t, t=t, meta=meta,
+            modality,
+            z,
+            r=t,
+            t=t,
+            meta=meta,
             force_drop_rec_conc=torch.ones(B, device=z.device, dtype=torch.long),
         )
         v_eff = omega * v_t + (1.0 - omega - kappa) * u_uncond
@@ -329,8 +327,8 @@ class JointMeanFlow(nn.Module):
     def loss(
         self,
         modality: str,
-        x0: torch.Tensor,   # source (data)
-        x1: torch.Tensor,   # target (not used directly — noise drawn fresh)
+        x0: torch.Tensor,  # source (data)
+        x1: torch.Tensor,  # target (not used directly — noise drawn fresh)
         meta: dict[str, torch.Tensor],
     ) -> torch.Tensor:
         """MeanFlow training loss for one modality.
@@ -351,7 +349,8 @@ class JointMeanFlow(nn.Module):
 
         # Sample (t, r)
         t, r = _sample_t_r(
-            B, device,
+            B,
+            device,
             lognorm_mean=self.lognorm_mean,
             lognorm_std=self.lognorm_std,
             r_neq_t_ratio=self.r_neq_t_ratio,
@@ -359,9 +358,9 @@ class JointMeanFlow(nn.Module):
 
         # Build interpolant and conditional velocity
         eps = torch.randn_like(x0)
-        t_  = t.reshape(-1, *([1] * (x0.ndim - 1)))   # (B, 1, ...)
-        z   = (1.0 - t_) * x0 + t_ * eps              # z_t
-        v_t = eps - x0                                  # conditional velocity
+        t_ = t.reshape(-1, *([1] * (x0.ndim - 1)))  # (B, 1, ...)
+        z = (1.0 - t_) * x0 + t_ * eps  # z_t
+        v_t = eps - x0  # conditional velocity
 
         # Effective velocity for target (with CFG if omega != 1)
         if self.cfg_omega != 1.0:
@@ -376,7 +375,7 @@ class JointMeanFlow(nn.Module):
 
         # MeanFlow Identity: u_tgt = ṽ − (t − r) · du/dt
         dt = (t - r).reshape(-1, *([1] * (x0.ndim - 1)))
-        u_tgt = (v_eff - dt * dudt).detach()           # stop-gradient on target
+        u_tgt = (v_eff - dt * dudt).detach()  # stop-gradient on target
 
         # Adaptive-weighted L2 loss
         error = u - u_tgt
@@ -405,9 +404,9 @@ class JointMeanFlow(nn.Module):
     def generate(
         self,
         modality: str,
-        x0: torch.Tensor,              # noise ε ~ p_prior
+        x0: torch.Tensor,  # noise ε ~ p_prior
         meta: dict[str, torch.Tensor],
-        cfg: float = 1.0,              # inference-time CFG override (doubles NFE)
+        cfg: float = 1.0,  # inference-time CFG override (doubles NFE)
         n_steps: int = 1,
     ) -> tuple[torch.Tensor, int]:
         """Generate a sample using the average-velocity field.
@@ -441,7 +440,11 @@ class JointMeanFlow(nn.Module):
                 # Inference-time CFG  (doubles NFE)
                 u_cond = self._forward_u(modality, z, r=r, t=t, meta=meta)
                 u_null = self._forward_u(
-                    modality, z, r=r, t=t, meta=meta,
+                    modality,
+                    z,
+                    r=r,
+                    t=t,
+                    meta=meta,
                     force_drop_rec_conc=torch.ones(B, device=device, dtype=torch.long),
                 )
                 nfe += 2
@@ -450,7 +453,7 @@ class JointMeanFlow(nn.Module):
         if n_steps == 1:
             # Algorithm 2: single network evaluation
             u = _u(x0, r_val=0.0, t_val=1.0)
-            sample = x0 - u                        # z_0 = z_1 − (1−0)·u
+            sample = x0 - u  # z_0 = z_1 − (1−0)·u
         else:
             # Few-step on uniform grid t=1 → t=0
             ts = torch.linspace(1.0, 0.0, n_steps + 1).tolist()

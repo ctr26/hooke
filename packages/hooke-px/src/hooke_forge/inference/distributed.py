@@ -199,9 +199,7 @@ def create_zarr_arrays(
         compressor=compressor,
     )
 
-    log.info(
-        f"{'Opened existing' if mode == 'r+' else 'Created'} zarr arrays at {zarr_dir}"
-    )
+    log.info(f"{'Opened existing' if mode == 'r+' else 'Created'} zarr arrays at {zarr_dir}")
 
 
 def create_worker_directories(
@@ -331,9 +329,7 @@ def monitor_until_complete(
 
         if completed == total_workers:
             if dirs_completed < total_workers:
-                log.warning(
-                    f"{total_workers - dirs_completed} workers incomplete after all jobs done"
-                )
+                log.warning(f"{total_workers - dirs_completed} workers incomplete after all jobs done")
             break
 
     log.info("All workers complete!")
@@ -374,7 +370,7 @@ def run_distributed_inference(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    log.info(f"Running distributed inference")
+    log.info("Running distributed inference")
     log.info(f"  Checkpoint: {checkpoint_path}")
     log.info(f"  Input: {input_parquet}")
     log.info(f"  Output: {output_dir}")
@@ -383,7 +379,7 @@ def run_distributed_inference(
     # Check for resume
     prepared_path = output_dir / "prepared_metadata.parquet"
     if prepared_path.exists():
-        log.info(f"Resuming from existing run")
+        log.info("Resuming from existing run")
         df = pl.read_parquet(prepared_path)
         df = merge_worker_progress(df, output_dir)
         num_complete = df.filter(pl.col("complete"))["complete"].sum()

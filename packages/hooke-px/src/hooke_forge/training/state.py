@@ -37,9 +37,7 @@ def set_metrics_log_path(path: str | None) -> None:
 def _serialize_for_json(obj):
     """Convert non-JSON-serializable objects to serializable format."""
     if isinstance(obj, wandb.Image):
-        return (
-            f"<wandb.Image: {obj._path}>" if hasattr(obj, "_path") else "<wandb.Image>"
-        )
+        return f"<wandb.Image: {obj._path}>" if hasattr(obj, "_path") else "<wandb.Image>"
     if isinstance(obj, (np.floating, np.integer)):
         return obj.item()
     if isinstance(obj, np.ndarray):
@@ -111,11 +109,7 @@ class TrainState:
 
     def load_latest_ckpt(self, dir: str, device: torch.device, strict: bool = True) -> None:
         pattern = r"step_(\d+).ckpt"
-        fnames = [
-            f.name
-            for f in os.scandir(dir)
-            if f.is_file() and re.fullmatch(pattern, f.name)
-        ]
+        fnames = [f.name for f in os.scandir(dir) if f.is_file() and re.fullmatch(pattern, f.name)]
         if len(fnames) == 0:
             print(f"No existing checkpoints found in {dir}, skipping load.")
             return None

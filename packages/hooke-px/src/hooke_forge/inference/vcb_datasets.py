@@ -28,7 +28,9 @@ VCB_DATASETS: dict[str, dict[str, Any]] = {
         "image_type": "brightfield_3channel",
         "shape": [2048, 2048, 3],
         "source": "cross_cell_line",
-        "obs_path": f"{VCB_BASE_PATH}/cross_cell_line__brightfield__v1_1/cross_cell_line__brightfield__v1_1_obs.parquet",
+        "obs_path": (
+            f"{VCB_BASE_PATH}/cross_cell_line__brightfield__v1_1/cross_cell_line__brightfield__v1_1_obs.parquet"
+        ),
     },
 }
 
@@ -56,9 +58,7 @@ def transform_vcb_dataset(df: pl.DataFrame, dataset_type: str) -> pl.DataFrame:
     """
     if dataset_type not in VCB_DATASETS:
         available = list(VCB_DATASETS.keys())
-        raise ValueError(
-            f"Unknown VCB dataset type: {dataset_type}. Available types: {available}"
-        )
+        raise ValueError(f"Unknown VCB dataset type: {dataset_type}. Available types: {available}")
 
     config = VCB_DATASETS[dataset_type]
     log.info(f"Transforming VCB dataset: {dataset_type}")
@@ -68,17 +68,14 @@ def transform_vcb_dataset(df: pl.DataFrame, dataset_type: str) -> pl.DataFrame:
     # Check for perturbations column
     if "perturbations" not in df.columns:
         raise ValueError(
-            "VCB dataset must have 'perturbations' column. "
-            "This doesn't appear to be a VCB-formatted observation file."
+            "VCB dataset must have 'perturbations' column. This doesn't appear to be a VCB-formatted observation file."
         )
 
     return df.with_columns(
         pl.lit(config["image_type"]).alias("image_type"),
         pl.lit(config["shape"]).alias("shape"),
         pl.lit(config["source"]).alias("source"),
-        rec_id=pl.col("perturbations").list.eval(
-            pl.element().struct.field("source_id")
-        ),
+        rec_id=pl.col("perturbations").list.eval(pl.element().struct.field("source_id")),
         concentration=pl.col("perturbations").list.eval(
             pl.element().struct.field("concentration").cast(pl.Float64).cast(pl.String)
         ),
@@ -104,7 +101,5 @@ def get_vcb_obs_path(dataset_type: str) -> str:
     """
     if dataset_type not in VCB_DATASETS:
         available = list(VCB_DATASETS.keys())
-        raise ValueError(
-            f"Unknown VCB dataset type: {dataset_type}. Available types: {available}"
-        )
+        raise ValueError(f"Unknown VCB dataset type: {dataset_type}. Available types: {available}")
     return VCB_DATASETS[dataset_type]["obs_path"]

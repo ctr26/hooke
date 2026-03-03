@@ -43,14 +43,9 @@ def find_checkpoint(training_dir: Path, step: int) -> Path:
 
     if available:
         steps = sorted([int(p.stem.split("_")[1]) for p in available])
-        raise FileNotFoundError(
-            f"Checkpoint step_{step}.ckpt not found in {training_dir}. "
-            f"Available steps: {steps}"
-        )
+        raise FileNotFoundError(f"Checkpoint step_{step}.ckpt not found in {training_dir}. Available steps: {steps}")
     else:
-        raise FileNotFoundError(
-            f"No checkpoints directory found in {training_dir}"
-        )
+        raise FileNotFoundError(f"No checkpoints directory found in {training_dir}")
 
 
 def extract_model_config(training_dir: Path) -> dict:

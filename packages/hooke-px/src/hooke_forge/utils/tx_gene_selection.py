@@ -25,10 +25,10 @@ Usage:
 import dataclasses
 import hashlib
 import json
-import pickle
+import logging
 import time
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 import numpy as np
 import ornamentalist
@@ -36,7 +36,6 @@ import polars as pl
 import scanpy as sc
 import zarr
 from scipy import sparse
-import logging
 
 logging.basicConfig(level=logging.INFO)
 _log = logging.getLogger(__name__)
@@ -45,6 +44,7 @@ _log = logging.getLogger(__name__)
 @dataclasses.dataclass
 class GeneSelectionConfig:
     """Configuration for gene selection preprocessing."""
+
     select_strategy: Literal["hvg", "top", "all"] = "hvg"
     n_features: int = 5000
     target_sum: int = 4000  # Normalization target
@@ -106,7 +106,7 @@ def _save_gene_selection_cache(
             gene_mask=gene_mask,
             hvg_indices=hvg_indices,
             gene_symbols=gene_symbols,
-            metadata=np.array([metadata])  # Wrap dict in array for npz
+            metadata=np.array([metadata]),  # Wrap dict in array for npz
         )
         _log.info(f"Saved gene selection cache to {cache_path}")
     except Exception as e:
@@ -132,7 +132,7 @@ def _load_gene_selection_cache(cache_key: str) -> tuple[np.ndarray, np.ndarray, 
         # Remove corrupted cache file
         try:
             cache_path.unlink()
-        except:
+        except OSError:
             pass
         return None
 
@@ -152,11 +152,11 @@ def _get_highly_variable_genes(
     sc.pp.highly_variable_genes(
         adata_copy,
         n_top_genes=n_features,
-        subset=False  # Keep all genes, just mark HVGs
+        subset=False,  # Keep all genes, just mark HVGs
     )
 
     # Get indices of highly variable genes
-    hvg_mask = adata_copy.var['highly_variable'].values
+    hvg_mask = adata_copy.var["highly_variable"].values
     hvg_indices = np.where(hvg_mask)[0]
 
     # Ensure we get exactly the requested number of features
@@ -192,9 +192,15 @@ def _get_top_genes(
 @ornamentalist.configure(name="gene_selection")
 def create_gene_subset(
     *,
-    metadata_path: str = ornamentalist.Configurable["/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/metadata/training_trek_v1_0_obs.parquet"],
-    zarr_path: str = ornamentalist.Configurable["/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"],
-    var_metadata_path: str = ornamentalist.Configurable["/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_var.parquet"],
+    metadata_path: str = ornamentalist.Configurable[
+        "/mnt/ps/home/CORP/jason.hartford/project/big-x/big-img/metadata/training_trek_v1_0_obs.parquet"
+    ],
+    zarr_path: str = ornamentalist.Configurable[
+        "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"
+    ],
+    var_metadata_path: str = ornamentalist.Configurable[
+        "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_var.parquet"
+    ],
     train_split: str = ornamentalist.Configurable["train"],  # Split name to use for HVG computation
     output_path: str = ornamentalist.Configurable[""],  # Auto-generated if empty
     select_strategy: Literal["hvg", "top", "all"] = ornamentalist.Configurable["hvg"],
@@ -231,9 +237,7 @@ def create_gene_subset(
     )
 
     # Generate cache key and check for cached results
-    cache_key = _get_gene_selection_cache_key(
-        config, metadata_path, zarr_path, var_metadata_path, train_split
-    )
+    cache_key = _get_gene_selection_cache_key(config, metadata_path, zarr_path, var_metadata_path, train_split)
 
     # Generate output path if not provided
     if not output_path:
@@ -255,7 +259,7 @@ def create_gene_subset(
                 cache_path = _get_gene_selection_cache_path(cache_key)
                 try:
                     cache_path.unlink()
-                except:
+                except OSError:
                     pass
             else:
                 # Save to output path and return
@@ -264,7 +268,7 @@ def create_gene_subset(
                     gene_mask=gene_mask,
                     hvg_indices=hvg_indices,
                     gene_symbols=gene_symbols,
-                    metadata=np.array([metadata])
+                    metadata=np.array([metadata]),
                 )
                 _log.info(f"Saved gene subset to {output_path}")
                 return str(output_path)
@@ -373,7 +377,7 @@ def create_gene_subset(
         gene_mask=gene_mask_np,
         hvg_indices=hvg_indices,
         gene_symbols=gene_symbols,
-        metadata=np.array([metadata])  # Wrap dict in array for npz
+        metadata=np.array([metadata]),  # Wrap dict in array for npz
     )
 
     _log.info(f"Created gene subset with {len(hvg_indices)} features")

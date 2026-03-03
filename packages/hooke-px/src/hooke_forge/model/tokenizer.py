@@ -1,18 +1,21 @@
 from dataclasses import dataclass
+
+import numpy as np
 import polars as pl
 import torch
 import torch.nn.functional as F
-import numpy as np
+
 
 # I add approximately 20% to the dimensions below to account for the new vocabulary items during fine-tuning
 @dataclass(frozen=True)
 class MetaDataConfig:
-    rec_id_dim: int = 750_000 # Unique rec_ids:  628698
-    concentration_dim: int = 550 # Unique concentrations:  386
-    cell_type_dim: int = 55 # Unique cell_types:  47
-    assay_type_dim: int = 6 # Unique assay_types:  4
-    experiment_dim: int = 12_000 # Unique experiments:  10112
-    well_address_dim: int = 1536 # Unique well_addresses:  1531
+    rec_id_dim: int = 750_000  # Unique rec_ids:  628698
+    concentration_dim: int = 550  # Unique concentrations:  386
+    cell_type_dim: int = 55  # Unique cell_types:  47
+    assay_type_dim: int = 6  # Unique assay_types:  4
+    experiment_dim: int = 12_000  # Unique experiments:  10112
+    well_address_dim: int = 1536  # Unique well_addresses:  1531
+
 
 class Tokenizer:
     def __init__(self):
@@ -51,9 +54,7 @@ class Tokenizer:
 class DataFrameTokenizer:
     def __init__(self, df: pl.DataFrame, pad_length=8):
         self.rec_id_tokenizer = Tokenizer().fit(df["rec_id"].explode().unique())
-        self.concentration_tokenizer = Tokenizer().fit(
-            df["concentration"].explode().unique()
-        )
+        self.concentration_tokenizer = Tokenizer().fit(df["concentration"].explode().unique())
         self.cell_type_tokenizer = Tokenizer().fit(df["cell_type"].unique())
         self.assay_type_tokenizer = Tokenizer().fit(df["assay_type"].unique())
         self.experiment_tokenizer = Tokenizer().fit(df["experiment_label"].unique())
@@ -77,18 +78,10 @@ class DataFrameTokenizer:
                 torch.ones(len(rec_id), dtype=torch.long),
                 (0, self.pad_length - len(rec_id)),
             ).to(torch.bool),
-            "cell_type": torch.tensor(
-                self.cell_type_tokenizer(row["cell_type"])[0], dtype=torch.long
-            ),
-            "assay_type": torch.tensor(
-                self.assay_type_tokenizer(row["assay_type"])[0], dtype=torch.long
-            ),
-            "experiment_label": torch.tensor(
-                self.experiment_tokenizer(row["experiment_label"])[0], dtype=torch.long
-            ),
-            "well_address": torch.tensor(
-                self.well_address_tokenizer(row["well_address"])[0], dtype=torch.long
-            ),
+            "cell_type": torch.tensor(self.cell_type_tokenizer(row["cell_type"])[0], dtype=torch.long),
+            "assay_type": torch.tensor(self.assay_type_tokenizer(row["assay_type"])[0], dtype=torch.long),
+            "experiment_label": torch.tensor(self.experiment_tokenizer(row["experiment_label"])[0], dtype=torch.long),
+            "well_address": torch.tensor(self.well_address_tokenizer(row["well_address"])[0], dtype=torch.long),
         }
 
     def __call__(self, row):

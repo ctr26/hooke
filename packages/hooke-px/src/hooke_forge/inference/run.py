@@ -27,9 +27,7 @@ log = logging.getLogger(__name__)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Run inference pipeline from checkpoint to VCB-ready data"
-    )
+    parser = argparse.ArgumentParser(description="Run inference pipeline from checkpoint to VCB-ready data")
     parser.add_argument(
         "--training-dir",
         type=Path,
@@ -127,11 +125,11 @@ def main():
     args = parse_args()
 
     # Import here to avoid slow imports when just checking --help
-    from hooke_forge.inference.checkpoint import find_checkpoint, extract_model_config
+    from hooke_forge.inference.checkpoint import extract_model_config, find_checkpoint
     from hooke_forge.inference.distributed import run_distributed_inference
-    from hooke_forge.inference.validation import check_completion, recover_completion_status
-    from hooke_forge.inference.prepare_eval import prepare_for_vcb, print_vcb_command
     from hooke_forge.inference.lineage import get_model_lineage
+    from hooke_forge.inference.prepare_eval import prepare_for_vcb, print_vcb_command
+    from hooke_forge.inference.validation import check_completion, recover_completion_status
     from hooke_forge.inference.vcb_datasets import get_vcb_obs_path
 
     # Resolve dataset path
@@ -170,11 +168,7 @@ def main():
     # Construct structured output path:
     # {base_path}/{data_version}/{task}/{model_config}/step_{step}
     output_dir = (
-        args.output_base
-        / lineage["data_version"]
-        / args.task_id
-        / lineage["model_config"]
-        / f"step_{args.step}"
+        args.output_base / lineage["data_version"] / args.task_id / lineage["model_config"] / f"step_{args.step}"
     )
     log.info(f"Output directory: {output_dir}")
 
@@ -230,6 +224,7 @@ def main():
     # Check splits to determine what to create
     try:
         import polars as pl
+
         pred_metadata = pl.read_parquet(output_dir / "prepared_metadata.parquet")
         split_values = pred_metadata["split"].unique().to_list()
         has_test = any(s.startswith("test") for s in split_values)
@@ -270,17 +265,21 @@ def main():
         log.info("=" * 60)
 
         print_vcb_command(
-            eval_dir, args.ground_truth_dir, args.task_id,
+            eval_dir,
+            args.ground_truth_dir,
+            args.task_id,
             pred_dir_name="predictions",
             split_file_name="split.json",
-            note=" (RECOMMENDED - test-only)"
+            note=" (RECOMMENDED - test-only)",
         )
 
         print_vcb_command(
-            eval_dir, args.ground_truth_dir, args.task_id,
+            eval_dir,
+            args.ground_truth_dir,
+            args.task_id,
             pred_dir_name="predictions_with_valid",
             split_file_name="split_with_valid.json",
-            note=" (with validation - may cause mismatches)"
+            note=" (with validation - may cause mismatches)",
         )
 
     else:
@@ -318,9 +317,7 @@ def main():
         split_file = "split.json" if test_only else "split_with_valid.json"
 
         print_vcb_command(
-            eval_dir, args.ground_truth_dir, args.task_id,
-            pred_dir_name=pred_dir,
-            split_file_name=split_file
+            eval_dir, args.ground_truth_dir, args.task_id, pred_dir_name=pred_dir, split_file_name=split_file
         )
 
 

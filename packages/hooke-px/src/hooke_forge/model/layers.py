@@ -10,10 +10,11 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 """
 
 import math
+
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Optional, Type
+
 
 class Attention(nn.Module):
     """Standard Multi-head Self Attention module with QKV projection.
@@ -34,7 +35,7 @@ class Attention(nn.Module):
         proj_bias: bool = True,
         attn_drop: float = 0.1,
         proj_drop: float = 0.0,
-        norm_layer: Optional[Type[nn.Module]] = None,
+        norm_layer: type[nn.Module] | None = None,
         device=None,
         dtype=None,
     ) -> None:
@@ -54,9 +55,7 @@ class Attention(nn.Module):
         dd = {"device": device, "dtype": dtype}
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
         if scale_norm:
-            assert norm_layer is not None, (
-                "norm_layer must be provided if scale_norm is True"
-            )
+            assert norm_layer is not None, "norm_layer must be provided if scale_norm is True"
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
@@ -72,14 +71,10 @@ class Attention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        attn_mask: Optional[torch.Tensor] = None,
+        attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         B, N, C = x.shape
-        qkv = (
-            self.qkv(x)
-            .reshape(B, N, 3, self.num_heads, self.head_dim)
-            .permute(2, 0, 3, 1, 4)
-        )
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
 
@@ -140,21 +135,13 @@ class SelfAttention(nn.Module):
         self.is_causal = is_causal
 
     def forward(self, x, mask=None):
-        B, T, C = (
-            x.size()
-        )  # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        k = self.k_norm(
-            k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        )  # (B, nh, T, hs)
-        q = self.q_norm(
-            q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        )  # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
+        k = self.k_norm(k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2))  # (B, nh, T, hs)
+        q = self.q_norm(q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2))  # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         # Reshape mask from (B, T) to (B, 1, 1, T) for broadcasting with attention scores
@@ -169,9 +156,7 @@ class SelfAttention(nn.Module):
             is_causal=self.is_causal,
         )
 
-        y = (
-            y.transpose(1, 2).contiguous().view(B, T, C)
-        )  # re-assemble all head outputs side by side
+        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -197,9 +182,7 @@ class SetAttention(nn.Module):
         self.head_dim = n_embd // n_head
         self.scale = 1 / math.sqrt(self.head_dim)
 
-        self.template_q = nn.Parameter(
-            torch.randn(n_head, n_template, n_embd // n_head) * temp_q_init_scale
-        )
+        self.template_q = nn.Parameter(torch.randn(n_head, n_template, n_embd // n_head) * temp_q_init_scale)
 
         self.kv = nn.Linear(n_embd, 2 * n_embd, bias=bias)
         self.proj = nn.Linear(n_embd, n_embd, bias=bias)
@@ -257,9 +240,7 @@ class SetBlock(nn.Module):
         self.ffwd = MLP(n_embd, bias, dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.attn(
-            self.ln1(x)
-        )  # no residual connection here because we're changing the dimensions
+        x = self.attn(self.ln1(x))  # no residual connection here because we're changing the dimensions
         x = x + self.ffwd(self.ln2(x))
         return x
 
@@ -309,9 +290,7 @@ class Transformer(nn.Module):
         super().__init__()
         self.input_proj = nn.Linear(input_dim, n_embd)
         self.drop = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        self.layers = nn.ModuleList(
-            [Block(n_embd, bias, is_causal, dropout, n_head) for _ in range(n_layer)]
-        )
+        self.layers = nn.ModuleList([Block(n_embd, bias, is_causal, dropout, n_head) for _ in range(n_layer)])
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
@@ -347,9 +326,7 @@ class TransformerCore(nn.Module):
         is_causal: bool = False,
     ):
         super().__init__()
-        self.layers = nn.ModuleList(
-            [Block(n_embd, bias, is_causal, dropout, n_head) for _ in range(n_layer)]
-        )
+        self.layers = nn.ModuleList([Block(n_embd, bias, is_causal, dropout, n_head) for _ in range(n_layer)])
         # init all weights
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper

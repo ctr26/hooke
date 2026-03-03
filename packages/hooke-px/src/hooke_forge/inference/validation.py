@@ -85,9 +85,7 @@ def _pick_zarr_array(zarr_dir: Path, zarr_name: str | None = None):
         if path.exists():
             return candidate, zarr.open(str(path), mode="r")
 
-    raise FileNotFoundError(
-        f"No zarr arrays found in {zarr_dir}. Looked for: {ZARR_PRIORITY}"
-    )
+    raise FileNotFoundError(f"No zarr arrays found in {zarr_dir}. Looked for: {ZARR_PRIORITY}")
 
 
 def _compute_nonzero_mask(arr, batch_rows: int = 256) -> np.ndarray:
@@ -157,17 +155,16 @@ def recover_completion_status(
     num_already = int(df.filter(pl.col("complete"))["complete"].sum())
 
     # Merge completion status
-    recover_df = pl.DataFrame({
-        "zarr_index": np.arange(n_zarr, dtype=np.int64),
-        "complete_from_zarr": pl.Series(mask),
-    })
+    recover_df = pl.DataFrame(
+        {
+            "zarr_index": np.arange(n_zarr, dtype=np.int64),
+            "complete_from_zarr": pl.Series(mask),
+        }
+    )
 
     df_updated = (
         df.join(recover_df, on="zarr_index", how="left")
-        .with_columns(
-            (pl.col("complete") | pl.col("complete_from_zarr").fill_null(False))
-            .alias("complete")
-        )
+        .with_columns((pl.col("complete") | pl.col("complete_from_zarr").fill_null(False)).alias("complete"))
         .drop("complete_from_zarr")
     )
 

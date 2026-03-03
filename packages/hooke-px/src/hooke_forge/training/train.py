@@ -5,7 +5,8 @@ import re
 import subprocess
 import sys
 import time
-from typing import Callable, Literal, Union
+from collections.abc import Callable
+from typing import Literal
 
 import ornamentalist
 import submitit
@@ -14,10 +15,10 @@ import wandb
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from hooke_forge.data import dataset
-from hooke_forge.model.tokenizer import DataFrameTokenizer
-from hooke_forge.model.flow_matching import JointFlowMatching, get_model
 from hooke_forge.model.drifting import JointDrifting
+from hooke_forge.model.flow_matching import JointFlowMatching, get_model
 from hooke_forge.model.mean_flow import JointMeanFlow
+from hooke_forge.model.tokenizer import DataFrameTokenizer
 from hooke_forge.training.state import TrainState
 from hooke_forge.training.trainer import train
 from hooke_forge.utils.distributed import Distributed
@@ -39,11 +40,7 @@ def load_tokenizer_from_checkpoint(ckpt_dir: str) -> DataFrameTokenizer | None:
     pattern = r"step_(\d+).ckpt"
     if not os.path.exists(ckpt_dir):
         return None
-    fnames = [
-        f.name
-        for f in os.scandir(ckpt_dir)
-        if f.is_file() and re.fullmatch(pattern, f.name)
-    ]
+    fnames = [f.name for f in os.scandir(ckpt_dir) if f.is_file() and re.fullmatch(pattern, f.name)]
     if len(fnames) == 0:
         return None
 
@@ -162,7 +159,7 @@ def main(config: ornamentalist.ConfigDict):
         # ------------------------------------------------------------------
         # Build model (dispatches on --flow_model.modality)
         # ------------------------------------------------------------------
-        net: Union[JointFlowMatching, JointDrifting] = get_model()
+        net: JointFlowMatching | JointDrifting = get_model()
         # Infer the training modality from which vector fields were created
         active_modalities = list(net.vector_fields.keys())
         has_px = "px" in active_modalities
@@ -182,18 +179,14 @@ def main(config: ornamentalist.ConfigDict):
         tx_train_loader = tx_val_loader = None
 
         if has_px:
-            px_train_loader, px_val_loader, _vocab, tokenizer = dataset.get_dataloaders(
-                tokenizer=existing_tokenizer
-            )
+            px_train_loader, px_val_loader, _vocab, tokenizer = dataset.get_dataloaders(tokenizer=existing_tokenizer)
             px_test_loaders = {"iid": px_val_loader}
         else:
             tokenizer = existing_tokenizer  # may be None
 
         if has_tx:
             # Reuse the Px tokenizer if available (joint or finetune from Px)
-            tx_train_loader, tx_val_loader, tokenizer = dataset.get_tx_dataloaders(
-                tokenizer=tokenizer
-            )
+            tx_train_loader, tx_val_loader, tokenizer = dataset.get_tx_dataloaders(tokenizer=tokenizer)
 
         assert tokenizer is not None, (
             "No tokenizer available. Either provide training data or resume from a checkpoint."
@@ -215,9 +208,7 @@ def main(config: ornamentalist.ConfigDict):
             eps=1e-8,
             weight_decay=0.0,
         )
-        state = TrainState(
-            ddp=ddp, ema=ema, opt=opt, global_step=0, tokenizer=tokenizer
-        )
+        state = TrainState(ddp=ddp, ema=ema, opt=opt, global_step=0, tokenizer=tokenizer)
 
         nparams = sum(p.numel() for p in net.parameters())
         log.info(f"Model has {nparams / 1e6:.0f}M parameters")

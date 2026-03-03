@@ -1,6 +1,6 @@
 import itertools
 import logging
-from typing import Generator, Iterator
+from collections.abc import Generator, Iterator
 
 from torch.utils.data import DataLoader, Sampler
 

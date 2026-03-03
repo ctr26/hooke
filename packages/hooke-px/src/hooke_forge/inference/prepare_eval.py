@@ -6,7 +6,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 import polars as pl
 
@@ -23,7 +22,7 @@ def prepare_for_vcb(
     ground_truth_dir: Path,
     output_dir: Path,
     task_id: str,
-    lineage: Optional[dict] = None,
+    lineage: dict | None = None,
     test_only: bool = True,
 ) -> Path:
     """Prepare predictions directory for VCB evaluation.
@@ -48,10 +47,7 @@ def prepare_for_vcb(
     output_dir = Path(output_dir)
 
     if task_id not in TASK_BIOLOGICAL_CONTEXT:
-        raise ValueError(
-            f"Unknown task_id: {task_id}. "
-            f"Must be one of: {list(TASK_BIOLOGICAL_CONTEXT.keys())}"
-        )
+        raise ValueError(f"Unknown task_id: {task_id}. Must be one of: {list(TASK_BIOLOGICAL_CONTEXT.keys())}")
 
     # Determine output naming based on test_only parameter
     if test_only:
@@ -76,6 +72,7 @@ def prepare_for_vcb(
         raise FileNotFoundError(f"Required metadata file not found: {metadata_file}")
 
     import polars as pl
+
     df = pl.read_parquet(metadata_file)
 
     if test_only:
@@ -128,12 +125,8 @@ def prepare_for_vcb(
             "lineage_chain": [
                 {
                     "training_dir": entry.get("training_dir"),
-                    "parquet_path": entry.get("config", {})
-                    .get("get_dataloaders", {})
-                    .get("path"),
-                    "resume_from": entry.get("config", {})
-                    .get("ckpt", {})
-                    .get("resume_from"),
+                    "parquet_path": entry.get("config", {}).get("get_dataloaders", {}).get("path"),
+                    "resume_from": entry.get("config", {}).get("ckpt", {}).get("resume_from"),
                 }
                 for entry in lineage.get("lineage_chain", [])
             ],
@@ -155,10 +148,7 @@ def prepare_for_vcb(
 
 
 def _create_split_json(
-    df: pl.DataFrame,
-    output_dir: Path,
-    ground_truth_dir: Optional[Path],
-    split_file_name: str = "split.json"
+    df: pl.DataFrame, output_dir: Path, ground_truth_dir: Path | None, split_file_name: str = "split.json"
 ) -> Path:
     """Create split.json from metadata split column with ground truth index mapping.
 
@@ -184,9 +174,7 @@ def _create_split_json(
 
     # Handle split mapping and ground truth index correction
     if ground_truth_dir:
-        split_data = _create_corrected_split_with_gt_mapping(
-            df, ground_truth_dir, valid_splits, test_splits
-        )
+        split_data = _create_corrected_split_with_gt_mapping(df, ground_truth_dir, valid_splits, test_splits)
     else:
         # Fallback to prediction-based indices (may cause VCB validation errors)
         log.warning("No ground truth directory provided - using prediction indices")
@@ -196,7 +184,7 @@ def _create_split_json(
     with open(split_file, "w") as f:
         json.dump(split_data, f, indent=2)
 
-    log.info(f"  Split summary:")
+    log.info("  Split summary:")
     log.info(f"    finetune: {len(split_data['folds'][0]['finetune'])}")
     log.info(f"    test: {len(split_data['folds'][0]['test'])}")
     log.info(f"    controls: {len(split_data['controls'])}")
@@ -206,10 +194,7 @@ def _create_split_json(
 
 
 def _create_corrected_split_with_gt_mapping(
-    df: pl.DataFrame,
-    ground_truth_dir: Path,
-    valid_splits: list[str],
-    test_splits: list[str]
+    df: pl.DataFrame, ground_truth_dir: Path, valid_splits: list[str], test_splits: list[str]
 ) -> dict:
     """Create split with proper ground truth row index mapping."""
     log.info("  Creating corrected split with ground truth index mapping...")
@@ -221,10 +206,10 @@ def _create_corrected_split_with_gt_mapping(
 
     gt_file = gt_files[0]
     log.info(f"  Loading ground truth: {gt_file}")
-    gt_obs = pl.read_parquet(gt_file).with_row_index('gt_row_index')
+    gt_obs = pl.read_parquet(gt_file).with_row_index("gt_row_index")
 
     # Join predictions with ground truth to get row index mapping
-    merged = df.join(gt_obs, on='obs_id', how='inner', suffix='_gt')
+    merged = df.join(gt_obs, on="obs_id", how="inner", suffix="_gt")
 
     if len(merged) != len(df):
         missing = len(df) - len(merged)
@@ -233,15 +218,11 @@ def _create_corrected_split_with_gt_mapping(
     # Map validation perturbations to finetune, test perturbations to test
     # Exclude controls and base states from regular splits to avoid overlap
     finetune_indices = merged.filter(
-        pl.col("split").is_in(valid_splits) &
-        ~pl.col("is_negative_control_gt") &
-        ~pl.col("is_base_state_gt")
+        pl.col("split").is_in(valid_splits) & ~pl.col("is_negative_control_gt") & ~pl.col("is_base_state_gt")
     )["gt_row_index"].to_list()
 
     test_indices = merged.filter(
-        pl.col("split").is_in(test_splits) &
-        ~pl.col("is_negative_control_gt") &
-        ~pl.col("is_base_state_gt")
+        pl.col("split").is_in(test_splits) & ~pl.col("is_negative_control_gt") & ~pl.col("is_base_state_gt")
     )["gt_row_index"].to_list()
 
     # Controls and base states are separate categories
@@ -256,37 +237,35 @@ def _create_corrected_split_with_gt_mapping(
         "version": 1,
         "splitting_level": "compound",
         "splitting_strategy": "random",
-        "folds": [{
-            "outer_fold": 0,
-            "inner_fold": 0,
-            "finetune": finetune_indices,
-            "test": test_indices,
-        }],
+        "folds": [
+            {
+                "outer_fold": 0,
+                "inner_fold": 0,
+                "finetune": finetune_indices,
+                "test": test_indices,
+            }
+        ],
         "controls": control_indices,
         "base_states": base_state_indices,
     }
 
 
-def _create_prediction_based_split(
-    df: pl.DataFrame,
-    valid_splits: list[str],
-    test_splits: list[str]
-) -> dict:
+def _create_prediction_based_split(df: pl.DataFrame, valid_splits: list[str], test_splits: list[str]) -> dict:
     """Create split using prediction zarr_index (fallback method)."""
     log.warning("  Using prediction-based indices - may cause VCB validation errors")
 
     # Map validation perturbations to finetune, test perturbations to test
     # Exclude controls and base states from regular splits
     finetune_indices = df.filter(
-        pl.col("split").is_in(valid_splits) &
-        ~pl.col("is_negative_control") &
-        (~pl.col("is_base_state") if "is_base_state" in df.columns else True)
+        pl.col("split").is_in(valid_splits)
+        & ~pl.col("is_negative_control")
+        & (~pl.col("is_base_state") if "is_base_state" in df.columns else True)
     )["zarr_index"].to_list()
 
     test_indices = df.filter(
-        pl.col("split").is_in(test_splits) &
-        ~pl.col("is_negative_control") &
-        (~pl.col("is_base_state") if "is_base_state" in df.columns else True)
+        pl.col("split").is_in(test_splits)
+        & ~pl.col("is_negative_control")
+        & (~pl.col("is_base_state") if "is_base_state" in df.columns else True)
     )["zarr_index"].to_list()
 
     control_indices = df.filter(pl.col("is_negative_control"))["zarr_index"].to_list()
@@ -300,17 +279,17 @@ def _create_prediction_based_split(
         "version": 1,
         "splitting_level": "compound",
         "splitting_strategy": "random",
-        "folds": [{
-            "outer_fold": 0,
-            "inner_fold": 0,
-            "finetune": finetune_indices,
-            "test": test_indices,
-        }],
+        "folds": [
+            {
+                "outer_fold": 0,
+                "inner_fold": 0,
+                "finetune": finetune_indices,
+                "test": test_indices,
+            }
+        ],
         "controls": control_indices,
         "base_states": base_state_indices,
     }
-
-
 
 
 def print_vcb_command(
