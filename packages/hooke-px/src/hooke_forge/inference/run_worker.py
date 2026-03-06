@@ -21,13 +21,13 @@ import zarr
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from hooke_forge.data.dataset import IMG_SIZE, CellDataset, CellPaintConverter, TxDataset
 from hooke_forge.model.tokenizer import DataFrameTokenizer
-from hooke_forge.data.dataset import CellDataset, CellPaintConverter, IMG_SIZE, TxDataset
 from hooke_forge.utils.ema import KarrasEMA
 from hooke_forge.utils.encoders import (
     DINOv2Detector,
-    Phenom2Detector,
     PH2BFDetector,
+    Phenom2Detector,
     StabilityCPEncoder,
     TxAMEncoder,
 )

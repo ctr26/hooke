@@ -9,16 +9,15 @@ import shutil
 import time
 from pathlib import Path
 
+import numcodecs
 import polars as pl
 import submitit
 import zarr
-import numcodecs
 
 from hooke_forge.inference.run_worker import (
-    REPRESENTATION_DIMS,
     DEFAULT_PX_REPRESENTATIONS,
     DEFAULT_TX_REPRESENTATIONS,
-    TX_ASSAY_TYPES,
+    REPRESENTATION_DIMS,
     detect_modality,
 )
 

@@ -23,9 +23,7 @@ log = logging.getLogger(__name__)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Run inference pipeline from checkpoint to map building"
-    )
+    parser = argparse.ArgumentParser(description="Run inference pipeline from checkpoint to map building")
     parser.add_argument(
         "--training-dir",
         type=Path,
@@ -145,12 +143,7 @@ def main():
     log.info(f"Model architecture: {lineage['model_config']}")
     log.info(f"Lineage depth: {len(lineage['lineage_chain'])} training runs")
 
-    output_dir = (
-        args.output_base
-        / lineage["data_version"]
-        / lineage["model_config"]
-        / f"step_{args.step}"
-    )
+    output_dir = args.output_base / lineage["data_version"] / lineage["model_config"] / f"step_{args.step}"
     log.info(f"Output directory: {output_dir}")
 
     # Step 3: Run distributed inference

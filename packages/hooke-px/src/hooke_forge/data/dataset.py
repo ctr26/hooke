@@ -3,7 +3,6 @@ import logging
 import random
 from collections.abc import Callable
 from pathlib import Path
-from typing import Optional
 
 import numcodecs
 import numpy as np
@@ -205,8 +204,10 @@ class TxDataset(torch.utils.data.Dataset):
         self,
         metadata: pl.DataFrame,
         tokenizer: DataFrameTokenizer,
-        zarr_path: str | Path = Path("/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"),
-        gene_subset_path: Optional[str | Path] = None,
+        zarr_path: str | Path = Path(  # noqa: E501
+            "/rxrx/data/user/ali.denton/tmp/training_trek__v1_0/training_trek__v1_0_features.zarr"
+        ),
+        gene_subset_path: str | Path | None = None,
         train: bool = True,
     ):
         self.train = train
@@ -237,14 +238,10 @@ class TxDataset(torch.utils.data.Dataset):
             assert all(col in metadata.columns for col in required_cols), (
                 f"metadata must have the following columns: {required_cols}"
             )
-            lookup_df = (
-                metadata.group_by("batch_center")
-                .agg([
-                    pl.col("zarr_row_idx").filter(pl.col("is_negative_control")).alias("control_indices")
-                ])
+            lookup_df = metadata.group_by("batch_center").agg(
+                [pl.col("zarr_row_idx").filter(pl.col("is_negative_control")).alias("control_indices")]
             )
-            control_map = dict(zip(lookup_df["batch_center"],
-                                        lookup_df["control_indices"]))
+            control_map = dict(zip(lookup_df["batch_center"], lookup_df["control_indices"]))
             self.control_map = {k: v.to_list() for k, v in control_map.items()}
             self.skip = [k for k, v in self.control_map.items() if len(v) == 0]
             _log.warning(f"Skipping {len(self.skip)} batch centers with no controls")

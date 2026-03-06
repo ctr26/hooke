@@ -11,6 +11,7 @@ import zarr
 
 log = logging.getLogger(__name__)
 
+
 def _discover_zarr_arrays(zarr_dir: Path) -> list[str]:
     """Discover available zarr arrays in the features directory."""
     if not zarr_dir.exists():

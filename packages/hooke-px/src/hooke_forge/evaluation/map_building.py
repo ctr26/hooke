@@ -43,22 +43,20 @@ class SynchronizedDataset(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @model_validator(mode="after")
-    def validate_same_length(self) -> "SynchronizedDataset":
+    def validate_same_length(self) -> SynchronizedDataset:
         if len(self.obs) != self.X.shape[0]:
-            raise ValueError(
-                f"obs and X length mismatch: {len(self.obs)} != {self.X.shape[0]}"
-            )
+            raise ValueError(f"obs and X length mismatch: {len(self.obs)} != {self.X.shape[0]}")
         if self._index_column in self.obs.columns:
             self.obs = self.obs.drop(self._index_column)
         self.obs = self.obs.with_row_index(self._index_column)
         return self
 
-    def filter(self, predicate: pl.Expr) -> "SynchronizedDataset":
+    def filter(self, predicate: pl.Expr) -> SynchronizedDataset:
         obs = self.obs.filter(predicate)
         indices = obs[self._index_column].to_list()
         return SynchronizedDataset(obs=obs, X=self.X[indices])
 
-    def join(self, other: "SynchronizedDataset") -> "SynchronizedDataset":
+    def join(self, other: SynchronizedDataset) -> SynchronizedDataset:
         obs = pl.concat([self.obs, other.obs])
         X = np.vstack([self.X, other.X])
         return SynchronizedDataset(obs=obs, X=X)
@@ -98,7 +96,7 @@ class Map(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @classmethod
-    def load(cls, path: Path) -> "Map":
+    def load(cls, path: Path) -> Map:
         cache = np.load(path)
         return cls(
             similarity_matrix=cache["similarity_matrix"],
@@ -123,9 +121,7 @@ class Map(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def center_scale_transform(
-    data: SynchronizedDataset, groupby_columns: list[str]
-) -> SynchronizedDataset:
+def center_scale_transform(data: SynchronizedDataset, groupby_columns: list[str]) -> SynchronizedDataset:
     """Center and scale per group, fitting on negative controls."""
     collect = []
     for name, group in data.group_by(groupby_columns):
@@ -188,9 +184,7 @@ def tvn_on_controls(
         groupby_columns = ["batch_center"]
 
     control = data.filter(pl.col("is_negative_control"))
-    target_cov = np.cov(control.X, rowvar=False, ddof=1) + 0.5 * np.eye(
-        data.X.shape[1]
-    )
+    target_cov = np.cov(control.X, rowvar=False, ddof=1) + 0.5 * np.eye(data.X.shape[1])
     target_cov_half = matrix_power_eigh(target_cov, 0.5)
 
     collect = []
@@ -200,9 +194,7 @@ def tvn_on_controls(
         total=data.obs[groupby_columns].n_unique(),
     ):
         group_control = group.filter(pl.col("is_negative_control"))
-        source_cov = np.cov(group_control.X, rowvar=False, ddof=1) + 0.5 * np.eye(
-            data.X.shape[1]
-        )
+        source_cov = np.cov(group_control.X, rowvar=False, ddof=1) + 0.5 * np.eye(data.X.shape[1])
         source_cov_half_inv = matrix_power_eigh(source_cov, -0.5)
         group.X = group.X @ source_cov_half_inv @ target_cov_half
         collect.append(group)
@@ -226,9 +218,7 @@ def aggregate(
     if len(data) != n:
         diff = n - len(data)
         pct = (diff / n) * 100
-        log.warning(
-            f"Filtered out {diff} rows ({pct:.1f}%) with null perturbation values"
-        )
+        log.warning(f"Filtered out {diff} rows ({pct:.1f}%) with null perturbation values")
 
     collect = {}
     for perturbation, group in data.group_by(perturbation_groupby_columns):
@@ -251,20 +241,14 @@ def build_map(
     embeddings = np.vstack([embedding_per_perturbation[p] for p in perturbations])
 
     if len(embeddings) < 2:
-        log.warning(
-            f"Only {len(embeddings)} perturbations for cell type {cell_type}, skipping"
-        )
+        log.warning(f"Only {len(embeddings)} perturbations for cell type {cell_type}, skipping")
         return None
 
     mat = pdist(embeddings, metric="cosine")
     square_mat = squareform(mat)
 
     if perturbation_order is not None:
-        order = [
-            perturbations.index(p)
-            for p in perturbation_order
-            if p in perturbations
-        ]
+        order = [perturbations.index(p) for p in perturbation_order if p in perturbations]
     else:
         Z = linkage(mat, method="ward")
         order = leaves_list(Z)
@@ -303,10 +287,7 @@ def map_building_pipeline(
     log.info(f"Computing maps for cell types: {cell_type_subset}")
 
     for idx, ((cell_type,), group) in enumerate(data.group_by(["cell_type"])):
-        log.info(
-            f"Building map for {cell_type} "
-            f"({idx + 1}/{data.obs['cell_type'].n_unique()})"
-        )
+        log.info(f"Building map for {cell_type} ({idx + 1}/{data.obs['cell_type'].n_unique()})")
 
         cache_path = cache_dir / f"map_{cell_type}.npz" if cache_dir else None
 
@@ -314,9 +295,7 @@ def map_building_pipeline(
             log.info(f"Loading from cache: {cache_path}")
             vmap = Map.load(cache_path)
         else:
-            vmap = build_map(
-                group, perturbation_groupby_columns, cell_type, perturbation_order
-            )
+            vmap = build_map(group, perturbation_groupby_columns, cell_type, perturbation_order)
             if cache_path is not None and vmap is not None:
                 vmap.save(cache_path)
 
@@ -416,10 +395,7 @@ def build_maps_from_inference(
     required = ["cell_type", control_col, batch_col] + perturbation_cols
     missing = [c for c in required if c not in obs.columns]
     if missing:
-        raise ValueError(
-            f"Missing required columns in metadata: {missing}. "
-            f"Available: {obs.columns}"
-        )
+        raise ValueError(f"Missing required columns in metadata: {missing}. Available: {obs.columns}")
 
     log.info(f"Loaded {len(obs)} observations with {X.shape[1]} features")
 
