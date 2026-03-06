@@ -3,6 +3,7 @@ import logging
 import random
 from collections.abc import Callable
 from pathlib import Path
+from typing import Optional
 
 import numcodecs
 import numpy as np
