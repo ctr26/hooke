@@ -4,6 +4,15 @@ Entry point for sane navigation across hooke and its related repos.
 
 See the paper: [Virtual Cells: Predict, Explain, Discover](https://www.valencelabs.com/publications/virtual-cells-predict-explain-discover/)
 
+## Contents
+
+| Document | Purpose |
+|----------|---------|
+| [CONTRIBUTING](CONTRIBUTING.md) | How to contribute |
+| [GUIDELINES](GUIDELINES.md) | Workflows and processes |
+| [STANDARDS](STANDARDS.md) | Technical requirements |
+| [HUMANS](HUMANS.md) | How this system works |
+
 ## Related Repositories
 
 ### Active
