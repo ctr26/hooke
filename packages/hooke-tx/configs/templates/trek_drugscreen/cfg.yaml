@@ -108,7 +108,7 @@ trainer:
 eval:
   check_val_every_n_epoch: 1
   val_check_interval: null  # overrides every_n_epochs when set
-  std: true
+  base: true
   ema: ${trainer.ema.enable}
 
 metrics:
@@ -129,7 +129,7 @@ checkpoint:
   enable: false
   every_n_evals: 1
   types:
-    std: true
+    base: true
     ema: ${trainer.ema.enable}
   save_last: false
   save_top_k: 0

@@ -57,7 +57,7 @@ class TxPredictor(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         loss = self.architecture(batch)
-        self.log("std/eval/loss", loss, logger=False)
+        self.log("base/eval/loss", loss, logger=False)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         return generate_batch(self, batch, self.device)

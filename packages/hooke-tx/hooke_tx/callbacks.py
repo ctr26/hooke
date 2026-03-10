@@ -119,7 +119,7 @@ def create_callbacks(
     ema_config = trainer_args.pop("ema", None) or {}
     ema_enable = ema_config.get("enable", False)
 
-    eval_std = eval_args.pop("std", True)
+    eval_base = eval_args.pop("base", True)
     eval_ema = eval_args.pop("ema", False)
 
     if eval_args.get("val_check_interval") is not None:
@@ -137,7 +137,7 @@ def create_callbacks(
         raise ValueError("trainer.eval.ema is True but ema.enable is False")
 
     checkpoint_types = checkpoint_args.pop("types", None) or {}
-    checkpoint_std = checkpoint_types.get("std", True)
+    checkpoint_base = checkpoint_types.get("base", True)
     checkpoint_ema = checkpoint_types.get("ema", False)
 
     checkpoint_enable = checkpoint_args.pop("enable", False)
@@ -175,13 +175,13 @@ def create_callbacks(
     callbacks.append(
         EvalCallback(
             metrics_args=metrics_args,
-            eval_std=eval_std,
+            eval_base=eval_base,
             eval_ema=eval_ema,
             ema_callback=ema_callback,
         )
     )
 
-    if checkpoint_enable and checkpoint_std:
+    if checkpoint_enable and checkpoint_base:
         callbacks.append(
             ModelCheckpoint(
                 **checkpoint_args,
