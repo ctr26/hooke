@@ -31,15 +31,16 @@ class TrainConfig(BaseModel, frozen=True):
 
 
 class FinetuneConfig(BaseModel, frozen=True):
-    """Finetuning config -- resumes from a pretrained checkpoint."""
+    """Finetuning config -- composes TrainConfig with a base checkpoint.
+
+    Finetuning reuses the pretraining loop; this config just adds
+    the checkpoint path and overrides training defaults.
+    """
 
     base_checkpoint: str = Field(description="Path to pretrained checkpoint")
-    num_steps: int = Field(default=50, gt=0)
-    lr: float = Field(default=1e-4, gt=0)
-    batch_size: int = Field(default=8, gt=0)
-    num_samples: int = Field(default=64, gt=0)
-    output_dir: str = Field(default="./finetune_outputs")
-    seed: int = Field(default=42)
+    train: TrainConfig = Field(
+        default_factory=lambda: TrainConfig(num_steps=50, lr=1e-4, output_dir="./finetune_outputs")
+    )
 
 
 class EvalConfig(BaseModel, frozen=True):

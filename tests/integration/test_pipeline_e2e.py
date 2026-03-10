@@ -50,12 +50,16 @@ class TestPipelineE2E:
         ft_dir = tmp_path / "finetune"
         ft_config = FinetuneConfig(
             base_checkpoint=str(ckpt_path),
-            num_steps=2,
-            lr=1e-4,
-            batch_size=4,
-            num_samples=16,
-            output_dir=str(ft_dir),
-            seed=42,
+            train=TrainConfig(
+                num_steps=2,
+                lr=1e-4,
+                batch_size=4,
+                num_samples=16,
+                ckpt_every=2,
+                eval_every=2,
+                output_dir=str(ft_dir),
+                seed=42,
+            ),
         )
         ft_result = finetune(ft_config)
 

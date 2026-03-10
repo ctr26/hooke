@@ -63,18 +63,33 @@ def load_checkpoint(
 def train(
     train_config: TrainConfig,
     model_config: ModelConfig | None = None,
+    resume_from: str | None = None,
 ) -> dict:
     """Run the training loop.
+
+    Args:
+        train_config: Training hyperparameters.
+        model_config: Architecture config (ignored when resuming).
+        resume_from: Path to checkpoint to resume from. When set,
+            model weights and step counter are loaded from the
+            checkpoint, and model_config is read from it.
 
     Returns:
         Dict with final step, loss, and checkpoint path.
     """
-    if model_config is None:
-        model_config = ModelConfig()
-
     torch.manual_seed(train_config.seed)
 
-    model = FlowMatchingMLP(model_config)
+    if resume_from is not None:
+        model, state = load_checkpoint(resume_from)
+        model_config = model.config
+        start_step = state["step"]
+        log.info("Resuming from checkpoint step %d: %s", start_step, resume_from)
+    else:
+        if model_config is None:
+            model_config = ModelConfig()
+        model = FlowMatchingMLP(model_config)
+        start_step = 0
+
     optimizer = torch.optim.Adam(model.parameters(), lr=train_config.lr)
     train_loader, val_loader = make_dataloaders(
         batch_size=train_config.batch_size,
@@ -89,7 +104,7 @@ def train(
     last_ckpt_path = None
     last_loss = float("nan")
 
-    for step in range(1, train_config.num_steps + 1):
+    for step in range(start_step + 1, start_step + train_config.num_steps + 1):
         model.train()
         try:
             batch = next(train_iter)
