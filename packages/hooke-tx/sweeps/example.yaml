@@ -1,0 +1,23 @@
+program: main.py
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}
+
+name: Example sweep
+project: Hooke-Tx
+entity: valencelabs
+
+method: grid
+
+metric:
+  name: base/eval/dist_mmd
+  goal: minimize
+
+parameters:
+  trainer.lr:
+    values:
+      - 1e-4
+      - 1e-5
