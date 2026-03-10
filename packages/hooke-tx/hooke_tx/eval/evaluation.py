@@ -43,7 +43,7 @@ class EvalCallback(Callback):
     def __init__(
         self,
         metrics_args: dict[str, Any],
-        eval_standard: bool = True,
+        eval_std: bool = True,
         eval_ema: bool = False,
         ema_callback: Callback | None = None,
     ) -> None:
@@ -52,8 +52,8 @@ class EvalCallback(Callback):
         self.ema_callback = ema_callback
 
         self.eval_models = []
-        if eval_standard:
-            self.eval_models.append("standard")
+        if eval_std:
+            self.eval_models.append("std")
         if eval_ema:
             self.eval_models.append("ema")
 
@@ -86,9 +86,9 @@ class EvalCallback(Callback):
             if train_loss is not None:
                 train_loss = float(train_loss.item() if hasattr(train_loss, "item") else train_loss)
         
-        standard_eval_loss = None
+        std_eval_loss = None
         if trainer.is_global_zero:
-            std_eval_loss = trainer.callback_metrics.get("standard/eval/loss")
+            std_eval_loss = trainer.callback_metrics.get("std/eval/loss")
             if std_eval_loss is not None:
                 std_eval_loss = float(std_eval_loss.item() if hasattr(std_eval_loss, "item") else std_eval_loss)
 
@@ -120,7 +120,7 @@ class EvalCallback(Callback):
                     if train_loss is not None:
                         all_metrics[f"{model_type}/{eval_name}/train_loss"] = train_loss
                     
-                    eval_loss = std_eval_loss if model_type == "standard" else (ema_eval_loss if model_type == "ema" else None)
+                    eval_loss = std_eval_loss if model_type == "std" else (ema_eval_loss if model_type == "ema" else None)
                     if eval_loss is not None:
                         all_metrics[f"{model_type}/{eval_name}/eval_loss"] = eval_loss
 
