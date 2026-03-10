@@ -8,6 +8,15 @@ point for navigating and understanding the ecosystem.
 Based on the paper:
 [Virtual Cells: Predict, Explain, Discover](https://www.valencelabs.com/publications/virtual-cells-predict-explain-discover/)
 
+## Contents
+
+| Document | Purpose |
+|----------|---------|
+| [CONTRIBUTING](CONTRIBUTING.md) | How to contribute |
+| [GUIDELINES](GUIDELINES.md) | Workflows and processes |
+| [STANDARDS](STANDARDS.md) | Technical requirements |
+| [HUMANS](HUMANS.md) | How this system works |
+
 ## Related Repositories
 
 ### Active
