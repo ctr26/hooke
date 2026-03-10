@@ -1,100 +1,210 @@
-# Guidelines
+# GUIDELINES — Ecosystem Workflows
 
-Code patterns and anti-patterns for hooke-standard projects.
+**Version:** 1.0.0
+**Status:** Normative
+**Scope:** Virtual Cells ecosystem
 
-## Architecture
+---
 
-### Do
+## 1. Purpose
 
-- **Cheap**: Minimize hosting costs, use free tiers
-- **Scalable**: Cloud-first, horizontal scaling
-- **Low LOC**: Minimal code, maximum impact
-- **Minimal deps**: Fewer dependencies = fewer vulnerabilities
-- **Schemas at boundaries**: Pydantic for data validation, types for internal contracts
+This document defines workflows for the Virtual Cells ecosystem. For technical standards and tool requirements, see [STANDARDS.md](STANDARDS.md).
 
-### Don't
+---
 
-- Over-engineer: no premature abstractions, no helpers for one-time operations
-- Add features beyond what's asked: a bug fix doesn't need surrounding cleanup
-- Design for hypothetical futures: three similar lines > premature abstraction
-- Add backwards-compatibility shims when you can just change the code
+## 2. Development Workflow
 
-## Python Patterns
+### 2.1 Issue-First Development
 
-### Do
+All work SHALL begin with an issue:
 
-```python
-# Type hints on public APIs
-def train(config: TrainConfig) -> TrainResult: ...
-
-# Pydantic for data boundaries
-class ExperimentConfig(BaseModel):
-    learning_rate: float = Field(gt=0)
-    batch_size: int = Field(ge=1)
-
-# Explicit over implicit
-from pathlib import Path
-output_dir = Path(config.output_dir)
-output_dir.mkdir(parents=True, exist_ok=True)
+```bash
+gh issue create --title "<description>" --body "<details>"
 ```
 
-### Don't
+### 2.2 Branch Strategy
 
-```python
-# No bare dicts for structured data
-config = {"lr": 0.001, "bs": 32}  # Use Pydantic instead
-
-# No star imports
-from module import *
-
-# No mutable default arguments
-def f(items=[]):  # Use items=None, then items = items or []
+```
+main ─────────●───────────●─────────────
+               ↑           ↑
+              PR₁         PR₂
+               ↑           ↑
+         cherry-pick   cherry-pick
+               ↑           ↑
+unstable/feat ──●──●──●──●──●──●──●──●──
 ```
 
-## ML & Research
+| Branch Type | Purpose | Merges To |
+|-------------|---------|-----------|
+| `main` | Production-ready | — |
+| `feature/*` | Clean PR history | `main` |
+| `unstable/*` | Iteration workspace | `feature/*` via cherry-pick |
 
-### Do
+### 2.3 Atomic Commits & PRs
 
-- Baselines first: establish floor before adding complexity
-- Log everything: hyperparams, metrics, git SHA, data version
-- Checkpointing: save state every N steps, make resumable
-- Fail early: validate config and data before GPU allocation
-- Small-scale pilots: test on 1% of data first
+Commits and PRs SHALL be atomic:
+- One logical change per commit
+- One feature/fix per PR
+- If PR grows too large, split into multiple PRs
 
-### Don't
+**Never force push.** Instead:
+```bash
+git checkout main && git pull
+git checkout -b feature/issue-42-v2
+git cherry-pick <good-commits>
+```
 
-- Skip baselines: no new architecture without baseline comparison
-- Train without tracking: every run must be in W&B
-- Assume QoS: any job can be killed at any time
-- Hardcode paths: use configs, not magic strings
+### 2.4 Feature Development Sequence
 
-## Safety
+```bash
+# 1. Create branches
+git checkout main && git pull
+git checkout -b feature/issue-42-description
+git checkout -b unstable/issue-42-description
 
-### Do
+# 2. Iterate on unstable (commit freely)
 
-- `--dry-run` for cleanup operations
-- Explicit user confirmation for destructive actions
-- Log intent before executing
-- Archive over delete
+# 3. Cherry-pick clean commits to feature
+git checkout feature/issue-42-description
+git cherry-pick <hash>
 
-### Don't
+# 4. Open PR
+git push -u origin feature/issue-42-description
+gh pr create --fill
 
-- Auto-delete anything without confirmation
-- Force push to protected branches
-- Skip CI checks
-- Commit secrets or credentials
+# 5. Continue on unstable while PR reviews
+git checkout unstable/issue-42-description
+```
 
-## Testing
+---
 
-### Do
+## 3. Pre-Push Validation
 
-- Unit tests for core logic (80%+ coverage)
-- Smoke tests for ML: overfit on tiny batch (loss < 0.1)
-- Fixtures in `conftest.py`
-- Mark slow tests: `@pytest.mark.slow`
+For code-bearing repos, before every push:
 
-### Don't
+```bash
+make prepush
+```
 
-- Delete failing tests to make CI pass
-- Write tests that depend on external services without mocks
-- Skip tests in CI
+This target SHALL execute linting, type checking, and tests.
+
+For docs-only repos (like hooke hub), validate:
+- Markdown syntax
+- Link integrity
+- No secrets committed
+
+---
+
+## 4. Code Review
+
+### 4.1 Author Responsibilities
+
+| Requirement |
+|-------------|
+| Self-review diff before requesting review |
+| Ensure CI passes |
+| Link issue in PR description |
+| Respond to all comments |
+| Do not force-push during active review |
+
+### 4.2 Reviewer Responsibilities
+
+| Requirement |
+|-------------|
+| Use Conventional Comments (see STANDARDS §3.5) |
+| Approve when acceptable, not perfect |
+| Trust author to address feedback |
+
+---
+
+## 5. Ecosystem Coordination
+
+### 5.1 Hub Repo (hooke)
+
+This repo serves as:
+- Repository index for the ecosystem
+- Source of default engineering standards
+- Home for ecosystem-wide documentation
+
+Changes to STANDARDS.md or GUIDELINES.md here affect ecosystem defaults.
+
+### 5.2 Child Repos
+
+Each code repo in the ecosystem:
+- MAY have its own STANDARDS.md (overrides ecosystem defaults)
+- SHOULD follow the standardise pattern (HUMANS.md present)
+- SHALL follow version control conventions from §2
+
+### 5.3 Cross-Repo Changes
+
+For changes spanning multiple repos:
+1. Create an issue in each affected repo
+2. Link issues together
+3. Coordinate PRs with consistent descriptions
+
+---
+
+## 6. Documentation Management
+
+### 6.1 Token Budget
+
+All documentation files SHALL be ≤8,000 tokens. See STANDARDS §5.1.
+
+### 6.2 Single Source of Truth
+
+Content SHALL appear once, with pointers elsewhere. See STANDARDS §5.3.
+
+### 6.3 What + Why Pattern
+
+GUIDELINES and STANDARDS sections SHOULD include both:
+
+```markdown
+## [Topic]
+
+### What
+Concrete rules, formats, examples.
+
+### Why
+Rationale, benefits, trade-offs.
+```
+
+### 6.4 Worktree Standards
+
+The working tree MAY include unstaged files for local configuration:
+
+| File | Purpose | Staged |
+|------|---------|--------|
+| `CLAUDE.md` | Personal AI agent preferences | No |
+| `PROJECT.md` | Project-specific context | Optional |
+| `.env` | Environment variables | No |
+
+---
+
+## 7. Standardising a New Repo
+
+To bring a new repo into the ecosystem:
+
+1. Copy templates from `.claude/skills/standardise/docs/` for missing files
+2. Add `HUMANS.md` to signal standardisation
+3. Ensure README links to all docs
+4. Verify each doc ≤8k tokens
+5. PR with `docs` and `agent` labels (if AI-generated)
+
+**Never overwrite existing docs.** Existing docs represent the repo owner's decisions.
+
+### Verification Checklist
+
+- [ ] README links all docs
+- [ ] Each doc ≤8k tokens
+- [ ] No duplicate content
+- [ ] GUIDELINES has what+why sections
+- [ ] STANDARDS has what+why sections
+- [ ] Conventional commits used
+
+---
+
+## 8. References
+
+- [STANDARDS.md](STANDARDS.md) — Technical requirements
+- [CONTRIBUTING.md](CONTRIBUTING.md) — Contributor guide
+- [Engineering Standards (skills)](https://github.com/ctr26/skills)
