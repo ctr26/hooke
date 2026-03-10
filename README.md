@@ -1,8 +1,12 @@
 # hooke
 
-Entry point for sane navigation across hooke and its related repos.
+Hub repo for the Hooke ecosystem — a collection of tools and models for
+building virtual cells that predict, explain, and discover biological
+phenomena. This repo contains no source code; it exists as the single entry
+point for navigating and understanding the ecosystem.
 
-See the paper: [Virtual Cells: Predict, Explain, Discover](https://www.valencelabs.com/publications/virtual-cells-predict-explain-discover/)
+Based on the paper:
+[Virtual Cells: Predict, Explain, Discover](https://www.valencelabs.com/publications/virtual-cells-predict-explain-discover/)
 
 ## Related Repositories
 
@@ -29,3 +33,14 @@ See the paper: [Virtual Cells: Predict, Explain, Discover](https://www.valencela
 |------|-----|-------------|----------|
 | [TxPert](https://github.com/valence-labs/TxPert) | valence-labs | Graph-supported perturbation prediction with transcriptomic data. Paper reproduction repo; historical predecessor to HookeTx. | Python |
 | [TxPert](https://github.com/recursionpharma/TxPert) | recursionpharma | Internal fork of TxPert. | Python |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add or update repository
+entries, branch naming conventions, and PR guidelines.
+
+## For AI Agents
+
+See [AGENTS.md](AGENTS.md) for instructions on what this repo is, what belongs
+here, and the conventions to follow. Cursor-specific rules are in
+`.cursor/rules/`.
