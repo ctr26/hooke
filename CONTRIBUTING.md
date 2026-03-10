@@ -1,32 +1,100 @@
-# Contributing
+# CONTRIBUTING — Contributor Guide
 
-Thank you for helping keep the Hooke hub useful and accurate.
+> For humans and AI agents. Full specification: [GUIDELINES.md](GUIDELINES.md).
 
-## Adding or updating a repository entry
+---
 
-1. Open `README.md`.
-2. Find the appropriate section (**Active**, **Infrastructure**, or **Inactive**).
-3. Add or edit the table row following the existing format:
-   `| [repo-name](https://github.com/org/repo-name) | org | Short description. | Language |`
-4. Keep descriptions concise (one sentence).
-5. If a repo has moved from active to inactive (or vice-versa), move the row to
-   the correct section rather than duplicating it.
+## For AI Agents
 
-## Branch naming
+**Always use skills before acting.** Run through core skills at `.claude/skills/`:
+- `what` — understand requirements
+- `why` — understand rationale
+- `where` — find the right location
+- `how` — find prior art, plan approach
 
-| Prefix  | Use for                          |
-|---------|----------------------------------|
-| `feat/` | New content or features          |
-| `fix/`  | Corrections to existing content  |
-| `docs/` | Documentation-only changes       |
+**Always contextualize via root docs.** Before non-trivial work:
+1. Read README.md → Contents → relevant docs
+2. Cite STANDARDS.md or GUIDELINES.md to justify decisions
+3. If no doc supports the decision, flag as new convention
 
-## Pull requests
+**Standardise iteratively:**
+- Small patches, not big rewrites
+- One section at a time
+- Commit after each change
+- Information SHALL NOT be lost
+- Minimize token/char count (tables > prose)
 
-- Give the PR a descriptive title that summarises the change.
-- Keep scope narrow — one logical change per PR.
-- Ensure all Markdown renders correctly before requesting review.
+---
 
-## Questions?
+## Quick Start
 
-Open an issue if something is unclear or if you think a repo is missing from
-the listing.
+```bash
+gh repo fork ctr26/hooke --clone
+cd hooke
+git checkout -b feature/issue-N-description
+# ... make changes ...
+gh pr create --fill
+```
+
+## Commit Format
+
+```
+<type>: <description>
+
+Types: feat | fix | docs | test | chore | refactor
+```
+
+- Present tense ("add" not "added")
+- Lowercase
+- No trailing period
+- Reference issue when applicable: `docs: update repo index (#42)`
+
+## Non-Negotiable
+
+| Rule | Enforcement |
+|------|-------------|
+| Conventional Commits | `feat:`, `fix:`, `docs:`, `test:`, `chore:` |
+| Issue linkage | PR links issue |
+| No secrets | Never commit credentials or tokens |
+
+## Workflow
+
+1. Issue first — `gh issue create --title "..."`
+2. Branch: `feature/issue-N-desc` or `docs/issue-N-desc`
+3. PR links issue
+4. Squash and merge
+
+## Ecosystem Contributions
+
+This is the hub repo for Virtual Cells. For code contributions to specific repos:
+
+| Repo | Guide |
+|------|-------|
+| hooke-forge | See its own CONTRIBUTING.md |
+| HookeTx | See its own CONTRIBUTING.md |
+| vcb | See its own CONTRIBUTING.md |
+| Other repos | Check for HUMANS.md → follow local docs |
+
+Standards in this repo's [STANDARDS.md](STANDARDS.md) serve as ecosystem defaults.
+
+## Review Comments
+
+Use [Conventional Comments](https://conventionalcomments.org/):
+
+| Prefix | Meaning | Action Required |
+|--------|---------|-----------------|
+| `issue:` | Defect | Yes |
+| `suggestion:` | Improvement | Optional |
+| `question:` | Clarification needed | Response |
+| `nitpick:` | Minor style | Optional |
+| `praise:` | Positive feedback | None |
+
+## PR Labels
+
+| Label | Usage |
+|-------|-------|
+| `agent` | AI-generated PR (required for agent PRs) |
+| `docs` | Documentation changes |
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `chore` | Maintenance |
