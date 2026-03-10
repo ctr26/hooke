@@ -101,9 +101,18 @@ trainer:
   gradient_accumulation_steps: 1
   scheduler: null
 
+metrics:
+  aggregated:
+    - mae
+    - mse
+    - pearson
+  distributed:
+    - mmd
+
 compute:
   accelerator: auto
   devices: auto
+  strategy: auto  # ddp when multiple GPUs
   precision: 32
 
 checkpoint:

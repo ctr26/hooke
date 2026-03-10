@@ -103,7 +103,7 @@ class FlowMatching(nn.Module):
             nonlocal nfe  # to make closures work properly in python
             nfe += 1
             return predict_with_cfg(
-                model=self.conditioning_model,
+                conditioning_model=self.conditioning_model,
                 t=t,
                 xt=x,
                 covariates=covariates,

@@ -4,6 +4,7 @@ import torch
 import lightning.pytorch as pl
 
 from hooke_tx.architecture.binder import TxGenBinder
+from hooke_tx.eval.inference import generate_batch
 
 
 SCHEDULER_DICT = {
@@ -46,6 +47,9 @@ class TxPredictor(pl.LightningModule):
     def forward(self, batch: dict) -> torch.Tensor:
         return self.architecture(batch)
 
+    def generate(self, batch: dict) -> torch.Tensor:
+        return self.architecture.generate(batch)
+
     def training_step(self, batch, batch_idx):
         loss = self.architecture(batch)
         return loss
@@ -55,7 +59,7 @@ class TxPredictor(pl.LightningModule):
         self.log("val_loss", loss)
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        return self.architecture.generate(batch)
+        return generate_batch(self, batch, self.device)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(

@@ -35,7 +35,7 @@ def _collate_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
         GENE_PERT: [m[GENE_PERT] for m in metadatas],
         MOL_PERT: [m[MOL_PERT] for m in metadatas],
     }
-    return {"x0": x0, "x1": x1, "covariates": covariates}
+    return {"x0": x0, "x1": x1, "covariates": covariates, "metadata": metadatas}
 
 
 class DataModule(pl.LightningDataModule):

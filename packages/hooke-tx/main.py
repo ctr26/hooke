@@ -9,6 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from hooke_tx.data.datamodule import DataModule
 from hooke_tx.trainer import TxPredictor
+from hooke_tx.eval.evaluation import EvalCallback
 
 
 @hydra.main(config_path="configs/templates/trek_drugscreen", config_name="cfg", version_base=None)
@@ -18,6 +19,7 @@ def main(cfg: DictConfig) -> None:
 
     model_args = deepcopy(OmegaConf.to_container(cfg.model, resolve=True))
     trainer_args = deepcopy(OmegaConf.to_container(cfg.trainer, resolve=True))
+    metrics_config = deepcopy(OmegaConf.to_container(cfg.metrics, resolve=True))
     compute_spec = deepcopy(OmegaConf.to_container(cfg.compute, resolve=True))
     checkpoint_args = deepcopy(OmegaConf.to_container(cfg.checkpoint, resolve=True))
 
@@ -42,7 +44,7 @@ def main(cfg: DictConfig) -> None:
     datamodule.prepare_data()
     datamodule.setup()
 
-    callbacks = []
+    callbacks = [EvalCallback(metrics_config)]
     if checkpoint_args.pop("enable", False):
         callbacks.append(
             ModelCheckpoint(**checkpoint_args)

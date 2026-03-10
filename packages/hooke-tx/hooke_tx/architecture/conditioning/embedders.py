@@ -52,5 +52,5 @@ class OneHotEmbedder(nn.Module):
 
     def forward(self, labels: list[str | float]) -> torch.Tensor:
         label_indices = [self.label_to_id[label] for label in labels]
-        
-        return self.embedding(torch.tensor(label_indices))
+        device = self.embedding.weight.device
+        return self.embedding(torch.tensor(label_indices, device=device, dtype=torch.long))
