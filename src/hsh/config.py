@@ -30,19 +30,6 @@ class TrainConfig(BaseModel, frozen=True):
     seed: int = Field(default=42)
 
 
-class FinetuneConfig(BaseModel, frozen=True):
-    """Finetuning config -- composes TrainConfig with a base checkpoint.
-
-    Finetuning reuses the pretraining loop; this config just adds
-    the checkpoint path and overrides training defaults.
-    """
-
-    base_checkpoint: str = Field(description="Path to pretrained checkpoint")
-    train: TrainConfig = Field(
-        default_factory=lambda: TrainConfig(num_steps=50, lr=1e-4, output_dir="./finetune_outputs")
-    )
-
-
 class EvalConfig(BaseModel, frozen=True):
     """Evaluation config."""
 

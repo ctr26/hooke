@@ -34,8 +34,10 @@ markers = [
     "slow: long-running test",
 ]
 
+[tool.uv.workspace]
+members = ["packages/*"]
+
 [project.scripts]
 hsh-train = "hsh.train:cli"
-hsh-finetune = "hsh.finetune:cli"
 hsh-eval = "hsh.eval:cli"
 hsh-infer = "hsh.infer:cli"

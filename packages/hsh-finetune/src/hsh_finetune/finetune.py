@@ -9,8 +9,8 @@ from __future__ import annotations
 import argparse
 import logging
 
-from hsh.config import FinetuneConfig
 from hsh.train import train
+from hsh_finetune.config import FinetuneConfig
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)

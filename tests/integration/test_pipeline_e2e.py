@@ -8,10 +8,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
+from hsh_finetune.config import FinetuneConfig
+from hsh_finetune.finetune import finetune
 
-from hsh.config import EvalConfig, FinetuneConfig, InferConfig, ModelConfig, TrainConfig
+from hsh.config import EvalConfig, InferConfig, ModelConfig, TrainConfig
 from hsh.eval import evaluate
-from hsh.finetune import finetune
 from hsh.infer import infer
 from hsh.train import train
 

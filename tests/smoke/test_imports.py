@@ -20,7 +20,7 @@ def test_import_train() -> None:
 
 
 def test_import_finetune() -> None:
-    from hsh.finetune import finetune
+    from hsh_finetune.finetune import finetune
 
     assert callable(finetune)
 
@@ -38,6 +38,8 @@ def test_import_infer() -> None:
 
 
 def test_import_configs() -> None:
-    from hsh.config import EvalConfig, FinetuneConfig, InferConfig, ModelConfig, TrainConfig
+    from hsh_finetune.config import FinetuneConfig
+
+    from hsh.config import EvalConfig, InferConfig, ModelConfig, TrainConfig
 
     assert all(callable(c) for c in [ModelConfig, TrainConfig, FinetuneConfig, EvalConfig, InferConfig])

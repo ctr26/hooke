@@ -7,11 +7,18 @@ import sys
 
 import pytest
 
+CLI_MODULES = [
+    ("hsh-train", "hsh.train"),
+    ("hsh-finetune", "hsh_finetune.finetune"),
+    ("hsh-eval", "hsh.eval"),
+    ("hsh-infer", "hsh.infer"),
+]
 
-@pytest.mark.parametrize("command", ["hsh-train", "hsh-finetune", "hsh-eval", "hsh-infer"])
-def test_cli_help(command: str) -> None:
+
+@pytest.mark.parametrize("command,module", CLI_MODULES, ids=[c for c, _ in CLI_MODULES])
+def test_cli_help(command: str, module: str) -> None:
     result = subprocess.run(
-        [sys.executable, "-m", f"hsh.{command.replace('hsh-', '')}",  "--help"],
+        [sys.executable, "-m", module, "--help"],
         capture_output=True,
         text=True,
         timeout=30,
