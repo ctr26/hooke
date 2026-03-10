@@ -1,0 +1,44 @@
+name: test
+
+on:
+  push:
+    branches: ["main", "dev"]
+  pull_request:
+    branches:
+      - "*"
+      - "!gh-pages"
+
+concurrency:
+  group: "test-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --extra dev
+      - run: uv run ruff check src/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --extra dev
+      - run: uv run pytest tests/ -x -v
+
+  cli-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --extra dev
+      - run: uv run hsh-train --help
+      - run: uv run hsh-finetune --help
+      - run: uv run hsh-eval --help
+      - run: uv run hsh-infer --help
