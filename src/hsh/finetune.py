@@ -9,14 +9,15 @@ Mirrors hooke-forge's finetuning pattern:
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 
 import torch
+from hydra_zen import store, zen
 
 from hsh.config import FinetuneConfig
 from hsh.data import make_dataloaders
+from hsh.hydra_conf import FinetuneTaskConf
 from hsh.train import load_checkpoint, save_checkpoint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -74,28 +75,15 @@ def finetune(config: FinetuneConfig) -> dict:
 
 
 def cli() -> None:
-    """CLI entry point for hsh-finetune."""
-    parser = argparse.ArgumentParser(description="Finetune from a pretrained checkpoint")
-    parser.add_argument("--base-checkpoint", type=str, required=True)
-    parser.add_argument("--num-steps", type=int, default=50)
-    parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-samples", type=int, default=64)
-    parser.add_argument("--output-dir", type=str, default="./finetune_outputs")
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
+    """CLI entry point for hsh-finetune.
 
-    config = FinetuneConfig(
-        base_checkpoint=args.base_checkpoint,
-        num_steps=args.num_steps,
-        lr=args.lr,
-        batch_size=args.batch_size,
-        num_samples=args.num_samples,
-        output_dir=args.output_dir,
-        seed=args.seed,
-    )
-    result = finetune(config)
-    log.info("Finetuning complete: %s", result)
+    Override fields with Hydra's ``key=value`` syntax, e.g.::
+
+        hsh-finetune config.base_checkpoint=path/to/ckpt config.lr=5e-5
+    """
+    store(FinetuneTaskConf, name="hsh_finetune")
+    store.add_to_hydra_store()
+    zen(finetune).hydra_main(config_name="hsh_finetune", version_base="1.3", config_path=None)
 
 
 if __name__ == "__main__":

@@ -8,16 +8,17 @@ Mirrors hooke-forge's eval.py pattern:
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import os
 from pathlib import Path
 
 import torch
+from hydra_zen import store, zen
 
 from hsh.config import EvalConfig
 from hsh.data import make_dataloaders
+from hsh.hydra_conf import EvalTaskConf
 from hsh.train import load_checkpoint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -68,21 +69,15 @@ def evaluate(config: EvalConfig) -> dict:
 
 
 def cli() -> None:
-    """CLI entry point for hsh-eval."""
-    parser = argparse.ArgumentParser(description="Evaluate a trained checkpoint")
-    parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-samples", type=int, default=64)
-    parser.add_argument("--output-dir", type=str, default="./eval_outputs")
-    args = parser.parse_args()
+    """CLI entry point for hsh-eval.
 
-    config = EvalConfig(
-        checkpoint=args.checkpoint,
-        batch_size=args.batch_size,
-        num_samples=args.num_samples,
-        output_dir=args.output_dir,
-    )
-    evaluate(config)
+    Override fields with Hydra's ``key=value`` syntax, e.g.::
+
+        hsh-eval config.checkpoint=path/to/ckpt config.batch_size=16
+    """
+    store(EvalTaskConf, name="hsh_eval")
+    store.add_to_hydra_store()
+    zen(evaluate).hydra_main(config_name="hsh_eval", version_base="1.3", config_path=None)
 
 
 if __name__ == "__main__":

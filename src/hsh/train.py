@@ -8,16 +8,17 @@ Mirrors hooke-forge's trainer.py pattern:
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import os
 from pathlib import Path
 
 import torch
+from hydra_zen import store, zen
 
 from hsh.config import ModelConfig, TrainConfig
 from hsh.data import make_dataloaders
+from hsh.hydra_conf import TrainTaskConf
 from hsh.model import FlowMatchingMLP
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -127,30 +128,16 @@ def train(
 
 
 def cli() -> None:
-    """CLI entry point for hsh-train."""
-    parser = argparse.ArgumentParser(description="Train a minimal flow-matching model")
-    parser.add_argument("--num-steps", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--num-samples", type=int, default=64)
-    parser.add_argument("--output-dir", type=str, default="./outputs")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--hidden-dim", type=int, default=64)
-    parser.add_argument("--num-layers", type=int, default=2)
-    parser.add_argument("--input-dim", type=int, default=32)
-    args = parser.parse_args()
+    """CLI entry point for hsh-train.
 
-    model_config = ModelConfig(input_dim=args.input_dim, hidden_dim=args.hidden_dim, num_layers=args.num_layers)
-    train_config = TrainConfig(
-        num_steps=args.num_steps,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        num_samples=args.num_samples,
-        output_dir=args.output_dir,
-        seed=args.seed,
-    )
-    result = train(train_config, model_config)
-    log.info("Training complete: %s", result)
+    Uses hydra-zen to auto-generate CLI flags from Pydantic configs.
+    Override fields with Hydra's ``key=value`` syntax, e.g.::
+
+        hsh-train train_config.num_steps=200 model_config.hidden_dim=128
+    """
+    store(TrainTaskConf, name="hsh_train")
+    store.add_to_hydra_store()
+    zen(train).hydra_main(config_name="hsh_train", version_base="1.3", config_path=None)
 
 
 if __name__ == "__main__":

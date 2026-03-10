@@ -8,15 +8,16 @@ Mirrors hooke-forge's inference pattern:
 
 from __future__ import annotations
 
-import argparse
 import logging
 import os
 from pathlib import Path
 
 import torch
+from hydra_zen import store, zen
 
 from hsh.config import InferConfig
 from hsh.data import SyntheticDataset, collate_fn
+from hsh.hydra_conf import InferTaskConf
 from hsh.train import load_checkpoint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -64,21 +65,15 @@ def infer(config: InferConfig) -> dict:
 
 
 def cli() -> None:
-    """CLI entry point for hsh-infer."""
-    parser = argparse.ArgumentParser(description="Run inference with a trained checkpoint")
-    parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--num-samples", type=int, default=32)
-    parser.add_argument("--output-dir", type=str, default="./predictions")
-    args = parser.parse_args()
+    """CLI entry point for hsh-infer.
 
-    config = InferConfig(
-        checkpoint=args.checkpoint,
-        batch_size=args.batch_size,
-        num_samples=args.num_samples,
-        output_dir=args.output_dir,
-    )
-    infer(config)
+    Override fields with Hydra's ``key=value`` syntax, e.g.::
+
+        hsh-infer config.checkpoint=path/to/ckpt config.num_samples=64
+    """
+    store(InferTaskConf, name="hsh_infer")
+    store.add_to_hydra_store()
+    zen(infer).hydra_main(config_name="hsh_infer", version_base="1.3", config_path=None)
 
 
 if __name__ == "__main__":
