@@ -1,0 +1,41 @@
+[project]
+name = "hsh"
+version = "0.1.0"
+description = "MVP train/finetune/eval/infer pipeline for the Hooke ecosystem"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hsh"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+lint.select = ["E", "F", "W", "I", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: long-running test",
+]
+
+[project.scripts]
+hsh-train = "hsh.train:cli"
+hsh-finetune = "hsh.finetune:cli"
+hsh-eval = "hsh.eval:cli"
+hsh-infer = "hsh.infer:cli"
