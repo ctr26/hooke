@@ -1,6 +1,6 @@
-# Agent Rules
+# CLAUDE.md
 
-Rules for AI coding agents. Humans: see [README.md](README.md) for project docs.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Pirate branches (`r/*`)
 
