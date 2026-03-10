@@ -16,6 +16,7 @@ from hooke_tx.eval.evaluation import EvalCallback
 class EMACallback(Callback):
     """Maintains EMA of model parameters. Updates after each training batch.
     Optionally saves EMA to a separate checkpoint file when checkpoint.types.ema is True.
+    Save frequency is synced with eval: use every_n_train_steps (step-based) or every_n_epochs (epoch-based).
     """
 
     def __init__(
@@ -24,7 +25,8 @@ class EMACallback(Callback):
         save_checkpoint: bool = False,
         dirpath: str | None = None,
         filename: str = "{epoch}",
-        every_n_epochs: int = 5,
+        every_n_epochs: int | None = None,
+        every_n_train_steps: int | None = None,
     ) -> None:
         super().__init__()
         self.decay = decay
@@ -32,6 +34,7 @@ class EMACallback(Callback):
         self.dirpath = dirpath or "."
         self.filename = filename
         self.every_n_epochs = every_n_epochs
+        self.every_n_train_steps = every_n_train_steps
         self._ema: ExponentialMovingAverage | None = None
 
     def setup(self, trainer: pl.Trainer, pl_module: pl.LightningModule, stage: str) -> None:
@@ -50,13 +53,21 @@ class EMACallback(Callback):
             self._ema.to(pl_module.device)
             self._ema.update(pl_module.parameters())
 
+    def _save_flag(self, trainer: pl.Trainer) -> bool:
+        if self.every_n_train_steps is not None:
+            return trainer.global_step > 0 and trainer.global_step % self.every_n_train_steps == 0
+        
+        if self.every_n_epochs is not None:
+            return (trainer.current_epoch + 1) % self.every_n_epochs == 0
+        
+        return True
+
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
         if not self.save_checkpoint or not trainer.is_global_zero or self._ema is None:
             return
-
-        if (trainer.current_epoch + 1) % self.every_n_epochs != 0:
+        if not self._save_flag(trainer):
             return
 
         self._ema.store(pl_module.parameters())
@@ -89,26 +100,64 @@ class EMACallback(Callback):
 
 
 def create_callbacks(
-    metrics_config: dict[str, Any],
+    metrics_args: dict[str, Any],
     trainer_args: dict[str, Any],
+    eval_args: dict[str, Any],
     checkpoint_args: dict[str, Any],
-) -> list[Callback]:
-    """Create training callbacks from config. Pops ema, eval from trainer_args and types, enable from checkpoint_args."""
+) -> tuple[list[Callback], dict[str, Any]]:
+    """Create training callbacks from config. Pops ema, eval from trainer_args and types, enable from checkpoint_args.
+
+    Returns:
+        Tuple of (callbacks, logging_kwargs). Pass logging_kwargs to Trainer for val_check_interval / check_val_every_n_epoch.
+
+    Note:
+        With val_check_interval (step-based eval), ModelCheckpoint saves on train batch end when
+        global_step % every_n_train_steps == 0, while EvalCallback/EMACallback run on validation_epoch_end.
+        Both fire at the same step boundaries (validation is triggered at those steps), so checkpoints
+        and eval metrics stay aligned.
+    """
     ema_config = trainer_args.pop("ema", None) or {}
     ema_enable = ema_config.get("enable", False)
 
-    eval_config = trainer_args.pop("eval", None) or {}
-    eval_standard = eval_config.get("standard", True)
-    eval_ema = eval_config.get("ema", False)
+    eval_std = eval_args.pop("std", True)
+    eval_ema = eval_args.pop("ema", False)
+
+    if eval_args.get("val_check_interval") is not None:
+        eval_args.pop("check_val_every_n_epoch")
+
+    val_check_interval = eval_args.get("val_check_interval")
+    
+    logging_kwargs = (
+        {"val_check_interval": val_check_interval, "check_val_every_n_epoch": 1}
+        if val_check_interval is not None
+        else {"check_val_every_n_epoch": eval_args.get("check_val_every_n_epoch", 1)}
+    )
+
     if eval_ema and not ema_enable:
         raise ValueError("trainer.eval.ema is True but ema.enable is False")
 
     checkpoint_types = checkpoint_args.pop("types", None) or {}
-    checkpoint_standard = checkpoint_types.get("standard", True)
+    checkpoint_std = checkpoint_types.get("std", True)
     checkpoint_ema = checkpoint_types.get("ema", False)
+
     checkpoint_enable = checkpoint_args.pop("enable", False)
+    every_n_evals = checkpoint_args.pop("every_n_evals", 1)
+    
     if checkpoint_ema and not ema_enable:
         raise ValueError("checkpoint.types.ema is True but ema.enable is False")
+
+    # Sync checkpoint frequency with eval; every_n_evals saves every N evals
+    if val_check_interval is not None:
+        ckpt_freq = {
+            "every_n_train_steps": val_check_interval * every_n_evals,
+            "every_n_epochs": None,
+        }
+    else:
+        check_val_every_n_epoch = eval_args.get("check_val_every_n_epoch", 1)
+        ckpt_freq = {
+            "every_n_train_steps": None,
+            "every_n_epochs": check_val_every_n_epoch * every_n_evals,
+        }
 
     callbacks: list[Callback] = []
     ema_callback = None
@@ -119,20 +168,25 @@ def create_callbacks(
             save_checkpoint=checkpoint_enable and checkpoint_ema,
             dirpath=checkpoint_args.get("dirpath"),
             filename=checkpoint_args.get("filename", "{epoch}"),
-            every_n_epochs=checkpoint_args.get("every_n_epochs", 5),
+            **ckpt_freq,
         )
         callbacks.append(ema_callback)
 
     callbacks.append(
         EvalCallback(
-            metrics_config=metrics_config,
-            eval_standard=eval_standard,
+            metrics_args=metrics_args,
+            eval_std=eval_std,
             eval_ema=eval_ema,
             ema_callback=ema_callback,
         )
     )
 
-    if checkpoint_enable and checkpoint_standard:
-        callbacks.append(ModelCheckpoint(**checkpoint_args))
+    if checkpoint_enable and checkpoint_std:
+        callbacks.append(
+            ModelCheckpoint(
+                **checkpoint_args,
+                **ckpt_freq,
+            )
+        )
 
-    return callbacks
+    return callbacks, logging_kwargs

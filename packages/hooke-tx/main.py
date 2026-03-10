@@ -18,7 +18,8 @@ def main(cfg: DictConfig) -> None:
 
     model_args = deepcopy(OmegaConf.to_container(cfg.model, resolve=True))
     trainer_args = deepcopy(OmegaConf.to_container(cfg.trainer, resolve=True))
-    metrics_config = deepcopy(OmegaConf.to_container(cfg.metrics, resolve=True))
+    eval_args = deepcopy(OmegaConf.to_container(cfg.eval, resolve=True))
+    metric_args = deepcopy(OmegaConf.to_container(cfg.metrics, resolve=True))
     compute_spec = deepcopy(OmegaConf.to_container(cfg.compute, resolve=True))
     checkpoint_args = deepcopy(OmegaConf.to_container(cfg.checkpoint, resolve=True))
 
@@ -43,8 +44,9 @@ def main(cfg: DictConfig) -> None:
     datamodule.prepare_data()
     datamodule.setup()
 
-    callbacks = create_callbacks(metrics_config, trainer_args, checkpoint_args)
-    
+
+    callbacks, logging_kwargs = create_callbacks(metric_args, trainer_args, eval_args, checkpoint_args)
+
     log_dir = f"/rxrx/data/user/{os.getenv('USER')}/outgoing/hooke-tx"
     logger = WandbLogger(
         project=cfg.wandb.get("project", "Hooke-Tx"),
@@ -58,6 +60,7 @@ def main(cfg: DictConfig) -> None:
         max_epochs=trainer_args.get("max_epochs"),
         callbacks=callbacks,
         logger=logger,
+        **logging_kwargs,
         **compute_spec
     )
 

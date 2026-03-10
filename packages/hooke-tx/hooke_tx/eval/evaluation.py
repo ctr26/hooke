@@ -27,12 +27,12 @@ from hooke_tx.eval.metrics.distributional import compute_e_distance
 
 
 METRIC_FUNCTION_DICT = {
-    "aggregated": {
+    "aggr": {
         "mae": lambda x, y: np.mean(np.abs(x.mean(axis=0) - y.mean(axis=0))),
         "mse": lambda x, y: np.mean((x.mean(0) - y.mean(0)) ** 2),
         "pearson": lambda x, y: pearsonr(x.mean(0), y.mean(0))[0],
     },
-    "distributed": {
+    "dist": {
         "mmd": lambda pred_expr, target_expr: compute_e_distance(pred_expr, target_expr),
     },
 }
@@ -42,13 +42,13 @@ class EvalCallback(Callback):
     """Runs inference + evaluation metrics at the end of each validation epoch and logs them."""
     def __init__(
         self,
-        metrics_config: dict[str, Any],
+        metrics_args: dict[str, Any],
         eval_standard: bool = True,
         eval_ema: bool = False,
         ema_callback: Callback | None = None,
     ) -> None:
         super().__init__()
-        self.metrics_config = metrics_config
+        self.metrics_args = metrics_args
         self.ema_callback = ema_callback
 
         self.eval_models = []
@@ -79,11 +79,18 @@ class EvalCallback(Callback):
 
         all_metrics: dict[str, float] = {}
 
-        # Log train_loss whenever we run eval
-        train_loss = trainer.callback_metrics.get("train_loss")
-        if train_loss is not None and trainer.is_global_zero:
-            train_loss = float(train_loss) if hasattr(train_loss, "item") else float(train_loss)
-            all_metrics["train_loss"] = train_loss
+        # Train and eval loss at eval time, per model type
+        train_loss = None
+        if trainer.is_global_zero:
+            train_loss = trainer.callback_metrics.get("train_loss")
+            if train_loss is not None:
+                train_loss = float(train_loss.item() if hasattr(train_loss, "item") else train_loss)
+        
+        standard_eval_loss = None
+        if trainer.is_global_zero:
+            std_eval_loss = trainer.callback_metrics.get("standard/eval/loss")
+            if std_eval_loss is not None:
+                std_eval_loss = float(std_eval_loss.item() if hasattr(std_eval_loss, "item") else std_eval_loss)
 
         for eval_name, dataloader in val_dataloaders.items():
             for model_type in self.eval_models:
@@ -92,13 +99,36 @@ class EvalCallback(Callback):
                     ema.store(model.parameters())
                     ema.copy_to(model.parameters())
 
+                    # Compute ema/eval/eval_loss
+                    ema_eval_loss = None
+                    if trainer.is_global_zero:
+                        ema_losses = []
+                        model.eval()
+                        with torch.no_grad():
+                            for batch in dataloader:
+                                batch = trainer.strategy.batch_to_device(batch, device)
+                                loss = model.architecture(batch)
+                                ema_losses.append(loss.item() if hasattr(loss, "item") else float(loss))
+                        
+                        model.train()
+                        
+                        ema_eval_loss = float(np.mean(ema_losses))
+
                 prefix = f"{model_type}/{eval_name}"
                 
+                if trainer.is_global_zero:
+                    if train_loss is not None:
+                        all_metrics[f"{model_type}/{eval_name}/train_loss"] = train_loss
+                    
+                    eval_loss = std_eval_loss if model_type == "standard" else (ema_eval_loss if model_type == "ema" else None)
+                    if eval_loss is not None:
+                        all_metrics[f"{model_type}/{eval_name}/eval_loss"] = eval_loss
+
                 metrics = evaluate(
                     model,
                     dataloader,
                     device,
-                    self.metrics_config,
+                    self.metrics_args,
                     prefix=prefix,
                     log=False,
                     rank=getattr(trainer, "global_rank", None),
@@ -116,7 +146,7 @@ class EvalCallback(Callback):
 def compute_metrics(
     pred_df: pd.DataFrame,
     target_df: pd.DataFrame,
-    metrics_config: dict[str, Any] = None,
+    metrics_args: dict[str, Any] = None,
 ) -> dict[str, float]:
     """Compute pred vs. target metrics per (CELL_TYPE, EXPERIMENT, PERTURBATIONS) and then average across subpopulations."""
     if len(pred_df) == 0:
@@ -146,7 +176,7 @@ def compute_metrics(
         pred_expr = np.stack(pred_df.loc[pop_mask, "predicted_expression"].values)
         target_expr = np.stack(target_df.loc[pop_mask, "target_expression"].values)
 
-        for metric_level, metric_names in metrics_config.items():
+        for metric_level, metric_names in metrics_args.items():
             for metric_name in metric_names:
                 metrics_dict[metric_level][metric_name].append(METRIC_FUNCTION_DICT[metric_level][metric_name](pred_expr, target_expr))
 
@@ -161,7 +191,7 @@ def evaluate(
     model: pl.LightningModule,
     dataloader: DataLoader,
     device: torch.device | str,
-    metrics_config: dict[str, Any],
+    metrics_args: dict[str, Any],
     prefix: str = "eval",
     log: bool = False,
     rank: int | None = None,
@@ -176,7 +206,7 @@ def evaluate(
     pred_df, target_df = run_inference(model, dataloader, device)
     
     # Compute metrics
-    metrics = compute_metrics(pred_df, target_df, metrics_config=metrics_config)
+    metrics = compute_metrics(pred_df, target_df, metrics_args=metrics_args)
 
     if prefix:
         metrics = {f"{prefix}/{k}": v for k, v in metrics.items()}
