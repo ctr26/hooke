@@ -1,0 +1,22 @@
+---
+description: Always-applied rules for the hooke hub repo
+globs: *
+alwaysApply: true
+---
+
+# Hooke Hub
+
+This is a documentation-only hub repository. It contains no source code.
+
+## Do
+
+- Keep the README repository tables accurate and consistently formatted.
+- Use canonical GitHub URLs when linking to repositories.
+- Write in clear, concise Markdown.
+- Follow the conventions in AGENTS.md and CONTRIBUTING.md.
+
+## Do not
+
+- Add application or library source code to this repo.
+- Add package manifests, build configs, or CI pipelines that build software.
+- Reference files or internals of other repositories — link to them instead.

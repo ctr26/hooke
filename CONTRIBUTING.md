@@ -1,61 +1,32 @@
 # Contributing
 
-## Workflow
+Thank you for helping keep the Hooke hub useful and accurate.
 
-1. Fork the repo (or create a branch for owned repos)
-2. First commit = `PROJECT_SPEC.md` + standards files
-3. Work in a git worktree: `git worktree add ../<repo>-issue-<N> issue-<N>`
-4. One issue = one worktree = one PR
-5. Conventional commits (`feat:`, `fix:`, `chore:`, `docs:`)
+## Adding or updating a repository entry
 
-## Pull Requests
+1. Open `README.md`.
+2. Find the appropriate section (**Active**, **Infrastructure**, or **Inactive**).
+3. Add or edit the table row following the existing format:
+   `| [repo-name](https://github.com/org/repo-name) | org | Short description. | Language |`
+4. Keep descriptions concise (one sentence).
+5. If a repo has moved from active to inactive (or vice-versa), move the row to
+   the correct section rather than duplicating it.
 
-- All PRs require CI to pass (lint + type check + tests)
-- No force push to `main`, `dev`, or `trunk`
-- If a PR needs major changes, close it and open a new one
-- Don't delete failing tests — fix the patch
-- Reviews require PE (Principle Engineer) + Scientist sign-off
-- No auto-merge
+## Branch naming
 
-## Commit Messages
+| Prefix  | Use for                          |
+|---------|----------------------------------|
+| `feat/` | New content or features          |
+| `fix/`  | Corrections to existing content  |
+| `docs/` | Documentation-only changes       |
 
-Use conventional commits:
+## Pull requests
 
-```
-feat: add GP interpolation to PSF module
-fix: handle NaN values in batch normalization
-chore: update ruff to 0.3.0
-docs: add ADR for config migration
-```
+- Give the PR a descriptive title that summarises the change.
+- Keep scope narrow — one logical change per PR.
+- Ensure all Markdown renders correctly before requesting review.
 
-Write like a developer. Brief context, clear change. No boilerplate.
+## Questions?
 
-## Pre-Push Checklist
-
-```bash
-make prepush   # runs: lint, typecheck, test-fast
-```
-
-Always run before pushing. CI will catch it anyway, but save the round-trip.
-
-## Issues
-
-- Only post issues on owned repos (`ctr26/*`, `craggles17/*`)
-- Sound human — no robotic templates
-- Brief context, clear ask
-- Example: "PSF interpolation missing GP — need it for the comparison table"
-
-## Agent Contributions
-
-Agents follow the same rules as humans:
-
-- Spawn via worktree, one issue per agent
-- Commit with conventional messages
-- Create PR, verify CI passes
-- Model selection: opus for architecture, sonnet for standard work, cheap for docs
-
-## Code Review
-
-- PE reviews architecture + code quality
-- Focus on: correctness, type safety, test coverage, simplicity
-- Every 10 issues/PRs = leadership meeting
+Open an issue if something is unclear or if you think a repo is missing from
+the listing.
