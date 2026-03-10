@@ -3,13 +3,12 @@ import os
 
 import hydra
 import lightning.pytorch as pl
-from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 
 from hooke_tx.data.datamodule import DataModule
 from hooke_tx.trainer import TxPredictor
-from hooke_tx.eval.evaluation import EvalCallback
+from hooke_tx.callbacks import create_callbacks
 
 
 @hydra.main(config_path="configs/templates/trek_drugscreen", config_name="cfg", version_base=None)
@@ -44,11 +43,7 @@ def main(cfg: DictConfig) -> None:
     datamodule.prepare_data()
     datamodule.setup()
 
-    callbacks = [EvalCallback(metrics_config)]
-    if checkpoint_args.pop("enable", False):
-        callbacks.append(
-            ModelCheckpoint(**checkpoint_args)
-        )
+    callbacks = create_callbacks(metrics_config, trainer_args, checkpoint_args)
     
     log_dir = f"/rxrx/data/user/{os.getenv('USER')}/outgoing/hooke-tx"
     logger = WandbLogger(

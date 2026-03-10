@@ -40,42 +40,77 @@ METRIC_FUNCTION_DICT = {
 
 class EvalCallback(Callback):
     """Runs inference + evaluation metrics at the end of each validation epoch and logs them."""
-    def __init__(self, metrics_config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        metrics_config: dict[str, Any],
+        eval_standard: bool = True,
+        eval_ema: bool = False,
+        ema_callback: Callback | None = None,
+    ) -> None:
         super().__init__()
-        
         self.metrics_config = metrics_config
+        self.ema_callback = ema_callback
+
+        self.eval_models = []
+        if eval_standard:
+            self.eval_models.append("standard")
+        if eval_ema:
+            self.eval_models.append("ema")
 
     def on_validation_epoch_end(self, trainer: pl.Trainer, model: pl.LightningModule) -> None:
+        if not self.eval_models:
+            return
+
         val_dataloaders = trainer.val_dataloaders
-        
+
         if val_dataloaders is None:
             return
-        
+
         elif isinstance(val_dataloaders, dict) and len(val_dataloaders) > 0:
             pass
 
         elif isinstance(val_dataloaders, DataLoader):
             val_dataloaders = {"eval": val_dataloaders}
-        
+
         else:
             raise ValueError(f"Invalid val_dataloader format: {val_dataloaders}")
-        
+
         device = trainer.strategy.root_device
-        
+
+        all_metrics: dict[str, float] = {}
+
+        # Log train_loss whenever we run eval
+        train_loss = trainer.callback_metrics.get("train_loss")
+        if train_loss is not None and trainer.is_global_zero:
+            train_loss = float(train_loss) if hasattr(train_loss, "item") else float(train_loss)
+            all_metrics["train_loss"] = train_loss
+
         for eval_name, dataloader in val_dataloaders.items():
-            metrics = evaluate(
-                model,
-                dataloader,
-                device,
-                self.metrics_config,
-                prefix=eval_name,
-                log=False,
-                rank=getattr(trainer, "global_rank", None),
-                world_size=getattr(trainer, "world_size", None),
-            )
-            
-            if trainer.is_global_zero:
-                trainer.logger.log_metrics(metrics, step=trainer.global_step)
+            for model_type in self.eval_models:
+                if model_type == "ema":
+                    ema = self.ema_callback.ema
+                    ema.store(model.parameters())
+                    ema.copy_to(model.parameters())
+
+                prefix = f"{model_type}/{eval_name}"
+                
+                metrics = evaluate(
+                    model,
+                    dataloader,
+                    device,
+                    self.metrics_config,
+                    prefix=prefix,
+                    log=False,
+                    rank=getattr(trainer, "global_rank", None),
+                    world_size=getattr(trainer, "world_size", None),
+                )
+                all_metrics.update(metrics)
+
+                if model_type == "ema":
+                    ema.restore(model.parameters())
+
+        if trainer.is_global_zero:
+            trainer.logger.log_metrics(all_metrics, step=trainer.global_step)
 
 
 def compute_metrics(

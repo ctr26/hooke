@@ -42,6 +42,7 @@ task:
   #     empty: 0.5
   #     gene_only: 0.5
 
+  # drug screen
   composition:
     empty: false
     negative_control: false
@@ -100,6 +101,12 @@ trainer:
   warmup_epochs: 1
   gradient_accumulation_steps: 1
   scheduler: null
+  ema:
+    enable: false
+    decay: 0.999
+  eval:
+    standard: true
+    ema: ${trainer.ema.enable}
 
 metrics:
   aggregated:
@@ -117,6 +124,9 @@ compute:
 
 checkpoint:
   enable: false
+  types:
+    standard: true
+    ema: ${trainer.ema.enable}
   save_last: false
   save_top_k: 0
   monitor: null
