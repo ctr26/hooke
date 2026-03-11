@@ -3,6 +3,7 @@ import os
 
 import hydra
 import lightning.pytorch as pl
+import torch
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 
@@ -32,6 +33,9 @@ def main(cfg: DictConfig) -> None:
     
     # Set seed
     pl.seed_everything(cfg.constants.seed)
+
+    # Avoid cuBLAS init issues on A100 (CUBLAS_STATUS_NOT_INITIALIZED)
+    torch.set_float32_matmul_precision("medium")
 
     # Initialize datamodule
     datamodule = DataModule(
