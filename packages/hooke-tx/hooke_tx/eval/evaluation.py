@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from collections import defaultdict
 
@@ -46,10 +47,12 @@ class EvalCallback(Callback):
         eval_base: bool = True,
         eval_ema: bool = False,
         ema_callback: Callback | None = None,
+        vcb_args: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.metrics_args = metrics_args
         self.ema_callback = ema_callback
+        self.vcb_args = vcb_args
 
         self.eval_models = []
         if eval_base:
@@ -124,16 +127,28 @@ class EvalCallback(Callback):
                     if eval_loss is not None:
                         all_metrics[f"{model_type}/{eval_name}/eval_loss"] = eval_loss
 
-                metrics = evaluate(
-                    model,
-                    dataloader,
-                    device,
-                    self.metrics_args,
-                    prefix=prefix,
-                    log=False,
-                    rank=getattr(trainer, "global_rank", None),
-                    world_size=getattr(trainer, "world_size", None),
-                )
+                if self.vcb_args is not None:
+                    metrics = evaluate_vcb(
+                        model,
+                        dataloader,
+                        device,
+                        self.vcb_args,
+                        prefix=prefix,
+                        log=False,
+                        rank=getattr(trainer, "global_rank", None),
+                        world_size=getattr(trainer, "world_size", None),
+                    )
+                else:
+                    metrics = evaluate(
+                        model,
+                        dataloader,
+                        device,
+                        self.metrics_args,
+                        prefix=prefix,
+                        log=False,
+                        rank=getattr(trainer, "global_rank", None),
+                        world_size=getattr(trainer, "world_size", None),
+                    )
                 all_metrics.update(metrics)
 
                 if model_type == "ema":
@@ -220,6 +235,57 @@ def evaluate(
     gc.collect()
 
     # Log metrics to wandb
+    if log:
+        wandb.log({k: v for k, v in metrics.items()})
+
+    return metrics
+
+
+def evaluate_vcb(
+    model: pl.LightningModule,
+    dataloader: DataLoader,
+    device: torch.device | str,
+    vcb_args: dict[str, Any],
+    prefix: str = "eval",
+    log: bool = False,
+    rank: int | None = None,
+    world_size: int | None = None,
+) -> dict[str, float]:
+    """
+    Run inference + VCB evaluation using temp dir (cleaned up after).
+    Use when vcb_args is set; otherwise use evaluate().
+    """
+    pred_df, _ = run_inference(model, dataloader, device)
+
+    from torch import distributed as dist
+
+    if dist.is_initialized() and dist.get_rank() != 0:
+        return {}
+
+    from hooke_tx.eval.vcb import run_vcb_eval_with_temp_dir
+
+    dataset = dataloader.dataset
+    metrics = run_vcb_eval_with_temp_dir(
+        pred_df,
+        dataset,
+        dataset_path=Path(vcb_args["dataset_path"]),
+        split_path=Path(vcb_args["split_path"]),
+        selected_ensembl_gene_ids_path=Path(vcb_args["selected_ensembl_gene_ids_path"]),
+        ground_truth_path=Path(vcb_args["ground_truth_path"]) if vcb_args.get("ground_truth_path") else None,
+        split_idx=vcb_args.get("split_idx", 0),
+        use_validation_split=vcb_args.get("use_validation_split", True),
+        task_id=vcb_args.get("task_id", "phenorescue"),
+        distributional_metrics=vcb_args.get("distributional_metrics", True),
+    )
+
+    if prefix:
+        metrics = {f"{prefix}/{k}": v for k, v in metrics.items()}
+
+    del pred_df
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
+
     if log:
         wandb.log({k: v for k, v in metrics.items()})
 

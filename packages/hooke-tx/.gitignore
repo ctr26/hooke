@@ -4,7 +4,10 @@
 .vscode/
 wandb/
 
+external/
+
 outputs/
 outputs_sweep/
 
 loc-*
+tmp-*

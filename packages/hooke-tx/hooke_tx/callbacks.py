@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import lightning.pytorch as pl
+
+from hooke_tx.data.constants import DATA_SOURCES
 from lightning.pytorch import Callback
 from lightning.pytorch.callbacks import ModelCheckpoint
 from torch_ema import ExponentialMovingAverage
@@ -104,6 +107,8 @@ def create_callbacks(
     trainer_args: dict[str, Any],
     eval_args: dict[str, Any],
     checkpoint_args: dict[str, Any],
+    data_args: dict[str, Any] | None = None,
+    task_args: dict[str, Any] | None = None,
 ) -> tuple[list[Callback], dict[str, Any]]:
     """Create training callbacks from config. Pops ema, eval from trainer_args and types, enable from checkpoint_args.
 
@@ -121,6 +126,43 @@ def create_callbacks(
 
     eval_base = eval_args.pop("base", True)
     eval_ema = eval_args.pop("ema", False)
+    use_vcb = eval_args.pop("vcb", False)
+
+    vcb_args = None
+    if use_vcb:
+        dataset_path = eval_args.pop("vcb_dataset_path", None)
+        if dataset_path is None and data_args and task_args:
+            data_sources = data_args.get("data_sources", {})
+            validate_src = data_sources.get("validate", data_sources.get("test"))
+            if isinstance(validate_src, str):
+                dataset_path = DATA_SOURCES.get(validate_src, validate_src)
+        split_path = eval_args.pop("vcb_split_path", None) or (task_args or {}).get("splits_path")
+        if not dataset_path or not split_path:
+            raise ValueError(
+                "eval.vcb is True but vcb_dataset_path and vcb_split_path could not be resolved. "
+                "Set eval.vcb_dataset_path and eval.vcb_split_path explicitly."
+            )
+        selected_ensembl_gene_ids_path = (
+            eval_args.pop("vcb_selected_ensembl_gene_ids_path", None)
+            or (task_args or {}).get("selected_ensembl_gene_ids_path")
+        )
+        if not selected_ensembl_gene_ids_path:
+            raise ValueError(
+                "eval.vcb is True but selected_ensembl_gene_ids_path could not be resolved. "
+                "Set eval.vcb_selected_ensembl_gene_ids_path or task.selected_ensembl_gene_ids_path."
+            )
+        vcb_args = {
+            "dataset_path": str(Path(dataset_path).resolve()),
+            "split_path": str(Path(split_path).resolve()),
+            "selected_ensembl_gene_ids_path": str(Path(selected_ensembl_gene_ids_path).resolve()),
+            "ground_truth_path": eval_args.pop("vcb_ground_truth_path", None),
+            "split_idx": eval_args.pop("vcb_split_idx", 0),
+            "use_validation_split": eval_args.pop("vcb_use_validation_split", True),
+            "task_id": eval_args.pop("vcb_task_id", "phenorescue"),
+            "distributional_metrics": eval_args.pop("vcb_distributional_metrics", True),
+        }
+        if vcb_args["ground_truth_path"]:
+            vcb_args["ground_truth_path"] = str(Path(vcb_args["ground_truth_path"]).resolve())
 
     if eval_args.get("val_check_interval") is not None:
         eval_args.pop("check_val_every_n_epoch")
@@ -178,6 +220,7 @@ def create_callbacks(
             eval_base=eval_base,
             eval_ema=eval_ema,
             ema_callback=ema_callback,
+            vcb_args=vcb_args,
         )
     )
 

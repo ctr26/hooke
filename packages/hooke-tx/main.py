@@ -49,7 +49,10 @@ def main(cfg: DictConfig) -> None:
     datamodule.setup()
 
 
-    callbacks, logging_kwargs = create_callbacks(metric_args, trainer_args, eval_args, checkpoint_args)
+    callbacks, logging_kwargs = create_callbacks(
+        metric_args, trainer_args, eval_args, checkpoint_args,
+        data_args=data_args, task_args=task_args,
+    )
 
     log_dir = f"/rxrx/data/user/{os.getenv('USER')}/outgoing/hooke-tx"
     logger = WandbLogger(
