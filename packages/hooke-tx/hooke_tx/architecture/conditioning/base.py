@@ -29,6 +29,31 @@ def _mlp(in_dim: int, hidden_dim: int, out_dim: int, n_middle: int = 0) -> nn.Se
     return nn.Sequential(*layers)
 
 
+def _normalize_mol_embedding_args(
+    input_type: str, args_list: list[dict[str, Any]] | list[str] | str
+) -> list[dict[str, Any]]:
+    """Parse string identifiers to embedding config dicts. Used for mol_pert."""
+    if isinstance(args_list, list) and args_list:
+        if isinstance(args_list[0], dict):
+            return args_list
+        identifiers = [s.strip() for s in args_list if isinstance(s, str) and s.strip()]
+    else:
+        identifiers = [s.strip() for s in str(args_list).split(",") if s.strip()]
+    
+    result: list[dict[str, Any]] = []
+    for id in identifiers:
+        if id == "one-hot":
+            result.append({"type": "one-hot", "dim": 1024})
+        elif id == "ecfp":
+            result.append({"type": "ecfp", "dim": 1024, "radius": 2})
+        elif id.startswith("molgps:"):
+            result.append({"type": "molgps", "emb_name": id[7:].strip()})
+        else:
+            raise ValueError(f"Unknown {input_type} identifier: {id!r}")
+    
+    return result
+
+
 def _embedder_dim(emb: nn.Module, input_type: str, data_dim: int) -> int:
     if isinstance(emb, Identity):
         return data_dim if input_type == "xt" else 1
@@ -70,8 +95,11 @@ class EmbeddingModule(nn.Module):
             if input_type not in covariates and input_type not in ("time", "xt"):
                 continue
 
-            cov_list = covariates.get(input_type, [])
+            if input_type == MOL_PERT:
+                args_list = _normalize_mol_embedding_args(input_type, args_list)
             
+            cov_list = covariates.get(input_type, [])
+
             embedders = nn.ModuleDict({
                 f"{args.get('type', 'one-hot')}_{i}": self._create_embedder(args, cov_list, data_dim)
                 for i, args in enumerate(args_list)
@@ -100,7 +128,7 @@ class EmbeddingModule(nn.Module):
             return Fourier(dim=args.get("dim"), bandwidth=args.get("bandwidth", 1))
         
         if embedder_type == "one-hot":
-            return OneHotEmbedder(all_labels=cov_list, dim=args.get("dim"))
+            return OneHotEmbedder(all_labels=cov_list, dim=args.get("dim", 1024))
         
         if embedder_type == "ecfp":
             return ECFPEmbedder(

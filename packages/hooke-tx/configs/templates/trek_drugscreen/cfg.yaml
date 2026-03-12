@@ -69,14 +69,11 @@ model:
       - type: identity
     gene_pert: &one_hot
       - type: one-hot
-        dim: 128
+        dim: 1024
     effect_class: null
     mol_pert:
-      - type: ecfp
-        dim: 1024
-        radius: 2
-      - type: molgps
-        emb_name: large-sphere/mpnn/3B_e50/1/task_heads-pcba_1328:0
+      - ecfp
+      - molgps:large-sphere/mpnn/3B_e50/1/task_heads-pcba_1328:0
     concentration: *one_hot
     assay_type: null
     routing: *one_hot

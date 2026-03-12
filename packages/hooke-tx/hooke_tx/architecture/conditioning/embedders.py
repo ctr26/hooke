@@ -64,7 +64,7 @@ class OneHotEmbedder(nn.Module):
     def __init__(
         self,
         all_labels: list[str],
-        dim: int = 128,
+        dim: int = 1024,
     ):
         super().__init__()
         all_labels = sorted(all_labels)
