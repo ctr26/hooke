@@ -53,6 +53,7 @@ class EvalCallback(Callback):
         self.metrics_args = metrics_args
         self.ema_callback = ema_callback
         self.vcb_args = vcb_args
+        self._vcb_state: dict[str, Any] | None = {"cache": None, "persistent_dir": None} if vcb_args else None
 
         self.eval_models = []
         if eval_base:
@@ -135,8 +136,7 @@ class EvalCallback(Callback):
                         self.vcb_args,
                         prefix=prefix,
                         log=False,
-                        rank=getattr(trainer, "global_rank", None),
-                        world_size=getattr(trainer, "world_size", None),
+                        vcb_state=self._vcb_state,
                     )
                 else:
                     metrics = evaluate(
@@ -156,6 +156,14 @@ class EvalCallback(Callback):
 
         if trainer.is_global_zero:
             trainer.logger.log_metrics(all_metrics, step=trainer.global_step)
+
+    def on_fit_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        """Clean up VCB persistent directory when training ends."""
+        if self._vcb_state is not None and self._vcb_state.get("persistent_dir") is not None:
+            from hooke_tx.eval.vcb import cleanup_vcb_persistent_dir
+
+            cleanup_vcb_persistent_dir(self._vcb_state["persistent_dir"])
+            self._vcb_state["persistent_dir"] = None
 
 
 def compute_metrics(
@@ -248,12 +256,11 @@ def evaluate_vcb(
     vcb_args: dict[str, Any],
     prefix: str = "eval",
     log: bool = False,
-    rank: int | None = None,
-    world_size: int | None = None,
+    vcb_state: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     """
-    Run inference + VCB evaluation using temp dir (cleaned up after).
-    Use when vcb_args is set; otherwise use evaluate().
+    Run inference + VCB evaluation. Uses cached static data and persistent dir when
+    vcb_state is provided (built on first call). Use when vcb_args is set.
     """
     pred_df, _ = run_inference(model, dataloader, device)
 
@@ -262,9 +269,32 @@ def evaluate_vcb(
     if dist.is_initialized() and dist.get_rank() != 0:
         return {}
 
-    from hooke_tx.eval.vcb import run_vcb_eval_with_temp_dir
+    from hooke_tx.eval.vcb import (
+        build_vcb_eval_cache,
+        create_vcb_persistent_dir,
+        run_vcb_eval_with_temp_dir,
+    )
 
     dataset = dataloader.dataset
+    cache = None
+    persistent_dir = None
+    
+    if vcb_state is not None:
+        if vcb_state.get("cache") is None:
+            vcb_state["cache"] = build_vcb_eval_cache(
+                dataset,
+                dataset_path=Path(vcb_args["dataset_path"]),
+                split_path=Path(vcb_args["split_path"]),
+                selected_ensembl_gene_ids_path=Path(vcb_args["selected_ensembl_gene_ids_path"]),
+                split_idx=vcb_args.get("split_idx", 0),
+                use_validation_split=vcb_args.get("use_validation_split", True),
+            )
+            
+            vcb_state["persistent_dir"] = create_vcb_persistent_dir()
+        
+        cache = vcb_state["cache"]
+        persistent_dir = vcb_state["persistent_dir"]
+
     metrics = run_vcb_eval_with_temp_dir(
         pred_df,
         dataset,
@@ -276,6 +306,8 @@ def evaluate_vcb(
         use_validation_split=vcb_args.get("use_validation_split", True),
         task_id=vcb_args.get("task_id", "phenorescue"),
         distributional_metrics=vcb_args.get("distributional_metrics", True),
+        cache=cache,
+        persistent_dir=persistent_dir,
     )
 
     if prefix:

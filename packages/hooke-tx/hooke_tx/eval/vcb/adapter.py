@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,98 @@ import zarr
 
 if TYPE_CHECKING:
     from hooke_tx.data.dataset import TaskDataset
+
+
+class VcbEvalCache:
+    """Cached static data for VCB evaluation. Built once, reused until training ends."""
+
+    __slots__ = (
+        "selected_ensembl_gene_ids",
+        "split_indices",
+        "pred_indices",
+        "base_ctrl_set",
+        "obs",
+        "var_filtered",
+        "features_base",
+        "gene_indices",
+    )
+
+    def __init__(
+        self,
+        selected_ensembl_gene_ids: list[str],
+        split_indices: np.ndarray,
+        pred_indices: np.ndarray,
+        base_ctrl_set: set[int],
+        obs: pl.DataFrame,
+        var_filtered: pl.DataFrame,
+        features_base: np.ndarray,
+        gene_indices: np.ndarray,
+    ) -> None:
+        self.selected_ensembl_gene_ids = selected_ensembl_gene_ids
+        self.split_indices = split_indices
+        self.pred_indices = pred_indices
+        self.base_ctrl_set = base_ctrl_set
+        self.obs = obs
+        self.var_filtered = var_filtered
+        self.features_base = features_base
+        self.gene_indices = gene_indices
+
+
+def build_vcb_eval_cache(
+    dataset: TaskDataset,
+    dataset_path: Path,
+    split_path: Path,
+    selected_ensembl_gene_ids_path: Path | str,
+    *,
+    split_idx: int = 0,
+    use_validation_split: bool = True,
+) -> VcbEvalCache:
+    """Build cache of static data for VCB evaluation. Call once at start of training."""
+    _ensure_vcb_in_path()
+    from vcb.data_models.split import Split
+
+    with open(selected_ensembl_gene_ids_path) as f:
+        selected_ensembl_gene_ids = [line.strip() for line in f if line.strip()]
+
+    obs_path, features_path, var_path = _get_dataset_paths(dataset_path)
+    split = Split.from_json(split_path)
+    fold = split.folds[split_idx]
+
+    if use_validation_split:
+        split_indices = np.array(fold.validation + split.base_states + split.controls)
+        pred_indices = np.array(fold.validation)
+    else:
+        split_indices = np.array(fold.test + split.base_states + split.controls)
+        pred_indices = np.array(fold.test)
+    split_indices = np.sort(split_indices)
+
+    (src,) = {s for s, _ in dataset.source_index_map}
+    gene_indices = dataset.gene_index_map[src]
+
+    obs = pl.read_parquet(obs_path)
+    obs = obs[split_indices, :]
+    obs = obs.with_row_index("zarr_index_generated_raw_counts")
+
+    features = zarr.open(features_path, mode="r")
+    features_arr = np.asarray(features[:], dtype=np.float32)
+    features_full = features_arr[split_indices, :]
+    features_base = features_full[:, gene_indices].copy()
+
+    var_filtered = _build_var_for_selected_genes(
+        var_path, selected_ensembl_gene_ids, var_gene_id_column="ensembl_gene_id"
+    )
+    base_ctrl_set = set(split.base_states + split.controls)
+
+    return VcbEvalCache(
+        selected_ensembl_gene_ids=selected_ensembl_gene_ids,
+        split_indices=split_indices,
+        pred_indices=pred_indices,
+        base_ctrl_set=base_ctrl_set,
+        obs=obs,
+        var_filtered=var_filtered,
+        features_base=features_base,
+        gene_indices=gene_indices,
+    )
 
 
 def _ensure_vcb_in_path() -> None:
@@ -102,6 +195,7 @@ def write_predictions_to_vcb_format(
     split_idx: int = 0,
     use_validation_split: bool = True,
     selected_ensembl_gene_ids_path: Path | str | None = None,
+    cache: VcbEvalCache | None = None,
 ) -> None:
     """Write pred_df to VCB predictions format using make_mock_predictions logic.
 
@@ -111,58 +205,69 @@ def write_predictions_to_vcb_format(
 
     Args:
         pred_df: DataFrame from run_inference with predicted_expression column.
-        dataset: TaskDataset used for the predict dataloader (for source_index_map, gene_index_map).
+        dataset: TaskDataset used for the predict dataloader (for source_index_map).
         dataset_path: Path to dataset directory (VCB or hooke-tx format).
         split_path: Path to VCB Split JSON.
         out_dir: Output directory for obs.parquet, features.zarr, var.parquet.
         split_idx: Index of the fold to use.
         use_validation_split: If True, use fold.validation instead of fold.test.
         selected_ensembl_gene_ids_path: Path to file with one ensembl_gene_id per line.
-            Required for correct var/features alignment with predictions.
+            Required when cache is None.
+        cache: Optional prebuilt cache. When provided, skips loading static data.
     """
-    if selected_ensembl_gene_ids_path is None:
-        raise ValueError(
-            "selected_ensembl_gene_ids_path is required for correct var/features alignment. "
-            "Predictions use a gene subset; var must match."
-        )
-
-    _ensure_vcb_in_path()
-    from vcb.data_models.split import Split
-
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(selected_ensembl_gene_ids_path) as f:
-        selected_ensembl_gene_ids = [line.strip() for line in f if line.strip()]
-
-    obs_path, features_path, var_path = _get_dataset_paths(dataset_path)
-    split = Split.from_json(split_path)
-    fold = split.folds[split_idx]
-
-    if use_validation_split:
-        split_indices = np.array(fold.validation + split.base_states + split.controls)
-        pred_indices = np.array(fold.validation)
+    if cache is not None:
+        obs = cache.obs
+        var_filtered = cache.var_filtered
+        split_indices = cache.split_indices
+        pred_indices = cache.pred_indices
+        base_ctrl_set = cache.base_ctrl_set
+        features_base = cache.features_base
     else:
-        split_indices = np.array(fold.test + split.base_states + split.controls)
-        pred_indices = np.array(fold.test)
-    split_indices = np.sort(split_indices)
+        if selected_ensembl_gene_ids_path is None:
+            raise ValueError(
+                "selected_ensembl_gene_ids_path is required when cache is not provided."
+            )
+        _ensure_vcb_in_path()
+        from vcb.data_models.split import Split
+
+        with open(selected_ensembl_gene_ids_path) as f:
+            selected_ensembl_gene_ids = [line.strip() for line in f if line.strip()]
+
+        obs_path, features_path, var_path = _get_dataset_paths(dataset_path)
+        split = Split.from_json(split_path)
+        fold = split.folds[split_idx]
+
+        if use_validation_split:
+            split_indices = np.array(fold.validation + split.base_states + split.controls)
+            pred_indices = np.array(fold.validation)
+        else:
+            split_indices = np.array(fold.test + split.base_states + split.controls)
+            pred_indices = np.array(fold.test)
+        split_indices = np.sort(split_indices)
+
+        (src,) = {s for s, _ in dataset.source_index_map}
+        gene_indices = dataset.gene_index_map[src]
+
+        obs = pl.read_parquet(obs_path)
+        obs = obs[split_indices, :]
+        obs = obs.with_row_index("zarr_index_generated_raw_counts")
+
+        features = zarr.open(features_path, mode="r")
+        features_arr = np.asarray(features[:], dtype=np.float32)
+        features_full = features_arr[split_indices, :]
+        features_base = features_full[:, gene_indices].copy()
+
+        var_filtered = _build_var_for_selected_genes(
+            var_path, selected_ensembl_gene_ids, var_gene_id_column="ensembl_gene_id"
+        )
+        base_ctrl_set = set(split.base_states + split.controls)
 
     pred_by_obs_idx = _build_pred_by_obs_idx(pred_df, dataset)
 
-    (src,) = {s for s, _ in dataset.source_index_map}
-    gene_indices = dataset.gene_index_map[src]
-
-    obs = pl.read_parquet(obs_path)
-    obs = obs[split_indices, :]
-    obs = obs.with_row_index("zarr_index_generated_raw_counts")
-    obs.write_parquet(out_dir / "obs.parquet")
-
-    features = zarr.open(features_path, mode="r")
-    features_arr = np.asarray(features[:], dtype=np.float32)
-    features_full = features_arr[split_indices, :]
-    features_split = features_full[:, gene_indices].copy()
-
-    base_ctrl_set = set(split.base_states + split.controls)
+    features_split = features_base.copy()
     for k in range(len(pred_indices)):
         obs_idx = pred_indices[k]
         if obs_idx in base_ctrl_set:
@@ -172,22 +277,22 @@ def write_predictions_to_vcb_format(
         out_pos = np.searchsorted(split_indices, obs_idx)
         if out_pos >= len(features_split):
             raise IndexError(f"obs_idx {obs_idx} not in split_indices")
-        
-        # Clamp predictions to 0 to avoid negative values.
         features_split[out_pos, :] = np.maximum(pred_by_obs_idx[obs_idx], 0)
 
+    obs.write_parquet(out_dir / "obs.parquet")
+    var_filtered.write_parquet(out_dir / "var.parquet")
+
+    features_zarr_path = out_dir / "features.zarr"
+    if features_zarr_path.exists():
+        shutil.rmtree(features_zarr_path)
+    
     z = zarr.create_array(
-        store=str(out_dir / "features.zarr"),
+        store=str(features_zarr_path),
         shape=features_split.shape,
         chunks=(1,) + features_split.shape[1:],
         dtype=features_split.dtype,
     )
     z[:] = features_split
-
-    var_filtered = _build_var_for_selected_genes(
-        var_path, selected_ensembl_gene_ids, var_gene_id_column="ensembl_gene_id"
-    )
-    var_filtered.write_parquet(out_dir / "var.parquet")
 
 
 def evaluate_with_vcb(
@@ -239,10 +344,14 @@ def run_vcb_eval_with_temp_dir(
     use_validation_split: bool = True,
     task_id: str = "phenorescue",
     distributional_metrics: bool = True,
+    cache: VcbEvalCache | None = None,
+    persistent_dir: Path | None = None,
 ) -> dict[str, float]:
-    """Run full VCB eval: write predictions to temp dir, evaluate, cleanup.
+    """Run full VCB eval: write predictions, evaluate, optionally cleanup.
 
-    Uses a temporary directory for predictions and results; deleted after eval.
+    When cache and persistent_dir are provided, reuses cached data and a persistent
+    directory (no create/delete per eval). Otherwise uses a temp dir.
+
     Returns metrics dict {metric_name: mean_score} for logging.
 
     Args:
@@ -252,15 +361,29 @@ def run_vcb_eval_with_temp_dir(
         split_path: Path to VCB Split JSON.
         selected_ensembl_gene_ids_path: Path to file with one ensembl_gene_id per line.
         ground_truth_path: Path to ground truth (default: same as dataset_path).
+        cache: Optional prebuilt cache. When set, skips loading static data.
+        persistent_dir: Optional persistent directory. When set, reused instead of temp.
     """
     ground_truth_path = ground_truth_path or dataset_path
 
-    with tempfile.TemporaryDirectory(prefix="hooke_vcb_eval_") as tmpdir:
+    if persistent_dir is not None:
+        tmp = Path(persistent_dir)
+        tmp.mkdir(parents=True, exist_ok=True)
+        pred_dir = tmp / "predictions"
+        save_dir = tmp / "results"
+        pred_dir.mkdir(parents=True, exist_ok=True)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        use_temp = False
+    else:
+        tmpdir = tempfile.mkdtemp(prefix="hooke_vcb_eval_")
         tmp = Path(tmpdir)
         pred_dir = tmp / "predictions"
         save_dir = tmp / "results"
+        pred_dir.mkdir(parents=True, exist_ok=True)
         save_dir.mkdir(parents=True, exist_ok=True)
+        use_temp = True
 
+    try:
         write_predictions_to_vcb_format(
             pred_df,
             dataset,
@@ -270,6 +393,7 @@ def run_vcb_eval_with_temp_dir(
             split_idx=split_idx,
             use_validation_split=use_validation_split,
             selected_ensembl_gene_ids_path=selected_ensembl_gene_ids_path,
+            cache=cache,
         )
 
         results = evaluate_with_vcb(
@@ -284,5 +408,21 @@ def run_vcb_eval_with_temp_dir(
             distributional_metrics=distributional_metrics,
         )
 
-    summary = results.group_by("metric").agg(pl.col("score").mean().alias("mean"))
-    return {d["metric"]: float(d["mean"]) for d in summary.to_dicts()}
+        summary = results.group_by("metric").agg(pl.col("score").mean().alias("mean"))
+        return {d["metric"]: float(d["mean"]) for d in summary.to_dicts()}
+    finally:
+        if use_temp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def create_vcb_persistent_dir() -> Path:
+    """Create a persistent directory for VCB eval. Call cleanup_vcb_persistent_dir when done."""
+    path = Path(tempfile.gettempdir()) / f"hooke_vcb_eval_{uuid.uuid4().hex}"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def cleanup_vcb_persistent_dir(path: Path) -> None:
+    """Remove persistent VCB eval directory."""
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
