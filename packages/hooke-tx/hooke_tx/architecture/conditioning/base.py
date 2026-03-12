@@ -5,31 +5,47 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from hooke_tx.architecture.conditioning.embedders import Identity, Projection, Fourier, OneHotEmbedder
+from hooke_tx.architecture.conditioning.embedders import (
+    Identity,
+    Projection,
+    Fourier,
+    OneHotEmbedder,
+    ECFPEmbedder,
+    MolGPSEmbedder,
+)
 from hooke_tx.architecture.modules.mlp import MLPBlock
 
 from hooke_tx.data.constants import GENE_PERT, MOL_PERT, DOSE, EMPTY, ROUTING, ASSAY, CELL_TYPE, EXPERIMENT, WELL
 
 
-EMBEDDER_DICT = {
-    "identity": Identity,
-    "projection": Projection,
-    "fourier": Fourier,
-    "one-hot": OneHotEmbedder,
-}
+def _mlp(in_dim: int, hidden_dim: int, out_dim: int, n_middle: int = 0) -> nn.Sequential:
+    layers = [MLPBlock(in_dim, hidden_dim)]
+    
+    for _ in range(n_middle):
+        layers.append(MLPBlock(hidden_dim, hidden_dim))
+    
+    layers.append(MLPBlock(hidden_dim, out_dim))
+    
+    return nn.Sequential(*layers)
 
 
-def _embedder_output_dim(
-    embedder_type: str,
-    input_type: str,
-    data_dim: int,
-    args: dict[str, Any],
-) -> int:
-    """Output feature dim for an embedder (for building proj_dict)."""
-    if embedder_type == "identity":
+def _embedder_dim(emb: nn.Module, input_type: str, data_dim: int) -> int:
+    if isinstance(emb, Identity):
         return data_dim if input_type == "xt" else 1
     
-    return args.get("dim")
+    if hasattr(emb, "embedding"):
+        return emb.embedding.weight.shape[-1]
+    
+    if hasattr(emb, "fingerprint_matrix"):
+        return emb.fingerprint_matrix.shape[-1]
+    
+    if hasattr(emb, "proj"):
+        return emb.proj.out_features
+    
+    if hasattr(emb, "freqs"):
+        return emb.freqs.shape[0]
+    
+    return 0
 
 
 class EmbeddingModule(nn.Module):
@@ -47,49 +63,77 @@ class EmbeddingModule(nn.Module):
         self.embedder_dict = nn.ModuleDict()
         self._output_dims: dict[str, int] = {}
 
-        for input_type, args in list(embedding_args.items()):
-            if args is None:
+        for input_type, args_list in list(embedding_args.items()):
+            if args_list is None:
                 continue
 
-            embedder_type = args.get("type")
             if input_type not in covariates and input_type not in ("time", "xt"):
                 continue
 
             cov_list = covariates.get(input_type, [])
-            self.embedder_dict[input_type] = self._parse_embedder_args(
-                embedder_type, cov_list, data_dim, args, input_type
-            )
-            self._output_dims[input_type] = _embedder_output_dim(
-                embedder_type, input_type, data_dim, args
-            )
+            
+            embedders = nn.ModuleDict({
+                f"{args.get('type', 'one-hot')}_{i}": self._create_embedder(args, cov_list, data_dim)
+                for i, args in enumerate(args_list)
+            })
+            
+            self.embedder_dict[input_type] = embedders
+            
+            dims = [_embedder_dim(m, input_type, data_dim) for m in embedders.values()]
+            self._output_dims[input_type] = sum(dims)
 
-    def _parse_embedder_args(
+    def _create_embedder(
         self,
-        embedder_type: str,
+        args: dict[str, Any],
         cov_list: list,
         data_dim: int,
-        args: dict[str, Any],
-        input_type: str,
     ) -> nn.Module:
+        embedder_type = args.get("type", "one-hot")
+        
         if embedder_type == "identity":
             return Identity()
-        elif embedder_type == "projection":
+        
+        if embedder_type == "projection":
             return Projection(in_dim=data_dim, dim=args.get("dim"))
-        elif embedder_type == "fourier":
+        
+        if embedder_type == "fourier":
             return Fourier(dim=args.get("dim"), bandwidth=args.get("bandwidth", 1))
-        elif embedder_type == "one-hot":
-            return OneHotEmbedder(labels=cov_list, dim=args.get("dim"))
-        else:
-            raise ValueError(f"Unknown embedder type: {embedder_type}")
+        
+        if embedder_type == "one-hot":
+            return OneHotEmbedder(all_labels=cov_list, dim=args.get("dim"))
+        
+        if embedder_type == "ecfp":
+            return ECFPEmbedder(
+                all_labels=cov_list,
+                dim=args.get("dim", 1024),
+                radius=args.get("radius", 2),
+            )
+        
+        if embedder_type == "molgps":
+            emb_name = args.get("emb_name")
+            
+            return MolGPSEmbedder(
+                all_labels=cov_list,
+                emb_name=emb_name,
+                cache_dir=args.get("molgps_cache_dir", "/rxrx/data/valence/pef/molgps"),
+            )
+        
+        raise ValueError(f"Unknown embedder type: {embedder_type}")
 
     def get_output_dims(self) -> dict[str, int]:
         return dict(self._output_dims)
+
+    def _call_embedder(self, embedder: nn.ModuleDict, data) -> torch.Tensor:
+        return torch.cat([m(data) for m in embedder.values()], dim=-1)
 
     def forward(self, pre_embedding_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         embedding_dict = {}
         for input_name in ["time", "xt", ROUTING, ASSAY, CELL_TYPE, EXPERIMENT, WELL]:
             if input_name in self.embedder_dict:
-                embedding_dict[input_name] = self.embedder_dict[input_name](pre_embedding_dict[input_name])
+                embedding_dict[input_name] = self._call_embedder(
+                    self.embedder_dict[input_name],
+                    pre_embedding_dict[input_name],
+                )
 
         batched_gene_perts = []
         for perts in pre_embedding_dict[GENE_PERT]:
@@ -103,9 +147,9 @@ class EmbeddingModule(nn.Module):
             batched_mol_perts.extend([p[1] for p in perts] + [EMPTY] * (3 - length))
             batched_mol_doses.extend([p[2] for p in perts] + [EMPTY] * (3 - length))
 
-        embedded_gene_perts = self.embedder_dict[GENE_PERT](batched_gene_perts)
-        embedded_mol_perts = self.embedder_dict[MOL_PERT](batched_mol_perts)
-        embedded_mol_doses = self.embedder_dict[DOSE](batched_mol_doses)
+        embedded_gene_perts = self._call_embedder(self.embedder_dict[GENE_PERT], batched_gene_perts)
+        embedded_mol_perts = self._call_embedder(self.embedder_dict[MOL_PERT], batched_mol_perts)
+        embedded_mol_doses = self._call_embedder(self.embedder_dict[DOSE], batched_mol_doses)
 
         embedding_dict[GENE_PERT] = embedded_gene_perts.view(3, -1, embedded_gene_perts.size(-1))
         embedding_dict[MOL_PERT] = embedded_mol_perts.view(3, -1, embedded_mol_perts.size(-1))
@@ -142,114 +186,12 @@ class ConditioningMLP(nn.Module):
             if hidden_dim != embedding_dim:
                 self.proj_dict[input_type] = nn.Linear(embedding_dim, hidden_dim)
 
-        mol_mlp_layers = [
-            MLPBlock(
-                in_dim=3*hidden_dim,
-                out_dim=hidden_dim,
-            ),
-            MLPBlock(
-                in_dim=hidden_dim,
-                out_dim=hidden_dim,
-            )
-        ]
-        self.mol_mlp = nn.Sequential(*mol_mlp_layers)
-
-        gene_mlp_layers = [
-            MLPBlock(
-                in_dim=3*hidden_dim,
-                out_dim=hidden_dim,
-            ),
-            MLPBlock(
-                in_dim=hidden_dim,
-                out_dim=hidden_dim,
-            )
-        ]
-        self.gene_mlp = nn.Sequential(*gene_mlp_layers)
-
-        mlp_xt_layers = [
-            MLPBlock(
-                in_dim=2*hidden_dim,
-                out_dim=hidden_dim,
-            )
-        ]
-        for _ in range(pre_layers - 2):
-            mlp_xt_layers.append(
-                MLPBlock(
-                    in_dim=hidden_dim,
-                    out_dim=hidden_dim,
-                )
-            )
-
-        mlp_xt_layers.append(
-            MLPBlock(
-                in_dim=hidden_dim,
-                out_dim=latent_dim,
-            )
-        )
-        self.mlp_xt = nn.Sequential(*mlp_xt_layers)
-
-        mlp_p_layers = [
-            MLPBlock(
-                in_dim=3*hidden_dim,
-                out_dim=hidden_dim,
-            )
-        ]
-        for _ in range(pre_layers - 2):
-            mlp_p_layers.append(
-                MLPBlock(
-                    in_dim=hidden_dim,
-                    out_dim=hidden_dim,
-                )
-            )
-        mlp_p_layers.append(
-            MLPBlock(
-                in_dim=hidden_dim,
-                out_dim=latent_dim,
-            )
-        )
-        self.mlp_p = nn.Sequential(*mlp_p_layers)
-
-        mlp_c_layers = [
-            MLPBlock(
-                in_dim=3*hidden_dim,
-                out_dim=hidden_dim,
-            )
-        ]
-        for _ in range(pre_layers - 2):
-            mlp_c_layers.append(
-                MLPBlock(
-                    in_dim=hidden_dim,
-                    out_dim=hidden_dim,
-                )
-            )
-        mlp_c_layers.append(
-            MLPBlock(
-                in_dim=hidden_dim,
-                out_dim=latent_dim,
-            )
-        )
-        self.mlp_c = nn.Sequential(*mlp_c_layers)
-        
-        post_mlp_layers = [  # Initial dropout before first layer
-            MLPBlock(
-                in_dim=3*latent_dim,
-                out_dim=hidden_dim,
-            )
-        ]
-        for _ in range(post_layers - 2):
-            post_mlp_layers.append(
-                MLPBlock(
-                    in_dim=hidden_dim,
-                    out_dim=hidden_dim,
-                )
-            )
-        post_mlp_layers.append(
-            MLPBlock(
-                in_dim=hidden_dim,
-                out_dim=data_dim,
-            )
-        )
-        self.post_mlp = nn.Sequential(*post_mlp_layers)
+        self.mol_mlp = _mlp(3 * hidden_dim, hidden_dim, hidden_dim)
+        self.gene_mlp = _mlp(3 * hidden_dim, hidden_dim, hidden_dim)
+        self.mlp_xt = _mlp(2 * hidden_dim, hidden_dim, latent_dim, pre_layers - 2)
+        self.mlp_p = _mlp(3 * hidden_dim, hidden_dim, latent_dim, pre_layers - 2)
+        self.mlp_c = _mlp(3 * hidden_dim, hidden_dim, latent_dim, pre_layers - 2)
+        self.post_mlp = _mlp(3 * latent_dim, hidden_dim, data_dim, post_layers - 2)
 
     def _project_embeddings(self, embedding_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """First step of conditioning: align all embedding dims to hidden_dim."""
