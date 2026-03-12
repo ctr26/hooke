@@ -172,7 +172,9 @@ def write_predictions_to_vcb_format(
         out_pos = np.searchsorted(split_indices, obs_idx)
         if out_pos >= len(features_split):
             raise IndexError(f"obs_idx {obs_idx} not in split_indices")
-        features_split[out_pos, :] = pred_by_obs_idx[obs_idx]
+        
+        # Clamp predictions to 0 to avoid negative values.
+        features_split[out_pos, :] = np.maximum(pred_by_obs_idx[obs_idx], 0)
 
     z = zarr.create_array(
         store=str(out_dir / "features.zarr"),
