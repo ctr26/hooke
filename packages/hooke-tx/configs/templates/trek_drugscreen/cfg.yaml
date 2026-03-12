@@ -33,13 +33,13 @@ task:
   #   mol_only: true
   # routing:
   #   gene_mol:
-  #     empty: 0.5
+  #     negative_control: 0.5
   #     gene_only: 0.5
   #   mol_mol:
-  #     empty: 0.5
+  #     negative_control: 0.5
   #     mol_only: 0.5
   #   gene_gene:
-  #     empty: 0.5
+  #     negative_control: 0.5
   #     gene_only: 0.5
 
   # drug screen
@@ -51,13 +51,13 @@ task:
     mol_only: true
   routing:
     gene_mol:
-      empty: 0.0
+      negative_control: 0.0
       gene_only: 1.0
     mol_mol:
-      empty: 0.0
+      negative_control: 0.0
       mol_only: 1.0
     gene_gene:
-      empty: 0.0
+      negative_control: 0.0
       gene_only: 1.0
 
 model:

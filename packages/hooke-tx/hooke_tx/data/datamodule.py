@@ -17,7 +17,7 @@ from loguru import logger
 from torch.utils.data import DataLoader
 
 from hooke_tx.data.constants import DATA_SOURCES
-from hooke_tx.data.constants import ASSAY, CELL_TYPE, EXPERIMENT, WELL, PERTURBATIONS, GENE_PERT, EFFECT_CLASS, MOL_PERT, DOSE, ROUTING, EMPTY, GENE_ONLY, MOL_ONLY
+from hooke_tx.data.constants import ASSAY, CELL_TYPE, EXPERIMENT, WELL, PERTURBATIONS, GENE_PERT, EFFECT_CLASS, MOL_PERT, DOSE, ROUTING, NEG_CONTROL
 from hooke_tx.data.dataset import TaskDataset
 
 
@@ -216,7 +216,7 @@ class DataModule(pl.LightningDataModule):
 
         covariates_dict[ROUTING] = (
             [f"noise:{s}" for s in possible_target_states]
-            + [f"{EMPTY}:{s}" for s in possible_target_states]
+            + [f"{NEG_CONTROL}:{s}" for s in possible_target_states]
             + [f"genetic:{s}" for s in possible_target_states[2:]]
             + [f"compound:{s}" for s in possible_target_states[-1:]]
         ) + [f"genetic:{s}" for s in possible_target_states[2:]] + [f"compound:{s}" for s in possible_target_states[-1:]]

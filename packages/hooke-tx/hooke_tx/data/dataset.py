@@ -1,7 +1,6 @@
 from typing import Any
 
 from tqdm import tqdm
-from loguru import logger
 
 import zarr
 import polars as pl
@@ -9,7 +8,7 @@ import numpy as np
 import random
 from torch.utils.data import Dataset
 
-from hooke_tx.data.constants import PERTURBATIONS, GENE_PERT, MOL_PERT, CONTEXT, CELL_TYPE, EXPERIMENT, WELL, EMPTY, NEG_CONTROL, POS_CONTROL, GENE_ONLY, MOL_ONLY, MULTI_PERT
+from hooke_tx.data.constants import PERTURBATIONS, GENE_PERT, MOL_PERT, CONTEXT, CELL_TYPE, EXPERIMENT, WELL, NEG_CONTROL, POS_CONTROL, GENE_ONLY, MOL_ONLY, MULTI_PERT
 
 
 class TaskDataset(Dataset):
@@ -43,13 +42,13 @@ class TaskDataset(Dataset):
 
         self.base_state_indices_cache = {
             CONTEXT: {},
-            EMPTY: {},
+            NEG_CONTROL: {},
             GENE_ONLY: {},
             MOL_ONLY: {},
         }
         self.base_state_cache = {
             CONTEXT: {},
-            EMPTY: {},
+            NEG_CONTROL: {},
             GENE_ONLY: {},
             MOL_ONLY: {},
         }
@@ -118,9 +117,9 @@ class TaskDataset(Dataset):
                 shared_indices = np.flatnonzero(context_mask)
                 self.indices_cache[src][(c, e)] = shared_indices
 
-            if base_state_type == EMPTY:
-                empty_indices = np.flatnonzero(np.atleast_1d(self.metadata_dict[src][EMPTY]))
-                selected_indices = np.intersect1d(shared_indices, empty_indices)
+            if base_state_type == NEG_CONTROL:
+                neg_control_indices = np.flatnonzero(np.atleast_1d(self.metadata_dict[src][NEG_CONTROL]))
+                selected_indices = np.intersect1d(shared_indices, neg_control_indices)
             elif base_state_type == GENE_ONLY:
                 gene_s = random.choice(metadata[GENE_PERT])
                 gene_key = (gene_s[1], gene_s[2])
@@ -156,35 +155,35 @@ class TaskDataset(Dataset):
         Samples how to reteive the base state.
         """
         base_state_hash = (src, metadata[CELL_TYPE], metadata[EXPERIMENT], metadata[WELL])
-        base_state_id = EMPTY
+        base_state_id = NEG_CONTROL
 
         if metadata[NEG_CONTROL] or metadata[POS_CONTROL] or metadata[GENE_ONLY] or metadata[MOL_ONLY]:
-            base_state_type = EMPTY
+            base_state_type = NEG_CONTROL
             
             return base_state_type, base_state_hash, base_state_id
         elif metadata[MULTI_PERT]:
             if metadata[GENE_ONLY]:
-                p_from_empty, p_from_gene = self.routing_args["gene_gene"][EMPTY], self.routing_args["gene_gene"][GENE_ONLY]
+                p_from_neg_ctrl, p_from_gene = self.routing_args["gene_gene"][NEG_CONTROL], self.routing_args["gene_gene"][GENE_ONLY]
                 
-                base_state_type = np.random.choice([EMPTY, GENE_ONLY], p=[p_from_empty, p_from_gene])
+                base_state_type = np.random.choice([NEG_CONTROL, GENE_ONLY], p=[p_from_neg_ctrl, p_from_gene])
 
                 if base_state_type == GENE_ONLY:
                     base_state_gene = random.choice(metadata[GENE_PERT])
                     base_state_hash = base_state_hash + (base_state_gene[1], base_state_gene[2])
                     base_state_id = "genetic"
             elif metadata[MOL_ONLY]:
-                p_from_empty, p_from_mol = self.routing_args["mol_mol"][EMPTY], self.routing_args["mol_mol"][MOL_ONLY]
+                p_from_neg_ctrl, p_from_mol = self.routing_args["mol_mol"][NEG_CONTROL], self.routing_args["mol_mol"][MOL_ONLY]
                 
-                base_state_type = np.random.choice([EMPTY, MOL_ONLY], p=[p_from_empty, p_from_mol])
+                base_state_type = np.random.choice([NEG_CONTROL, MOL_ONLY], p=[p_from_neg_ctrl, p_from_mol])
 
                 if base_state_type == MOL_ONLY:
                     base_state_mol = random.choice(metadata[MOL_PERT])
                     base_state_hash = base_state_hash + (base_state_mol[1], base_state_mol[2],)
                     base_state_id = "compound"
             else:
-                p_from_empty, p_from_gene = self.routing_args["gene_mol"][EMPTY], self.routing_args["gene_mol"][GENE_ONLY]
+                p_from_neg_ctrl, p_from_gene = self.routing_args["gene_mol"][NEG_CONTROL], self.routing_args["gene_mol"][GENE_ONLY]
 
-                base_state_type = np.random.choice([EMPTY, GENE_ONLY], p=[p_from_empty, p_from_gene])
+                base_state_type = np.random.choice([NEG_CONTROL, GENE_ONLY], p=[p_from_neg_ctrl, p_from_gene])
                 
                 if base_state_type == GENE_ONLY:
                     base_state_gene = random.choice(metadata[GENE_PERT])
