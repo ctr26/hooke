@@ -50,5 +50,5 @@ This repo provides a brand new **routing mechanic** that allows us to learn tran
 
 This not only allows us to train in a **drugscreen** and **cross cell type settings** but also mixtures of both or setups beyond our current use cases.
 
-<img src="external/visuals/routing-1.png" alt="Alt text" width="350"> <img src="external/visuals/routing-2.png" alt="Alt text" width="350">
+<img src="assets/visuals/routing-1.png" alt="" width="380"> <img src="assets/visuals/routing-2.png" alt="" width="380">
 
