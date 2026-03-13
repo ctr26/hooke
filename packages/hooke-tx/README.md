@@ -43,3 +43,12 @@ A sweep ID will be returned in the terminal. Copy it into the launch script (`la
 ```bash
 sbatch launch/sweep.sh
 ```
+
+## Data handling
+
+This repo provides a brand new **routing mechanic** that allows us to learn transitions between flexibly configurable start and end states by specifying probabilities for which start state to sample given a given end state.
+
+This not only allows us to train in a **drugscreen** and **cross cell type settings** but also mixtures of both or setups beyond our current use cases.
+
+<img src="external/visuals/routing-1.png" alt="Alt text" width="350"> <img src="external/visuals/routing-2.png" alt="Alt text" width="350">
+
