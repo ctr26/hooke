@@ -114,7 +114,7 @@ eval:
   ema: ${trainer.ema.enable}
   
   # Use VCB evaluation instead of built-in metrics (temp dir, cleaned up after)
-  vcb: true
+  vcb: false
   vcb_dataset_path: /rxrx/data/valence/internal_benchmarking/vcds1/drugscreen__trekseq__v1_1
   vcb_split_path: /rxrx/data/valence/internal_benchmarking/vcb/splits/drugscreen__trekseq__v1_1/split_compound_random__v1.json
 

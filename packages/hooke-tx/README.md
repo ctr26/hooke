@@ -39,6 +39,8 @@ The app uses Hydra with the `configs/templates/trek_drugscreen/cfg.yaml` templat
 python main.py trainer.max_epochs=1 trainer.batch_size_train=16
 ```
 
+To use `vcb` for eval, add `eval.vcb=true` to the command.
+
 ## Running a sweep
 
 From the repo root, initialize the sweep
