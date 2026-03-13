@@ -1,8 +1,8 @@
 import numpy as np
-import datamol as dm
 
-from rdkit.Chem import MolFromSmiles, MolToInchiKey, SaltRemover, rdFingerprintGenerator
+from rdkit.Chem import MolFromSmiles, MolToInchiKey, MolToSmiles, SaltRemover, rdFingerprintGenerator
 from rdkit.Chem.MolStandardize import rdMolStandardize
+from rdkit import DataStructs
 
 
 def standardize_mol(
@@ -37,16 +37,16 @@ def standardize_mol(
 
 
 def standardize_smiles(smiles: str, skip_list: list[str] = [], kekulize: bool = True, ordered: bool = True) -> str | None:
-    """Standardize SMILES using datamol with intelligent salt removal."""
+    """Standardize SMILES using RDKit with intelligent salt removal."""
     if smiles in skip_list:
         return smiles
 
     if not smiles:
         return None
     try:
-        mol = dm.to_mol(smiles)
+        mol = MolFromSmiles(smiles)
         mol = standardize_mol(mol)
-        return dm.to_smiles(mol, kekulize=kekulize, ordered=ordered) if mol else None
+        return MolToSmiles(mol, kekuleSmiles=kekulize) if mol else None
     except Exception as e:
         import logging
 
@@ -81,7 +81,10 @@ def compute_ecfp(smiles: str, embedding_dim: int = 1024, radius: int = 2) -> np.
         mgen = rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=embedding_dim)
         fp = mgen.GetFingerprint(mol)
         
-        return np.array(fp, dtype=np.float32)
+        arr = np.zeros(embedding_dim, dtype=np.float32)
+        DataStructs.ConvertToNumpyArray(fp, arr)
+        
+        return arr
     
     except Exception:
         return None

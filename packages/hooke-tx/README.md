@@ -3,11 +3,20 @@ Repository for Transcriptomics perturbation prediction
 
 ## Setup
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.10–3.12 (PyG wheels do not support 3.13 yet).
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.13. PyTorch 2.8+cu126 and PyG wheels are used.
 
 ```bash
 # Install dependencies into .venv
 uv sync
+```
+
+For VCB evaluation, install the optional extra:
+
+```bash
+mkdir -p external
+git clone git@github.com:valence-labs/vcb.git -b main external/vcb
+
+uv sync --extra vcb
 ```
 
 Activate the environment:

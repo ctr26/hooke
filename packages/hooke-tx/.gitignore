@@ -4,7 +4,8 @@
 .vscode/
 wandb/
 
-external/
+external/*
+!external/vcb/
 
 outputs/
 outputs_sweep/

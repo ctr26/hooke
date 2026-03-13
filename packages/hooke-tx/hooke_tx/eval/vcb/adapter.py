@@ -8,7 +8,6 @@ only the fold.test portion of features.zarr with our predictions.
 from __future__ import annotations
 
 import shutil
-import sys
 import tempfile
 import uuid
 from pathlib import Path
@@ -21,6 +20,19 @@ import zarr
 
 if TYPE_CHECKING:
     from hooke_tx.data.dataset import TaskDataset
+
+
+def _import_vcb():
+    """Lazy import of vcb. Raises clear error if vcb extra is not installed."""
+    try:
+        from vcb.data_models.split import Split
+        from vcb._cli.evaluate.tx_cli import tx_evaluate_cli
+        
+        return Split, tx_evaluate_cli
+    except ImportError as e:
+        raise ImportError(
+            "VCB evaluation requires the vcb extra. Install with: uv sync --extra vcb"
+        ) from e
 
 
 class VcbEvalCache:
@@ -68,8 +80,7 @@ def build_vcb_eval_cache(
     use_validation_split: bool = True,
 ) -> VcbEvalCache:
     """Build cache of static data for VCB evaluation. Call once at start of training."""
-    _ensure_vcb_in_path()
-    from vcb.data_models.split import Split
+    Split, _ = _import_vcb()
 
     with open(selected_ensembl_gene_ids_path) as f:
         selected_ensembl_gene_ids = [line.strip() for line in f if line.strip()]
@@ -113,13 +124,6 @@ def build_vcb_eval_cache(
         features_base=features_base,
         gene_indices=gene_indices,
     )
-
-
-def _ensure_vcb_in_path() -> None:
-    """Add external/vcb to sys.path if needed."""
-    vcb_root = Path(__file__).resolve().parents[3] / "external" / "vcb"
-    if vcb_root.exists() and str(vcb_root) not in sys.path:
-        sys.path.insert(0, str(vcb_root))
 
 
 def _get_dataset_paths(dataset_path: Path) -> tuple[Path, Path, Path]:
@@ -230,8 +234,7 @@ def write_predictions_to_vcb_format(
             raise ValueError(
                 "selected_ensembl_gene_ids_path is required when cache is not provided."
             )
-        _ensure_vcb_in_path()
-        from vcb.data_models.split import Split
+        Split, _ = _import_vcb()
 
         with open(selected_ensembl_gene_ids_path) as f:
             selected_ensembl_gene_ids = [line.strip() for line in f if line.strip()]
@@ -314,8 +317,7 @@ def evaluate_with_vcb(
     Call this after write_predictions_to_vcb_format. Requires ground truth
     and split in VCB format.
     """
-    _ensure_vcb_in_path()
-    from vcb._cli.evaluate.tx_cli import tx_evaluate_cli
+    _, tx_evaluate_cli = _import_vcb()
 
     return tx_evaluate_cli(
         predictions_path=predictions_path,
