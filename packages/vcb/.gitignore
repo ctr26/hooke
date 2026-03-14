@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Pytest-cov
+.coverage
+coverage.xml
+
+
+# Since we often store these results in the working directory, we don't want to commit them
+results/
+splits/
+*.jpg

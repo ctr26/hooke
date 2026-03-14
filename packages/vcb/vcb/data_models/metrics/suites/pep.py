@@ -1,0 +1,82 @@
+from typing import ClassVar, Literal
+
+import polars as pl
+
+from vcb.data_models.metrics.metric_info import MinimalMetricInfo
+from vcb.data_models.metrics.suite import MetricSuite
+from vcb.data_models.task.base import TaskAdapter
+from vcb.metrics.distributional.mmd import compute_e_distance
+from vcb.metrics.simple import cosine, cosine_delta, mse, pearson, pearson_delta
+from vcb.utils import predicate_group_by
+
+
+class PEPMetricInfo(MinimalMetricInfo):
+    """
+    Perturbation effect prediction metric metadata.
+    """
+
+    is_distributional: bool = False
+    is_delta_metric: bool = False
+
+
+class PerturbationEffectPredictionSuite(MetricSuite):
+    """
+    Perturbation effect prediction metric suites.
+    """
+
+    kind: Literal["perturbation_effect_prediction"] = "perturbation_effect_prediction"
+
+    use_distributional_metrics: bool = True
+
+    _all_supported_metrics: ClassVar[dict[str, PEPMetricInfo]] = {
+        "edistance": PEPMetricInfo(fn=compute_e_distance, is_distributional=True),
+        "mse": PEPMetricInfo(fn=mse),
+        "pearson": PEPMetricInfo(fn=pearson),
+        "cosine": PEPMetricInfo(fn=cosine),
+        "pearson_delta": PEPMetricInfo(fn=pearson_delta, is_delta_metric=True),
+        "cosine_delta": PEPMetricInfo(fn=cosine_delta, is_delta_metric=True),
+    }
+
+    def evaluate(self, ground_truth: TaskAdapter, predictions: TaskAdapter) -> pl.DataFrame:
+        rows = []
+
+        # Groupby context and batch
+        groupby_cols = predictions.batch_groupby_cols + predictions.context_groupby_cols
+
+        for batch_context, batch_context_obs, batch_context_predicate in predicate_group_by(
+            predictions.all_perturbed_obs,
+            groupby_cols,
+            # NOTE (cwognum): This may seem like the wrong description, but it's actually correct.
+            # I place this description here so that it's visible in the top-level progress bar.
+            description=f"Computing {self.kind} suite per {predictions.perturbation_groupby_cols}",
+        ):
+            # Groupby metric
+            for perturbation, _, perturbation_predicate in predicate_group_by(
+                batch_context_obs, predictions.perturbation_groupby_cols
+            ):
+                metric_predicate = batch_context_predicate + perturbation_predicate
+
+                # Get all the data we need from the dataset
+                y_base = ground_truth.get_basal_states(*batch_context_predicate)
+                y_true = ground_truth.get_perturbed_states(*metric_predicate)
+                y_pred = predictions.get_perturbed_states(*metric_predicate)
+
+                for label, metric in self.metrics.items():
+                    if metric.is_distributional and not self.use_distributional_metrics:
+                        continue
+
+                    # Prepare arguments
+                    kwargs = {"y_pred": y_pred, "y_true": y_true, **metric.kwargs}
+                    if metric.is_delta_metric:
+                        kwargs["y_base"] = y_base
+
+                    if not metric.is_distributional:
+                        for key in ["y_pred", "y_true", "y_base"]:
+                            if key in kwargs:
+                                kwargs[key] = kwargs[key].mean(axis=0)
+
+                    # Compute score
+                    score = metric.fn(**kwargs)
+                    rows.append({"score": score, "metric": label, **batch_context, **perturbation})
+
+        return pl.DataFrame(rows)

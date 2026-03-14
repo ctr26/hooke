@@ -1,0 +1,64 @@
+[project]
+name = "vcb"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "loguru>=0.7.3",
+    "matplotlib>=3.10.7",
+    "numpy>=1.26.4",
+    "platformdirs>=4.5.1",
+    "polars>=1.33.0",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.12.0",
+    "scikit-learn>=1.7.1",
+    "scipy>=1.16.1",
+    "seaborn>=0.13.2",
+    "tqdm>=4.67.1",
+    "typer>=0.17.3",
+    "zarr>=3.1.2",
+]
+
+[build-system]
+requires = [
+    "setuptools",
+    "setuptools-scm",
+    "wheel",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vcb", "vcb.*"]
+exclude = []
+namespaces = false
+
+[tool.ruff]
+line-length = 110
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.12.11",
+]
+
+[project.scripts]
+vcb = "vcb.cli:app"
+
+[project.optional-dependencies]
+txam = [
+    "txam",
+    "torch",
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "--verbose --durations=10 --cov=vcb --cov-fail-under=50 --cov-report xml --cov-report term-missing"
+testpaths = ["tests"]
+pythonpath = "."
+filterwarnings = ["ignore::DeprecationWarning:jupyter_client.connect.*:"]
+
+[tool.uv.sources]
+txam = { git = "ssh://git@github.com/valence-labs/txam-inference" }
