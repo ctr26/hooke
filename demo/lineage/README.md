@@ -60,5 +60,25 @@ Change splits or conditioning → W&B tracks which checkpoints are stale.
 
 | File | Purpose |
 |------|---------|
-| `schema_step.py` | Full pipeline with splits + conditioning |
+| `weave_pipeline.py` | **W&B-native** — uses `@weave.op()` |
+| `schema_step.py` | Custom `@step` decorator version |
 | `artifacts.py` | W&B artifact helpers |
+
+## Recommended: Weave
+
+```python
+import weave
+
+weave.init("hooke")
+
+@weave.op()
+def pretrain_step(input: PretrainInput, output_dir: str) -> FinetuneInput:
+    # Weave auto-tracks inputs, outputs, code version
+    # Built-in caching — same inputs → cached result
+    return FinetuneInput(...)
+```
+
+```bash
+pip install weave
+python demo/lineage/weave_pipeline.py
+```
