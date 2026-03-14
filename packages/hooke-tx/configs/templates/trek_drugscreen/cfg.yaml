@@ -1,0 +1,145 @@
+constants:
+  seed: 42
+
+wandb:
+  project: Hooke-Tx
+  entity: valencelabs
+  name: trek_drugscreen_v1_1_fold_0
+
+data:
+  data_sources:
+    fit: drugscreen__trekseq__v1_1
+    validate: drugscreen__trekseq__v1_1
+    test: drugscreen__trekseq__v1_1
+    predict: ${data.data_sources.test}
+
+  cache_dir: /rxrx/scratch/hooke_tx
+  
+  sample_base_states: random
+  target_sum: 300000
+  log1p: true
+  embedder: null
+
+task: 
+  splits_path: configs/templates/trek_drugscreen/fold_0.json
+  selected_ensembl_gene_ids_path: configs/templates/selected_ens_ids.txt
+
+  # # balanced & diverse
+  # composition:
+  #   empty: false
+  #   neg_control: true
+  #   pos_control: true
+  #   gene_only: true
+  #   mol_only: true
+  # routing:
+  #   gene_mol:
+  #     negative_control: 0.5
+  #     gene_only: 0.5
+  #   mol_mol:
+  #     negative_control: 0.5
+  #     mol_only: 0.5
+  #   gene_gene:
+  #     negative_control: 0.5
+  #     gene_only: 0.5
+
+  # drug screen
+  composition:
+    empty: false
+    negative_control: false
+    positive_control: false
+    gene_only: false
+    mol_only: true
+  routing:
+    gene_mol:
+      negative_control: 0.0
+      gene_only: 1.0
+    mol_mol:
+      negative_control: 0.0
+      mol_only: 1.0
+    gene_gene:
+      negative_control: 0.0
+      gene_only: 1.0
+
+model:
+  embedding_args:
+    time:
+      - type: fourier
+        dim: 128
+    xt:
+      - type: identity
+    gene_pert: &one_hot
+      - type: one-hot
+        dim: 1024
+    effect_class: null
+    mol_pert:
+      - ecfp
+      - molgps:large-sphere/mpnn/3B_e50/1/task_heads-pcba_1328:0
+    concentration: *one_hot
+    assay_type: null
+    routing: *one_hot
+    cell_type: *one_hot
+    experiment_label: *one_hot
+    well_address: *one_hot
+  conditioning_args:
+    type: mlp
+    hidden_dim: 128
+    latent_dim: 128
+    pre_layers: 2
+    post_layers: 2
+  generation_args:
+    type: flow
+    flow: D2D
+    guidance_strength: 1.0
+
+  
+trainer:
+  num_workers: 0
+  lr: 1e-4
+  weight_decay: 1e-4
+  max_grad_norm: 1.0
+  batch_size_train: 32
+  batch_size_eval: 8
+  max_epochs: 10
+  warmup_epochs: 1
+  gradient_accumulation_steps: 1
+  scheduler: null
+  ema:
+    enable: false
+    decay: 0.999
+
+eval:
+  check_val_every_n_epoch: 1
+  val_check_interval: null  # overrides every_n_epochs when set
+  base: true
+  ema: ${trainer.ema.enable}
+  
+  # Use VCB evaluation instead of built-in metrics (temp dir, cleaned up after)
+  vcb: false
+  vcb_dataset_path: /rxrx/data/valence/internal_benchmarking/vcds1/drugscreen__trekseq__v1_1
+  vcb_split_path: /rxrx/data/valence/internal_benchmarking/vcb/splits/drugscreen__trekseq__v1_1/split_compound_random__v1.json
+
+metrics:
+  aggr:
+    - mae
+    - mse
+    - pearson
+  dist:
+    - mmd
+
+compute:
+  accelerator: auto
+  devices: auto
+  strategy: auto  # ddp when multiple GPUs
+  precision: 32
+
+checkpoint:
+  enable: false
+  every_n_evals: 1
+  types:
+    base: true
+    ema: ${trainer.ema.enable}
+  save_last: false
+  save_top_k: 0
+  monitor: null
+  dirpath: null
+  filename: '{epoch}'

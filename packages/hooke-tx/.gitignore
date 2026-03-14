@@ -1,0 +1,14 @@
+**/__pycache__/
+*.py[cod]
+**/*.py[cod]
+.vscode/
+wandb/
+
+external/*
+!external/vcb/
+
+outputs/
+outputs_sweep/
+
+loc-*
+tmp-*

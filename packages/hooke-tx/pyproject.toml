@@ -1,0 +1,87 @@
+[project]
+name = "hooke-tx"
+version = "0.1.0"
+description = "Transcriptomics perturbation prediction"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  # Core: torch + geometric (pin torch 2.8 to match PyG cu126 wheels)
+  "torch>=2.8,<2.9",
+  "torchvision",
+  "torchaudio",
+  "torch-geometric",
+  "torch-scatter==2.1.2+pt28cu126",
+  "torch-sparse==0.6.18+pt28cu126",
+  "torch-cluster==1.6.3+pt28cu126",
+  "torch-spline-conv==1.2.2+pt28cu126",
+  "pyg-lib==0.5.0+pt28cu126",
+  # Training & experiment
+  "lightning>=2.0",
+  "hydra-core>=1.3",
+  "hydra-submitit-launcher",
+  "wandb",
+  "torchmetrics",
+  "torch-optimizer",
+  # Scientific stack
+  "numpy",
+  "scipy",
+  "pandas",
+  "polars",
+  "matplotlib",
+  "seaborn",
+  "scikit-learn",
+  "h5py",
+  "zarr>=3",
+  "einops",
+  "tqdm",
+  "pyyaml",
+  "toml",
+  "python-dotenv",
+  "rich",
+  "joblib",
+  "omegaconf",
+  "pydantic-settings",
+  "networkx",
+  # Flow matching
+  "torchdiffeq",
+  "torch-ema",
+  "geomloss",
+  "diffusers",
+  # Chemistry
+  "rdkit",
+  "selfies",
+  "safe-mol",
+  # Transcriptomics
+  "scanpy",
+  "anndata",
+  # Viz / utils
+  "plotly",
+  "umap-learn",
+  "e3nn",
+  "ipykernel",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.11",
+  "mypy>=1.0",
+  "pre-commit>=4",
+]
+vcb = ["vcb"]
+
+[tool.uv]
+find-links = [
+  "https://data.pyg.org/whl/torch-2.8.0+cu126.html",
+]
+
+[tool.uv.sources]
+vcb = { path = "external/vcb" }
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
