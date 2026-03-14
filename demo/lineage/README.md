@@ -1,51 +1,49 @@
 # Schema-Governed Pipeline with W&B Lineage
 
-## Pattern
+## Core Pattern
 
-Each step has:
-- **Pydantic schema** defining outputs
-- **`@step` decorator** logging to W&B
-- **Typed input** from previous step
+**Each step returns the next step's input schema.**
+
+```
+conditioning_step() → PretrainInput
+pretrain_step(PretrainInput) → FinetuneInput
+finetune_step(FinetuneInput) → EvalInput
+eval_step(EvalInput) → Result
+```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `schema_step.py` | Core pattern: schemas + decorator + pipeline |
+| `schema_step.py` | Core pattern: schemas + @step decorator + pipeline |
 | `artifacts.py` | Low-level W&B artifact helpers |
-| `conditioning_example.py` | Example: conditioning update cascade |
-| `pipeline_example.py` | Simple pipeline example |
 
 ## Quick Start
 
 ```bash
-# Run schema-governed pipeline
 python demo/lineage/schema_step.py
-
-# Run conditioning update example
-python demo/lineage/conditioning_example.py
 ```
 
-## Schema Example
+## Example
 
 ```python
-class PretrainOutput(BaseModel):
+class FinetuneInput(BaseModel):
+    """pretrain_step returns this."""
     checkpoint_path: str
-    conditioning: ConditioningOutput  # Previous step embedded
+    cell_types: list[str]
     step: int
-    loss: float
 
-@step(PretrainOutput, artifact_type="model")
-def pretrain_step(conditioning: ConditioningOutput, ...) -> PretrainOutput:
-    ...
+@step(artifact_type="model")
+def pretrain_step(input: PretrainInput, output_dir: Path) -> FinetuneInput:
+    return FinetuneInput(
+        checkpoint_path=str(ckpt),
+        cell_types=input.cell_types,
+        step=200000,
+    )
+
+# Pipeline: direct typed chaining
+pretrain_in: PretrainInput = conditioning_step(...)
+finetune_in: FinetuneInput = pretrain_step(pretrain_in, ...)
 ```
 
-## Flow
-
-```
-ConditioningOutput → PretrainOutput → FinetuneOutput
-       ↓                   ↓                ↓
-   W&B artifact       W&B artifact      W&B artifact
-```
-
-Each artifact contains schema metadata + embedded previous outputs.
+Output IS next input. No dict validation needed.
