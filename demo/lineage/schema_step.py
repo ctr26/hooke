@@ -1,25 +1,23 @@
-"""Schema-governed pipeline: output of step N = input of step N+1.
+"""Schema-governed pipeline: define input requirements, not outputs.
 
-Each step:
-1. Takes previous step's Output schema as input
-2. Returns its own Output schema
-3. @step decorator logs to W&B
+Each step defines what it NEEDS (input schema with non-optional fields).
+Previous step must produce data satisfying those requirements.
 """
 
 from pathlib import Path
-from typing import TypeVar
+from typing import Any
 
 import wandb
 from pydantic import BaseModel
 
 
 # =============================================================================
-# Schemas: Output of step N = Input of step N+1
+# Input schemas: what each step REQUIRES
 # =============================================================================
 
 
-class ConditioningOutput(BaseModel):
-    """conditioning_step output → pretrain_step input."""
+class PretrainInput(BaseModel):
+    """What pretrain_step needs."""
 
     cell_types: list[str]
     assay_types: list[str]
@@ -27,55 +25,42 @@ class ConditioningOutput(BaseModel):
     config_path: str
 
 
-class PretrainOutput(BaseModel):
-    """pretrain_step output → finetune_step input."""
+class FinetuneInput(BaseModel):
+    """What finetune_step needs."""
 
     checkpoint_path: str
-    cell_types: list[str]  # Carried forward for validation
+    cell_types: list[str]
     vocab_size: int
     step: int
-    loss: float
 
 
-class FinetuneOutput(BaseModel):
-    """finetune_step output → eval_step input."""
+class EvalInput(BaseModel):
+    """What eval_step needs."""
 
     checkpoint_path: str
-    base_step: int
     target_cell_type: str
-    epochs: int
-
-
-class EvalOutput(BaseModel):
-    """eval_step output → final result."""
-
-    checkpoint_path: str
-    metrics: dict[str, float]
 
 
 # =============================================================================
 # Step decorator
 # =============================================================================
 
-T = TypeVar("T", bound=BaseModel)
 
-
-def step(output_schema: type[T], artifact_type: str = "step_output"):
-    """Wrap step: validate output schema, log to W&B."""
+def step(artifact_type: str = "step_output"):
+    """Log step output to W&B."""
 
     def decorator(fn):
-        def wrapper(*args, **kwargs) -> T:
-            output: T = fn(*args, **kwargs)
+        def wrapper(*args, **kwargs) -> dict[str, Any]:
+            output = fn(*args, **kwargs)
 
-            # Log as W&B artifact with schema as metadata
             artifact = wandb.Artifact(
                 name=fn.__name__,
                 type=artifact_type,
-                metadata=output.model_dump(),
+                metadata=output,
             )
 
-            for field, value in output.model_dump().items():
-                if field.endswith("_path") and isinstance(value, str):
+            for key, value in output.items():
+                if key.endswith("_path") and isinstance(value, str):
                     path = Path(value)
                     if path.exists():
                         artifact.add_file(str(path))
@@ -89,105 +74,107 @@ def step(output_schema: type[T], artifact_type: str = "step_output"):
 
 
 # =============================================================================
-# Steps: input schema = previous output schema
+# Steps: validate input, return dict
 # =============================================================================
 
 
-@step(ConditioningOutput, artifact_type="config")
-def conditioning_step(output_dir: Path) -> ConditioningOutput:
-    """Produce conditioning config."""
+@step(artifact_type="config")
+def conditioning_step(output_dir: Path) -> dict:
+    """Produces data for PretrainInput."""
     import json
 
     config_path = output_dir / "conditioning.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        json.dumps({"cell_types": ["ARPE19", "HUVEC"], "vocab_size": 2048})
-    )
+    config_path.write_text(json.dumps({"cell_types": ["ARPE19", "HUVEC"]}))
 
-    return ConditioningOutput(
-        cell_types=["ARPE19", "HUVEC"],
-        assay_types=["cell_paint"],
-        vocab_size=2048,
-        config_path=str(config_path),
-    )
+    return {
+        "cell_types": ["ARPE19", "HUVEC"],
+        "assay_types": ["cell_paint"],
+        "vocab_size": 2048,
+        "config_path": str(config_path),
+    }
 
 
-@step(PretrainOutput, artifact_type="model")
-def pretrain_step(input: ConditioningOutput, output_dir: Path) -> PretrainOutput:
-    """Input: ConditioningOutput. Output: PretrainOutput."""
-    print(f"Building model with vocab_size={input.vocab_size}")
+@step(artifact_type="model")
+def pretrain_step(input: PretrainInput, output_dir: Path) -> dict:
+    """Requires: PretrainInput. Produces data for FinetuneInput."""
+    print(f"Building with vocab_size={input.vocab_size}")
 
     ckpt_path = output_dir / "checkpoint.pt"
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     ckpt_path.write_text("mock")
 
-    return PretrainOutput(
-        checkpoint_path=str(ckpt_path),
-        cell_types=input.cell_types,  # Carry forward
-        vocab_size=input.vocab_size,
-        step=200000,
-        loss=0.1,
-    )
+    return {
+        "checkpoint_path": str(ckpt_path),
+        "cell_types": input.cell_types,
+        "vocab_size": input.vocab_size,
+        "step": 200000,
+        "loss": 0.1,
+    }
 
 
-@step(FinetuneOutput, artifact_type="model")
-def finetune_step(
-    input: PretrainOutput, target_cell_type: str, output_dir: Path
-) -> FinetuneOutput:
-    """Input: PretrainOutput. Output: FinetuneOutput."""
-    assert target_cell_type in input.cell_types, f"{target_cell_type} not in vocab"
+@step(artifact_type="model")
+def finetune_step(input: FinetuneInput, target_cell_type: str, output_dir: Path) -> dict:
+    """Requires: FinetuneInput. Produces data for EvalInput."""
+    assert target_cell_type in input.cell_types
 
     ckpt_path = output_dir / "checkpoint.pt"
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     ckpt_path.write_text("mock finetuned")
 
-    return FinetuneOutput(
-        checkpoint_path=str(ckpt_path),
-        base_step=input.step,
-        target_cell_type=target_cell_type,
-        epochs=20,
-    )
+    return {
+        "checkpoint_path": str(ckpt_path),
+        "target_cell_type": target_cell_type,
+        "base_step": input.step,
+        "epochs": 20,
+    }
 
 
-@step(EvalOutput, artifact_type="metrics")
-def eval_step(input: FinetuneOutput) -> EvalOutput:
-    """Input: FinetuneOutput. Output: EvalOutput."""
-    return EvalOutput(
-        checkpoint_path=input.checkpoint_path,
-        metrics={"map_cosine": 0.85, "pearson": 0.72},
-    )
+@step(artifact_type="metrics")
+def eval_step(input: EvalInput) -> dict:
+    """Requires: EvalInput. Final output."""
+    return {
+        "checkpoint_path": input.checkpoint_path,
+        "metrics": {"map_cosine": 0.85, "pearson": 0.72},
+    }
 
 
 # =============================================================================
-# Pipeline: chain via matching schemas
+# Pipeline: validate at boundaries
 # =============================================================================
 
 
 def run_pipeline():
     """
-    conditioning_step() → ConditioningOutput
-                              ↓
-    pretrain_step(ConditioningOutput) → PretrainOutput
-                                            ↓
-    finetune_step(PretrainOutput) → FinetuneOutput
-                                        ↓
-    eval_step(FinetuneOutput) → EvalOutput
+    conditioning_step() → dict
+                           ↓ validate as PretrainInput
+    pretrain_step(PretrainInput) → dict
+                                    ↓ validate as FinetuneInput
+    finetune_step(FinetuneInput) → dict
+                                    ↓ validate as EvalInput
+    eval_step(EvalInput) → dict
     """
     output = Path("outputs/schema_demo")
 
     with wandb.init(project="hooke", job_type="conditioning"):
-        cond: ConditioningOutput = conditioning_step(output / "cond")
+        cond_data = conditioning_step(output / "cond")
 
     with wandb.init(project="hooke", job_type="pretrain"):
-        pretrain: PretrainOutput = pretrain_step(cond, output / "pretrain")
+        # Validate: does cond_data satisfy PretrainInput?
+        pretrain_in = PretrainInput(**cond_data)
+        pretrain_data = pretrain_step(pretrain_in, output / "pretrain")
 
     with wandb.init(project="hooke", job_type="finetune"):
-        finetune: FinetuneOutput = finetune_step(pretrain, "ARPE19", output / "ft")
+        # Validate: does pretrain_data satisfy FinetuneInput?
+        finetune_in = FinetuneInput(**pretrain_data)
+        finetune_data = finetune_step(finetune_in, "ARPE19", output / "ft")
 
     with wandb.init(project="hooke", job_type="eval"):
-        result: EvalOutput = eval_step(finetune)
+        # Validate: does finetune_data satisfy EvalInput?
+        eval_in = EvalInput(**finetune_data)
+        result = eval_step(eval_in)
 
-    print(f"Final: {result.metrics}")
+    print(f"Final: {result['metrics']}")
 
 
 if __name__ == "__main__":
