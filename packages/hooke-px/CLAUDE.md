@@ -1,0 +1,174 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+hooke-forge is a machine learning project that trains Diffusion Transformers on phenomics data using flow matching (linear interpolant). The project follows a standard `src`-layout with the main package in `src/hooke_forge/`.
+
+## Development Setup
+
+This project uses `uv` for Python environment management. Activate the environment with:
+
+```bash
+.venv/bin/activate
+```
+
+Install the package in development mode:
+
+```bash
+uv pip install -e .
+```
+
+## Core Architecture
+
+The project is organized into several key modules:
+
+- **model/**: Core model components including DiT architecture, flow matching, context encoders, and tokenizers
+- **training/**: Training orchestration with SLURM integration via submitit
+  - `state.py`: `TrainState` dataclass, `log()`, `set_metrics_log_path()` — shared training/eval state and logging
+  - `trainer.py`: `train()` — main training loop
+  - `train.py`: SLURM launcher for flow matching training
+  - `train_tx_ae.py`: SLURM launcher for Tx autoencoder training
+- **evaluation/**: Metrics and evaluation routines
+  - `metrics.py`: All metric primitives (FD, FD-sqrtm, FD-infinity, cosine similarity, PRDC, energy distance, retrieval)
+  - `px_metrics.py`: `evaluate_px`, `visualise_phenomics`, `compute_phenomics_metrics`
+  - `tx_metrics.py`: `evaluate_tx`
+  - `eval.py`: Offline checkpoint evaluation script with SLURM launcher
+- **data/**: Dataset loading for cell and treatment (Tx) data
+- **inference/**: Distributed inference pipeline with SLURM-based distributed execution
+- **utils/**: Shared utilities for distributed training, EMA, encoders, and profiling
+
+The core model is `JointFlowMatching` which supports multiple modalities (images and features) with shared context encoding and time embedding.
+
+## Common Commands
+
+### Training
+```bash
+# Direct module invocation
+python -m hooke_forge.training.train --help
+
+# Console script (after installation)
+hooke-train --flow_model.modality joint --launcher.cluster slurm --launcher.nodes 4
+```
+
+### Evaluation
+```bash
+# Evaluate saved checkpoints
+python -m hooke_forge.evaluation.eval --help
+hooke-eval
+```
+
+### Inference
+```bash
+# Run distributed inference
+python -m hooke_forge.inference.run_distributed --help
+hooke-infer
+
+# Single-node inference
+python -m hooke_forge.inference.run --help
+```
+
+### Helper Scripts
+Several bash scripts in `scripts/` provide common workflows:
+- `scripts/launch_eval.sh`: Launch distributed evaluation across multiple checkpoints
+- `scripts/launch_inference.sh`: Launch inference jobs
+- `scripts/test_adaptor_embedding.sh`: Test embedding components
+
+## Configuration System
+
+The project uses `ornamentalist` for automatic CLI generation from function signatures. Parameters are annotated with `ornamentalist.Configurable[default]` and exposed as `--group.param value` flags. This allows for hierarchical configuration without separate config files.
+
+Example usage patterns:
+- Flow model parameters: `--flow_model.modality joint --flow_model.tx_feature_dim 1024`
+- Launcher settings: `--launcher.cluster slurm --launcher.nodes 4 --launcher.gpus 8`
+- Data parameters: `--data.batch_size 32 --data.num_workers 8`
+- TxAM perceptual loss: `--txam_checkpoint_path /path/to/txam/checkpoint.pt`
+
+## TxAM Integration
+
+The project integrates TxAM (Transcriptomics Foundation Model) for perceptual loss computation during autoencoder training. The TxAMPerceptualLoss class uses the raw TxAM encoder PyTorch module to extract embeddings with full gradient support, enabling effective perceptual loss training.
+
+### TREK v1 Checkpoint
+
+The integration now uses the TREK v1 checkpoint by default, which provides significant improvements over previous versions:
+- **Input/Output genes**: 60,821 (comprehensive gene coverage)
+- **Embedding size**: 512
+- **Training dataset**: TREK 600k (600k transcriptomics samples from more relevant data)
+- **Model size**: ~1.2GB
+- **Path**: `/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt`
+
+This checkpoint provides better perceptual loss quality by using a model trained on more comprehensive and relevant transcriptomics data while maintaining full backward compatibility with existing workflows.
+
+### Implementation Details
+
+- **Direct PyTorch Integration**: Uses `get_encoder_module()` to access the raw PyTorch encoder
+- **Gradient Preservation**: Full gradient flow through TxAM embeddings for reconstructed data
+- **Manual Preprocessing**: Implements TxAM's normalize + log1p preprocessing in PyTorch
+- **Frozen TxAM Weights**: TxAM encoder parameters are frozen during training
+- **Gene Alignment**: Automatic reordering/padding of input genes to match TxAM model expectations
+
+### Configuration Options
+
+- `--txam_checkpoint_path`: Path to TxAM checkpoint file (default: "/rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_TREK_v1/checkpoint.pt")
+- `--txam_input_gene_names`: List of gene names in input data order for automatic alignment (optional, assumes correct order if not provided)
+
+### Setup Requirements
+
+1. **TxAM Package**: Ensure the `txam` package is available in your environment
+2. **Checkpoint Access**: Verify access to TxAM checkpoint files
+3. **GPU Memory**: TxAM encoder requires additional GPU memory during training
+
+### Usage in Training
+
+```bash
+# Train Tx autoencoder with TxAM perceptual loss (uses TREK v1 by default)
+hooke-train-tx-ae \
+  --lambda_perc 1.0 \
+  --output_dir outputs/tx_ae_with_txam_trek
+
+# Train with custom checkpoint path (for backward compatibility)
+hooke-train-tx-ae \
+  --txam_checkpoint_path /rxrx/data/valence/hooke/predict/txam_checkpoints/TxAM_v0.3.10.2/checkpoint.pt \
+  --lambda_perc 1.0 \
+  --output_dir outputs/tx_ae_with_txam_old
+
+# Test gradient flow with TREK v1
+python -m hooke_forge.model.tx_autoencoders
+
+# Train with gene alignment (if your data has different gene order)
+hooke-train-tx-ae \
+  --lambda_perc 1.0 \
+  --txam_input_gene_names '["GENE1", "GENE2", ...]' \
+  --output_dir outputs/tx_ae_with_gene_alignment
+```
+
+### Migration Notes
+
+- **Existing scripts**: Continue to work unchanged with TREK v1 benefits
+- **Custom checkpoints**: Use `--txam_checkpoint_path` to specify different checkpoint
+- **Backward compatibility**: Old checkpoints remain fully supported
+- **Performance**: TREK v1 may use slightly more GPU memory (~1.2GB vs ~718MB)
+
+## Development Workflow
+
+1. **Local Development**: Use `uv run` for running modules directly
+2. **SLURM Cluster**: The training system integrates with SLURM via submitit for distributed training
+3. **Experiment Tracking**: Uses Weights & Biases (wandb) for logging and tracking
+4. **Output Structure**: Training runs create numbered output directories in `outputs/` with checkpoints and logs
+
+## Key Dependencies
+
+- **torch**: Core deep learning framework
+- **diffusers**: Diffusion model utilities
+- **accelerate**: Distributed training acceleration
+- **submitit**: SLURM job submission
+- **ornamentalist**: Configuration management
+- **wandb**: Experiment tracking
+- **zarr**: Data storage format
+- **timm**: Vision model components
+- **txam**: TxAM encoder for perceptual loss computation
+
+## Testing
+
+No formal test suite exists. Testing is done via standalone scripts in `scripts/` directory, particularly `test_adaptor_embedding.sh` for component testing.
