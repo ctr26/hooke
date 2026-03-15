@@ -3,7 +3,7 @@
 import pytest
 
 from variants.schemas import DataConf, PipelineState
-from variants import nested, accumulator, functional_pipe, method_chain
+from variants import nested, accumulator, functional_pipe, method_chain, weave_refs
 
 
 class TestNested:
@@ -69,6 +69,25 @@ class TestMethodChain:
         result = method_chain.Pipeline().split().condition().pretrain()
         assert result.pretrain_checkpoint is not None
         assert result.metrics is None
+
+
+class TestWeaveRefs:
+    def test_full_chain(self):
+        cond = weave_refs.splits_step(DataConf())
+        pretrain = weave_refs.conditioning_step(cond)
+        finetune = weave_refs.pretrain_step(pretrain)
+        inference = weave_refs.finetuning_step(finetune)
+        ev = weave_refs.inference_step(inference)
+        result = weave_refs.eval_step(ev)
+        assert result.metrics["map_cosine"] == 0.85
+
+    def test_lineage_traversal(self):
+        cond = weave_refs.splits_step(DataConf())
+        pretrain = weave_refs.conditioning_step(cond)
+        finetune = weave_refs.pretrain_step(pretrain)
+        inference = weave_refs.finetuning_step(finetune)
+        ev = weave_refs.inference_step(inference)
+        assert ev.inference.finetuning.pretrain.conditioning.data.split_file == "data/splits/default.json"
 
 
 class TestAllVariantsAgree:
