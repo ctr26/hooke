@@ -1,0 +1,35 @@
+---
+description: TypeScript/JavaScript standards for hooke projects
+globs: ["*.ts", "*.tsx", "*.js", "*.jsx", "package.json", "tsconfig.json"]
+---
+
+# TypeScript Standards
+
+## Version
+- Node 20+ (LTS)
+- TypeScript 5+
+- ESM by default
+
+## Dependencies
+- Minimal, prefer built-in Node APIs
+- Zod for runtime validation
+- Infer TypeScript types from Zod schemas
+
+## Testing
+- Vitest for unit/integration tests
+- 80%+ coverage on core logic
+- React Testing Library for components
+
+## Style
+- ESLint + Prettier
+- Strict TypeScript (strict: true)
+- Explicit return types on public functions
+
+## Structure
+```
+src/
+    lib/
+    components/
+    routes/
+tests/
+```

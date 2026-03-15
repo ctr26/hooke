@@ -1,0 +1,51 @@
+---
+description: ML and Research engineering patterns
+globs: ["*.py", "configs/**", "*.yaml", "*.yml"]
+---
+
+# ML & Research Engineering
+
+## Audit-Readiness
+Every checkpoint must include: resolved config, git SHA, data version, timestamp.
+Every result regenerable from: git commit + config + data version + single command.
+
+## Configuration Management
+- Hydra-Zen (Python dataclasses) preferred over raw YAML
+- Config lifecycle: Development → Validation → Production (frozen)
+- Store resolved configs with every checkpoint
+
+## Experiment Tracking (W&B)
+- Initialize with: project, name, config, tags, git SHA
+- Log: hyperparams, metrics, artifacts, system info
+- Tag conventions: modality, architecture, experiment type, CV fold
+
+## Baselines First
+1. Establish floor (majority class, random, prior mean)
+2. Linear baseline (logistic regression, linear probe)
+3. Simple neural baseline (small MLP, 1-layer transformer)
+4. Document gaps (why is X% not enough?)
+Rule: No new architecture without baseline comparison.
+
+## Compute-Aware Design
+- Assume No QoS: any job can be killed at any time
+- Fail Early: validate config/data before GPU allocation
+- Resumable Checkpointing: save state every N steps
+- Small-Scale Pilots: test on 1% of data first
+
+## Data Pipeline
+- Two-stage: Offline task generation (parquet) + Runtime streaming (zarr)
+- Schema validation with Pydantic
+- Catch format errors early, not during training
+
+## Type Safety
+- Type hints everywhere with specific shapes
+- mypy --strict or ty check in CI
+
+## Testing
+- Unit tests for core logic (attention, data loading)
+- Smoke tests: overfit on tiny batch (should achieve < 0.1 loss)
+
+## Safety
+- DRY RUN for destructive operations
+- Audit trail: git SHA, resolved config, data version, random seed
+- Single reproducibility command

@@ -1,0 +1,49 @@
+---
+description: Python-specific standards for hooke projects
+globs: ["*.py", "pyproject.toml"]
+---
+
+# Python Standards
+
+## Version
+- 3.11+ for applications
+- 3.9+ for published libraries
+
+## Dependencies
+- Minimal, pinned versions in pyproject.toml
+- Use `uv` for package management
+- No separate requirements.txt — pyproject.toml is the single source
+
+## Validation
+- Pydantic for data boundaries (configs, API inputs, external data)
+- Type hints on all public APIs
+- dataclasses for internal-only structured data
+
+## Testing
+- pytest with pytest-cov
+- 80%+ coverage on core logic
+- Fixtures in conftest.py
+- Mark slow tests: @pytest.mark.slow
+
+## Style
+- Linting: `ruff check .`
+- Formatting: `ruff format .`
+- Type checking: `ty check src/`
+- Line length: 100
+
+## Structure
+```
+src/<package_name>/
+    __init__.py
+    ...
+tests/
+    conftest.py
+    test_*.py
+pyproject.toml
+```
+
+## CI
+- `ruff check .`
+- `ruff format --check .`
+- `ty check src/`
+- `pytest --cov`

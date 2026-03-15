@@ -1,0 +1,47 @@
+---
+description: General engineering standards for all hooke projects
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Engineering Standards
+
+## Defaults
+- Private repos by default
+- Fork → clone workflow
+- First commit: PROJECT_SPEC.md + standards files
+
+## Architecture
+- Cheap: minimize costs, use free tiers
+- Scalable: cloud-first, horizontal scaling
+- Low LOC: minimal code, maximum impact
+- Minimal deps: fewer dependencies = fewer vulnerabilities
+
+## Python
+- 3.11+ for apps, 3.9+ for libraries
+- Type hints on public APIs
+- Pydantic for data validation at boundaries
+
+## Quality
+- 80%+ test coverage on core logic
+- CI on every PR: lint + typecheck + test
+- Schemas at data boundaries
+
+## Safety
+- DRY RUN for cleanup operations
+- No auto-delete; explicit confirmation required
+- Prefer archive over delete
+- Log intent before executing
+
+## Model Selection
+- Opus: architecture, code review, novel problems
+- Sonnet: standard dev, features, docs (default)
+- Cheap: bulk, repetitive, formatting
+- Budget rule: reserve 10% for critical Opus decisions
+
+## Priority
+1. CI/CD setup
+2. Test infrastructure
+3. Core functionality
+4. Features
+5. Documentation
