@@ -140,12 +140,27 @@ class PipelineConfig(BaseModel):
 def run_pipeline(cfg: PipelineConfig) -> ResultsConf:
     weave.init(cfg.project)
 
+    # Each step's output is published as a named artifact.
+    # Downstream steps could consume via weave.ref("artifact-name:latest")
+    # instead of direct Python variable passing.
+
     cond_in = splits_step(DataConf())
+    weave.publish(cond_in, name="splits-output")
+
     pretrain_in = conditioning_step(cond_in)
+    weave.publish(pretrain_in, name="conditioning-output")
+
     finetune_in = pretrain_step(pretrain_in)
+    weave.publish(finetune_in, name="pretrain-output")
+
     inference_in = finetuning_step(finetune_in)
+    weave.publish(inference_in, name="finetuning-output")
+
     eval_in = inference_step(inference_in)
+    weave.publish(eval_in, name="inference-output")
+
     result = eval_step(eval_in)
+    weave.publish(result, name="results")
 
     print("Pipeline:")
     print(f"  splits_step(DataConf)              -> {type(cond_in).__name__}")
@@ -158,6 +173,7 @@ def run_pipeline(cfg: PipelineConfig) -> ResultsConf:
     print(f"Chain proof: pretrain_in.split_path == cond_in.split_path -> {pretrain_in.split_path == cond_in.split_path}")
     print(f"JSON roundtrip: {InferenceConf.model_validate_json(inference_in.model_dump_json()) == inference_in}")
     print(f"Weave project: {cfg.project}")
+    print(f"View lineage: https://wandb.ai/valencelabs/{cfg.project}/weave")
 
     return result
 
