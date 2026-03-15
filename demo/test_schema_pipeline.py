@@ -7,6 +7,7 @@ from schema_pipeline import (
     ConditioningOutput,
     EvalOutput,
     InferenceOutput,
+    PipelineConfig,
     PretrainOutput,
     SplitsOutput,
     conditioning_step,
@@ -45,6 +46,15 @@ class TestSchemaValidation:
             step=100, test_compounds=["c"],
         )
         assert PretrainOutput.model_validate_json(o.model_dump_json()) == o
+
+    def test_pipeline_config_defaults(self):
+        cfg = PipelineConfig()
+        assert cfg.output_dir == "outputs/demo"
+        assert cfg.project == "hooke-demo"
+
+    def test_pipeline_config_override(self):
+        cfg = PipelineConfig(output_dir="/tmp/run", project="test")
+        assert cfg.output_dir == "/tmp/run"
 
 
 # -- Schema chaining --

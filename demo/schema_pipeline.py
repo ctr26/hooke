@@ -2,11 +2,15 @@
 """Schema-governed pipeline demo.
 
 Each step returns the next step's input as a Pydantic schema.
-No external services, no torch, no W&B — pure schema chaining.
+Weave tracks lineage, hydra-zen provides CLI config.
 
     uv run python demo/schema_pipeline.py
+    uv run python demo/schema_pipeline.py --help
+    uv run python demo/schema_pipeline.py output_dir=/tmp/my_run
 """
 
+import weave
+from hydra_zen import builds, store, zen
 from pydantic import BaseModel
 
 
@@ -48,9 +52,10 @@ class EvalOutput(BaseModel):
     metrics: dict[str, float]
 
 
-# -- Steps --
+# -- Steps: @weave.op() for lineage tracking --
 
 
+@weave.op()
 def splits_step() -> SplitsOutput:
     return SplitsOutput(
         split_path="/data/splits/v1.json",
@@ -60,6 +65,7 @@ def splits_step() -> SplitsOutput:
     )
 
 
+@weave.op()
 def conditioning_step(input: SplitsOutput) -> ConditioningOutput:
     return ConditioningOutput(
         **input.model_dump(),
@@ -70,6 +76,7 @@ def conditioning_step(input: SplitsOutput) -> ConditioningOutput:
     )
 
 
+@weave.op()
 def pretrain_step(input: ConditioningOutput) -> PretrainOutput:
     return PretrainOutput(
         checkpoint_path="/checkpoints/pretrain_200k.pt",
@@ -80,6 +87,7 @@ def pretrain_step(input: ConditioningOutput) -> PretrainOutput:
     )
 
 
+@weave.op()
 def inference_step(input: PretrainOutput) -> InferenceOutput:
     return InferenceOutput(
         features_path="/outputs/features.npy",
@@ -87,6 +95,7 @@ def inference_step(input: PretrainOutput) -> InferenceOutput:
     )
 
 
+@weave.op()
 def eval_step(features_path: str, split_path: str) -> EvalOutput:
     return EvalOutput(metrics={"map_cosine": 0.85, "pearson": 0.72})
 
@@ -94,7 +103,14 @@ def eval_step(features_path: str, split_path: str) -> EvalOutput:
 # -- Pipeline --
 
 
-def run_pipeline():
+class PipelineConfig(BaseModel):
+    output_dir: str = "outputs/demo"
+    project: str = "hooke-demo"
+
+
+def run_pipeline(cfg: PipelineConfig) -> EvalOutput:
+    weave.init(cfg.project)
+
     splits = splits_step()
     cond = conditioning_step(splits)
     pretrain = pretrain_step(cond)
@@ -102,15 +118,24 @@ def run_pipeline():
     result = eval_step(inference.features_path, splits.split_path)
 
     print("Pipeline:")
-    print(f"  splits    → {type(splits).__name__}")
-    print(f"  condition → {type(cond).__name__}")
-    print(f"  pretrain  → {type(pretrain).__name__}")
-    print(f"  inference → {type(inference).__name__}")
-    print(f"  eval      → {result.metrics}")
+    print(f"  splits    -> {type(splits).__name__}")
+    print(f"  condition -> {type(cond).__name__}")
+    print(f"  pretrain  -> {type(pretrain).__name__}")
+    print(f"  inference -> {type(inference).__name__}")
+    print(f"  eval      -> {result.metrics}")
     print()
-    print(f"Chain proof: cond.split_path == splits.split_path → {cond.split_path == splits.split_path}")
+    print(f"Chain proof: cond.split_path == splits.split_path -> {cond.split_path == splits.split_path}")
     print(f"JSON roundtrip: {PretrainOutput.model_validate_json(pretrain.model_dump_json()) == pretrain}")
+    print(f"Weave project: {cfg.project}")
 
+    return result
+
+
+# -- Hydra-zen CLI --
+
+PipelineCfg = builds(PipelineConfig, populate_full_signature=True)
+store(PipelineCfg, name="pipeline")
+store.add_to_hydra_store()
 
 if __name__ == "__main__":
-    run_pipeline()
+    zen(run_pipeline).hydra_main(config_name="pipeline", config_path=None, version_base=None)
