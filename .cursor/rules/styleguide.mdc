@@ -1,0 +1,28 @@
+---
+description: How to query chunked style guides stored in .claude/styleguides/
+globs: [".claude/styleguides/**"]
+---
+
+# Querying Chunked Style Guides
+
+When working with code that has a style guide chunked in `.claude/styleguides/`:
+
+1. **Find relevant topics**: Read `_index.md` for topic → file mapping
+2. **Load specific chunks**: Read only the chunk files relevant to your task, not the whole guide
+3. **Check relationships**: Use `_graph.jsonl` to find related rules (APPLIES_TO, CONFLICTS_WITH)
+4. **Get context**: Read `_summary.md` for high-level overview of communities and key rules
+
+## Query Pattern
+
+```
+1. Grep _index.md for your topic keyword
+2. Read the matched chunk file(s)
+3. If the chunk references other entities, grep _graph.jsonl for relationships
+4. Apply the rules from the chunk to your code
+```
+
+## Do NOT
+
+- Read all chunk files at once (defeats the purpose of chunking)
+- Ignore the frontmatter entities (they're the query interface)
+- Modify chunk files directly (regenerate with /chunk-styleguide)
