@@ -17,7 +17,7 @@ from pydantic import BaseModel
 # -- Schemas: each describes the input to a step --
 
 
-class SplitsConf(BaseModel):
+class DataConf(BaseModel):
     split_file: str = "data/splits/default.json"
     output_dir: str = "outputs/splits"
 
@@ -40,12 +40,22 @@ class PretrainConf(BaseModel):
     conditioning_path: str
 
 
+class FinetuningConf(BaseModel):
+    checkpoint_path: str
+    cell_types: list[str]
+    vocab_size: int
+    step: int
+    test_compounds: list[str]
+    target_cell_type: str = "ARPE19"
+
+
 class InferenceConf(BaseModel):
     checkpoint_path: str
     cell_types: list[str]
     vocab_size: int
     step: int
     test_compounds: list[str]
+    target_cell_type: str
 
 
 class EvalConf(BaseModel):
@@ -62,7 +72,7 @@ class ResultsConf(BaseModel):
 
 
 @weave.op()
-def splits_step(input: SplitsConf) -> ConditioningConf:
+def splits_step(input: DataConf) -> ConditioningConf:
     return ConditioningConf(
         split_path=input.split_file,
         train_compounds=["cpd_001", "cpd_002", "cpd_003"],
@@ -83,13 +93,25 @@ def conditioning_step(input: ConditioningConf) -> PretrainConf:
 
 
 @weave.op()
-def pretrain_step(input: PretrainConf) -> InferenceConf:
-    return InferenceConf(
+def pretrain_step(input: PretrainConf) -> FinetuningConf:
+    return FinetuningConf(
         checkpoint_path="/checkpoints/pretrain_200k.pt",
         cell_types=input.cell_types,
         vocab_size=input.vocab_size,
         step=200_000,
         test_compounds=input.test_compounds,
+    )
+
+
+@weave.op()
+def finetuning_step(input: FinetuningConf) -> InferenceConf:
+    return InferenceConf(
+        checkpoint_path=f"{input.checkpoint_path}.finetuned",
+        cell_types=input.cell_types,
+        vocab_size=input.vocab_size,
+        step=input.step + 50_000,
+        test_compounds=input.test_compounds,
+        target_cell_type=input.target_cell_type,
     )
 
 
@@ -118,18 +140,20 @@ class PipelineConfig(BaseModel):
 def run_pipeline(cfg: PipelineConfig) -> ResultsConf:
     weave.init(cfg.project)
 
-    cond_in = splits_step(SplitsConf())
+    cond_in = splits_step(DataConf())
     pretrain_in = conditioning_step(cond_in)
-    inference_in = pretrain_step(pretrain_in)
+    finetune_in = pretrain_step(pretrain_in)
+    inference_in = finetuning_step(finetune_in)
     eval_in = inference_step(inference_in)
     result = eval_step(eval_in)
 
     print("Pipeline:")
-    print(f"  splits_step(SplitsConf)           -> {type(cond_in).__name__}")
+    print(f"  splits_step(DataConf)              -> {type(cond_in).__name__}")
     print(f"  conditioning_step(ConditioningConf) -> {type(pretrain_in).__name__}")
-    print(f"  pretrain_step(PretrainConf)        -> {type(inference_in).__name__}")
-    print(f"  inference_step(InferenceConf)      -> {type(eval_in).__name__}")
-    print(f"  eval_step(EvalConf)                -> {result.metrics}")
+    print(f"  pretrain_step(PretrainConf)         -> {type(finetune_in).__name__}")
+    print(f"  finetuning_step(FinetuningConf)     -> {type(inference_in).__name__}")
+    print(f"  inference_step(InferenceConf)       -> {type(eval_in).__name__}")
+    print(f"  eval_step(EvalConf)                 -> {result.metrics}")
     print()
     print(f"Chain proof: pretrain_in.split_path == cond_in.split_path -> {pretrain_in.split_path == cond_in.split_path}")
     print(f"JSON roundtrip: {InferenceConf.model_validate_json(inference_in.model_dump_json()) == inference_in}")
