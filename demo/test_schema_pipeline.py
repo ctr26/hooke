@@ -4,12 +4,13 @@ import pytest
 from pydantic import ValidationError
 
 from schema_pipeline import (
-    ConditioningOutput,
+    ConditioningInput,
+    EvalInput,
     EvalOutput,
-    InferenceOutput,
+    InferenceInput,
     PipelineConfig,
-    PretrainOutput,
-    SplitsOutput,
+    PretrainInput,
+    SplitsInput,
     conditioning_step,
     eval_step,
     inference_step,
@@ -22,30 +23,28 @@ from schema_pipeline import (
 
 
 class TestSchemaValidation:
-    def test_splits_missing_field(self):
+    def test_conditioning_input_missing_field(self):
         with pytest.raises(ValidationError):
-            SplitsOutput(split_path="/x")
+            ConditioningInput(split_path="/x")
 
-    def test_conditioning_wrong_type(self):
+    def test_pretrain_input_wrong_type(self):
         with pytest.raises(ValidationError):
-            ConditioningOutput(
+            PretrainInput(
                 split_path="/x", train_compounds=[], val_compounds=[],
                 test_compounds=[], cell_types=[], assay_types=[],
                 vocab_size="bad", conditioning_path="/x",
             )
 
-    def test_defaults_not_required(self):
-        s = SplitsOutput(
-            split_path="/x", train_compounds=[], val_compounds=[], test_compounds=[],
-        )
-        assert s.split_path == "/x"
+    def test_splits_input_defaults(self):
+        s = SplitsInput()
+        assert s.split_file == "data/splits/default.json"
 
     def test_json_roundtrip(self):
-        o = PretrainOutput(
+        o = InferenceInput(
             checkpoint_path="/ckpt", cell_types=["A"], vocab_size=1024,
             step=100, test_compounds=["c"],
         )
-        assert PretrainOutput.model_validate_json(o.model_dump_json()) == o
+        assert InferenceInput.model_validate_json(o.model_dump_json()) == o
 
     def test_pipeline_config_defaults(self):
         cfg = PipelineConfig()
@@ -57,26 +56,36 @@ class TestSchemaValidation:
         assert cfg.output_dir == "/tmp/run"
 
 
-# -- Schema chaining --
+# -- Schema chaining: step output = next step's input --
 
 
 class TestSchemaChaining:
-    def test_splits_fields_carry_to_conditioning(self):
-        splits = splits_step()
-        cond = conditioning_step(splits)
-        assert cond.split_path == splits.split_path
-        assert cond.test_compounds == splits.test_compounds
+    def test_splits_returns_conditioning_input(self):
+        result = splits_step(SplitsInput())
+        assert isinstance(result, ConditioningInput)
+        assert result.split_path == "data/splits/default.json"
 
-    def test_conditioning_fields_carry_to_pretrain(self):
-        cond = conditioning_step(splits_step())
-        pretrain = pretrain_step(cond)
-        assert pretrain.cell_types == cond.cell_types
-        assert pretrain.vocab_size == cond.vocab_size
+    def test_conditioning_returns_pretrain_input(self):
+        cond_in = splits_step(SplitsInput())
+        pretrain_in = conditioning_step(cond_in)
+        assert isinstance(pretrain_in, PretrainInput)
+        assert pretrain_in.split_path == cond_in.split_path
+        assert pretrain_in.test_compounds == cond_in.test_compounds
 
-    def test_pretrain_compounds_carry_to_inference(self):
-        pretrain = pretrain_step(conditioning_step(splits_step()))
-        inference = inference_step(pretrain)
-        assert inference.num_samples == len(pretrain.test_compounds) * 100
+    def test_pretrain_returns_inference_input(self):
+        cond_in = splits_step(SplitsInput())
+        pretrain_in = conditioning_step(cond_in)
+        inference_in = pretrain_step(pretrain_in)
+        assert isinstance(inference_in, InferenceInput)
+        assert inference_in.cell_types == pretrain_in.cell_types
+
+    def test_inference_returns_eval_input(self):
+        cond_in = splits_step(SplitsInput())
+        pretrain_in = conditioning_step(cond_in)
+        inference_in = pretrain_step(pretrain_in)
+        eval_in = inference_step(inference_in)
+        assert isinstance(eval_in, EvalInput)
+        assert eval_in.num_samples == len(inference_in.test_compounds) * 100
 
 
 # -- End to end --
@@ -84,10 +93,10 @@ class TestSchemaChaining:
 
 class TestPipeline:
     def test_full_chain(self):
-        splits = splits_step()
-        cond = conditioning_step(splits)
-        pretrain = pretrain_step(cond)
-        inference = inference_step(pretrain)
-        result = eval_step(inference.features_path, splits.split_path)
+        cond_in = splits_step(SplitsInput())
+        pretrain_in = conditioning_step(cond_in)
+        inference_in = pretrain_step(pretrain_in)
+        eval_in = inference_step(inference_in)
+        result = eval_step(eval_in)
         assert isinstance(result, EvalOutput)
         assert "map_cosine" in result.metrics
