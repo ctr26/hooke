@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 """Variant 1: Nested composition.
 
-Each conf nests the previous conf. Full lineage is structural:
-  result.inference.finetuning.pretrain.conditioning.data.split_file
-
-Pros: Type-safe, each step has a unique input/output type.
-Cons: Deep attribute access, schemas grow with pipeline length.
+Each conf nests the previous conf. Full lineage is structural.
+Outputs are actual data (weights, features), not file paths.
 
     uv run python demo/variants/nested.py
 """
@@ -29,7 +26,6 @@ from variants.schemas import (
 def splits_step(input: DataConf) -> ConditioningConf:
     return ConditioningConf(
         data=input,
-        split_path=input.split_file,
         train_compounds=["cpd_001", "cpd_002", "cpd_003"],
         val_compounds=["cpd_004"],
         test_compounds=["cpd_005", "cpd_006"],
@@ -38,49 +34,59 @@ def splits_step(input: DataConf) -> ConditioningConf:
 
 @weave.op()
 def conditioning_step(input: ConditioningConf) -> PretrainConf:
+    # Simulate: produce conditioning weights from compound data
+    weights = [0.1 * i for i in range(len(input.train_compounds))]
     return PretrainConf(
         conditioning=input,
         cell_types=["ARPE19", "HUVEC", "HepG2"],
         assay_types=["cell_paint", "brightfield"],
         vocab_size=2048,
-        conditioning_path="/data/conditioning/v1.json",
+        conditioning_weights=weights,
     )
 
 
 @weave.op()
 def pretrain_step(input: PretrainConf) -> FinetuningConf:
+    # Simulate: produce model weights from pretraining
+    weights = [w + 1.0 for w in input.conditioning_weights] + [0.5] * input.vocab_size
     return FinetuningConf(
         pretrain=input,
-        checkpoint_path="/checkpoints/pretrain_200k.pt",
+        model_weights=weights[:10],  # truncate for demo
         step=200_000,
     )
 
 
 @weave.op()
 def finetuning_step(input: FinetuningConf) -> InferenceConf:
+    # Simulate: refine weights for target cell type
+    weights = [w * 1.1 for w in input.model_weights]
     return InferenceConf(
         finetuning=input,
-        checkpoint_path=f"{input.checkpoint_path}.finetuned",
+        model_weights=weights,
         step=input.step + 50_000,
     )
 
 
 @weave.op()
 def inference_step(input: InferenceConf) -> EvalConf:
+    # Simulate: produce feature embeddings per test compound
+    n_compounds = len(input.finetuning.pretrain.conditioning.test_compounds)
+    features = [[w * (i + 1) for w in input.model_weights[:3]] for i in range(n_compounds)]
     return EvalConf(
         inference=input,
-        features_path="/outputs/features.npy",
-        num_samples=len(input.finetuning.pretrain.conditioning.test_compounds) * 100,
+        features=features,
+        num_samples=n_compounds,
     )
 
 
 @weave.op()
 def eval_step(input: EvalConf) -> ResultsConf:
-    return ResultsConf(metrics={"map_cosine": 0.85, "pearson": 0.72})
+    # Simulate: compute metrics from features
+    mean_feat = sum(f[0] for f in input.features) / len(input.features)
+    return ResultsConf(metrics={"map_cosine": round(mean_feat, 4), "pearson": 0.72})
 
 
 class PipelineConfig(BaseModel):
-    output_dir: str = "outputs/demo"
     project: str = "hooke-demo-nested"
 
 
@@ -95,8 +101,14 @@ def run_pipeline(cfg: PipelineConfig) -> ResultsConf:
     result = eval_step(ev)
 
     weave.publish(result, name="results")
-    print(f"Nested: {result.metrics}")
-    print(f"Lineage: ev.inference.finetuning.pretrain.conditioning.data.split_file = {ev.inference.finetuning.pretrain.conditioning.data.split_file}")
+
+    print("=== Nested Composition ===")
+    print(f"  Conditioning weights: {pretrain.conditioning_weights}")
+    print(f"  Pretrain weights (first 5): {finetune.model_weights[:5]}")
+    print(f"  Finetuned weights (first 5): {inference.model_weights[:5]}")
+    print(f"  Features shape: {len(ev.features)}x{len(ev.features[0])}")
+    print(f"  Metrics: {result.metrics}")
+    print(f"  Lineage: ev.inference.finetuning.pretrain.conditioning.data.split_file = {ev.inference.finetuning.pretrain.conditioning.data.split_file}")
     return result
 
 

@@ -2,11 +2,7 @@
 """Variant 5: Weave refs — artifact-mediated pipeline.
 
 Steps publish outputs as named Weave objects. Downstream steps
-consume via weave.ref() instead of direct Python variable passing.
-This is how you'd chain steps across separate runs or projects.
-
-Pros: Steps are fully decoupled, can run independently, cross-project.
-Cons: Requires Weave backend, not purely local.
+can consume via weave.ref() for cross-run/cross-project chaining.
 
     uv run python demo/variants/weave_refs.py
 """
@@ -14,15 +10,6 @@ Cons: Requires Weave backend, not purely local.
 import weave
 from hydra_zen import builds, store, zen
 from pydantic import BaseModel
-
-
-def _publish(obj, name: str):
-    """Publish only when Weave client is active."""
-    try:
-        weave.publish(obj, name=name)
-    except Exception:
-        pass
-
 
 from variants.schemas import (
     ConditioningConf,
@@ -35,11 +22,18 @@ from variants.schemas import (
 )
 
 
+def _publish(obj, name: str):
+    """Publish only when Weave client is active."""
+    try:
+        weave.publish(obj, name=name)
+    except Exception:
+        pass
+
+
 @weave.op()
 def splits_step(input: DataConf) -> ConditioningConf:
     result = ConditioningConf(
         data=input,
-        split_path=input.split_file,
         train_compounds=["cpd_001", "cpd_002", "cpd_003"],
         val_compounds=["cpd_004"],
         test_compounds=["cpd_005", "cpd_006"],
@@ -50,12 +44,13 @@ def splits_step(input: DataConf) -> ConditioningConf:
 
 @weave.op()
 def conditioning_step(input: ConditioningConf) -> PretrainConf:
+    weights = [0.1 * i for i in range(len(input.train_compounds))]
     result = PretrainConf(
         conditioning=input,
         cell_types=["ARPE19", "HUVEC", "HepG2"],
         assay_types=["cell_paint", "brightfield"],
         vocab_size=2048,
-        conditioning_path="/data/conditioning/v1.json",
+        conditioning_weights=weights,
     )
     _publish(result, name="conditioning-output")
     return result
@@ -63,9 +58,10 @@ def conditioning_step(input: ConditioningConf) -> PretrainConf:
 
 @weave.op()
 def pretrain_step(input: PretrainConf) -> FinetuningConf:
+    weights = [w + 1.0 for w in input.conditioning_weights] + [0.5] * input.vocab_size
     result = FinetuningConf(
         pretrain=input,
-        checkpoint_path="/checkpoints/pretrain_200k.pt",
+        model_weights=weights[:10],
         step=200_000,
     )
     _publish(result, name="pretrain-output")
@@ -74,9 +70,10 @@ def pretrain_step(input: PretrainConf) -> FinetuningConf:
 
 @weave.op()
 def finetuning_step(input: FinetuningConf) -> InferenceConf:
+    weights = [w * 1.1 for w in input.model_weights]
     result = InferenceConf(
         finetuning=input,
-        checkpoint_path=f"{input.checkpoint_path}.finetuned",
+        model_weights=weights,
         step=input.step + 50_000,
     )
     _publish(result, name="finetuning-output")
@@ -85,10 +82,12 @@ def finetuning_step(input: FinetuningConf) -> InferenceConf:
 
 @weave.op()
 def inference_step(input: InferenceConf) -> EvalConf:
+    n = len(input.finetuning.pretrain.conditioning.test_compounds)
+    features = [[w * (i + 1) for w in input.model_weights[:3]] for i in range(n)]
     result = EvalConf(
         inference=input,
-        features_path="/outputs/features.npy",
-        num_samples=len(input.finetuning.pretrain.conditioning.test_compounds) * 100,
+        features=features,
+        num_samples=n,
     )
     _publish(result, name="inference-output")
     return result
@@ -96,18 +95,18 @@ def inference_step(input: InferenceConf) -> EvalConf:
 
 @weave.op()
 def eval_step(input: EvalConf) -> ResultsConf:
-    result = ResultsConf(metrics={"map_cosine": 0.85, "pearson": 0.72})
+    mean_feat = sum(f[0] for f in input.features) / len(input.features)
+    result = ResultsConf(metrics={"map_cosine": round(mean_feat, 4), "pearson": 0.72})
     _publish(result, name="results")
     return result
 
 
 class PipelineConfig(BaseModel):
-    output_dir: str = "outputs/demo"
     project: str = "hooke-demo-refs"
 
 
 def run_pipeline(cfg: PipelineConfig) -> ResultsConf:
-    """Run full pipeline — each step publishes, could be separate runs."""
+    """Run full pipeline — each step publishes its output."""
     weave.init(cfg.project)
 
     cond = splits_step(DataConf())
@@ -117,34 +116,31 @@ def run_pipeline(cfg: PipelineConfig) -> ResultsConf:
     ev = inference_step(inference)
     result = eval_step(ev)
 
-    print(f"Refs: {result.metrics}")
+    print("=== Weave Refs ===")
+    print(f"  Published: splits-output, conditioning-output, pretrain-output, finetuning-output, inference-output, results")
+    print(f"  Metrics: {result.metrics}")
+    print(f"  Resume from any step: weave.ref('pretrain-output:latest').get()")
     return result
 
 
 def run_from_ref(cfg: PipelineConfig, from_step: str = "pretrain") -> ResultsConf:
-    """Resume pipeline from a published artifact — the real power of refs.
-
-    Example: pretrain is done, just re-run finetuning + inference + eval.
-    """
+    """Resume pipeline from a published artifact."""
     weave.init(cfg.project)
 
     ref = weave.ref(f"{from_step}-output:latest").get()
-    print(f"Loaded {from_step}-output from Weave: {type(ref).__name__}")
+    print(f"  Loaded {from_step}-output: {type(ref).__name__}")
 
     if from_step == "pretrain":
-        finetune = finetuning_step(ref)
-        inference = inference_step(finetune)
-        ev = eval_step(inference)
+        inference = finetuning_step(ref)
+        ev = inference_step(inference)
+        return eval_step(ev)
     elif from_step == "finetuning":
-        inference = inference_step(ref)
-        ev = eval_step(inference)
+        ev = inference_step(ref)
+        return eval_step(ev)
     elif from_step == "inference":
-        ev = eval_step(ref)
+        return eval_step(ref)
     else:
         raise ValueError(f"Unknown step: {from_step}")
-
-    print(f"Resumed from {from_step}: {ev.metrics}")
-    return ev
 
 
 PipelineCfg = builds(PipelineConfig, populate_full_signature=True)
