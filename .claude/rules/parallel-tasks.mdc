@@ -1,0 +1,40 @@
+---
+description: Always prefer parallel execution of independent tasks
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Parallel Task Execution
+
+## Rule
+Always launch independent tasks in parallel. Never run sequentially what can run concurrently.
+
+## When dispatching agents
+- If 2+ tasks have no data dependencies, launch them in a SINGLE message with multiple Agent tool calls
+- Before dispatching, explicitly identify which tasks depend on each other and which are independent
+- Group: independent tasks → parallel batch, then dependent tasks → next batch
+
+## When running shell commands
+- If 2+ commands are independent (e.g. lint + typecheck + test on different packages), run them as parallel Bash calls in one message
+- Only chain with `&&` when commands are truly sequential
+
+## When reading/searching files
+- If you need to read 2+ files, issue all Read calls in one message
+- If you need to search for 2+ patterns, issue all Grep/Glob calls in one message
+
+## Anti-patterns (never do these)
+- Running agent A, waiting for result, then running independent agent B
+- Reading file A, waiting, then reading unrelated file B
+- Running `make lint` then `make typecheck` sequentially when they don't depend on each other
+
+## Think in dependency graphs
+Before any multi-step work, mentally construct:
+```
+Task A (independent) ─┐
+Task B (independent) ─┤── parallel batch 1
+Task C (independent) ─┘
+         │
+Task D (needs A+B) ───── batch 2
+         │
+Task E (needs D) ─────── batch 3
+```
