@@ -20,7 +20,10 @@ def upload_checkpoint(
     project: str = "hooke-px",
     metadata: dict | None = None,
 ) -> str:
-    """Upload checkpoint to W&B as artifact.
+    """Upload checkpoint to W&B as artifact and publish to Weave.
+
+    Creates both a W&B artifact (for storage) and a Weave object (for lineage).
+    The inference step can resolve the checkpoint via either mechanism.
 
     Args:
         checkpoint_path: Path to checkpoint file
@@ -46,8 +49,25 @@ def upload_checkpoint(
     run.log_artifact(artifact)
     run.finish()
 
+    # Also publish to Weave for lineage tracking
+    try:
+        import weave
+
+        weave.init(project)
+        weave.publish(
+            {
+                "path": str(checkpoint_path),
+                "artifact_ref": f"{project}/{name}:latest",
+                "metadata": metadata or {},
+            },
+            name=name,
+        )
+        print(f"   Weave: published as {project}/{name}")
+    except Exception as e:
+        print(f"   Weave publish skipped: {e}")
+
     ref = f"{project}/{name}:latest"
-    print(f"✅ Uploaded: {ref}")
+    print(f"Uploaded: {ref}")
     print(f"   View: https://wandb.ai/valencelabs/{project}/artifacts/model/{name}")
 
     return ref

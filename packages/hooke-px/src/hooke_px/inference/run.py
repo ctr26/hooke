@@ -1,6 +1,45 @@
-"""Inference execution (runs inside SLURM job)."""
+"""Inference execution — bridges hooke_px pipeline to hooke_forge distributed inference."""
 
+import logging
 from pathlib import Path
+
+from hooke_forge.inference.checkpoint import extract_model_config, find_checkpoint
+
+log = logging.getLogger(__name__)
+
+
+def resolve_checkpoint(checkpoint_path: str) -> Path:
+    """Resolve checkpoint from various formats.
+
+    Supports:
+    - Local file path: /path/to/step_200000.ckpt
+    - Training dir + step: /path/to/training_dir (finds latest checkpoint)
+    - W&B artifact: downloaded artifact directory
+    """
+    path = Path(checkpoint_path)
+
+    # Direct checkpoint file
+    if path.is_file() and path.suffix == ".ckpt":
+        return path
+
+    # Training directory — find the latest checkpoint
+    if path.is_dir():
+        checkpoints_dir = path / "checkpoints"
+        if checkpoints_dir.exists():
+            ckpts = sorted(checkpoints_dir.glob("step_*.ckpt"))
+            if ckpts:
+                return ckpts[-1]
+
+        # Try nested structure (timestamp/job_id/checkpoints/)
+        for subdir in path.iterdir():
+            if subdir.is_dir():
+                nested_ckpts = subdir / "checkpoints"
+                if nested_ckpts.exists():
+                    ckpts = sorted(nested_ckpts.glob("step_*.ckpt"))
+                    if ckpts:
+                        return ckpts[-1]
+
+    raise FileNotFoundError(f"No checkpoint found at: {checkpoint_path}")
 
 
 def run_inference_job(
@@ -11,51 +50,41 @@ def run_inference_job(
     num_workers: int,
     num_samples: int,
 ) -> str:
-    """Run inference and save features.
+    """Run distributed inference via hooke_forge.
 
-    This is the actual compute — runs on GPU node.
+    Bridges the hooke_px pipeline schema to the existing
+    hooke_forge distributed inference infrastructure.
 
     Args:
-        checkpoint_path: Path to model checkpoint
-        dataset_path: Path to dataset
-        output_dir: Output directory
-        batch_size: Batch size per GPU
-        num_workers: Parallel workers
-        num_samples: Samples per well
+        checkpoint_path: Path to model checkpoint or training directory
+        dataset_path: Path to input metadata parquet
+        output_dir: Output directory for features
+        batch_size: Batch size per worker GPU
+        num_workers: Number of SLURM workers
+        num_samples: Samples per observation
 
     Returns:
-        Path to output features (zarr)
+        Path to output features directory (contains {representation}.zarr files)
     """
-    import torch
+    from hooke_forge.inference.distributed import run_distributed_inference
 
-    # Create output dir
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    features_path = output_path / "features.zarr"
+    checkpoint = resolve_checkpoint(checkpoint_path)
+    log.info(f"Resolved checkpoint: {checkpoint}")
 
-    print(f"Loading checkpoint: {checkpoint_path}")
-    print(f"Dataset: {dataset_path}")
-    print(f"Output: {features_path}")
+    model_config = extract_model_config(checkpoint.parent.parent)
+    if model_config:
+        log.info(f"Extracted model config: {model_config}")
 
-    # TODO: Actual inference implementation
-    # This is a placeholder — replace with real model loading + inference
+    result_dir = run_distributed_inference(
+        checkpoint_path=checkpoint,
+        input_parquet=Path(dataset_path),
+        output_dir=Path(output_dir),
+        model_config=model_config or None,
+        num_workers=num_workers,
+        num_samples=num_samples,
+        batch_size=batch_size,
+    )
 
-    # model = load_model(checkpoint_path)
-    # dataset = load_dataset(dataset_path, num_samples=num_samples)
-    # dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers)
-    #
-    # features = []
-    # for batch in dataloader:
-    #     with torch.no_grad():
-    #         feat = model(batch)
-    #     features.append(feat)
-    #
-    # save_zarr(features, features_path)
-
-    # Placeholder: create empty zarr
-    import zarr
-    zarr.open(str(features_path), mode="w", shape=(1000, 512), dtype="float32")
-
-    print(f"✅ Inference complete: {features_path}")
-
-    return str(features_path)
+    features_path = str(result_dir / "features")
+    log.info(f"Inference complete: {features_path}")
+    return features_path

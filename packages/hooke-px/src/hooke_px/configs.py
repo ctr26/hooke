@@ -46,6 +46,8 @@ class EvalConfig:
     features_path: str = ""  # Set from inference output
     ground_truth_path: str = "/rxrx/data/valence/internal_benchmarking/vcds1/drugscreen__cell_paint__v1_2"
     split_path: str = "/rxrx/data/valence/internal_benchmarking/vcb/splits/drugscreen__cell_paint__v1_2/split_compound_random__v1.json"
+    task_id: str = "virtual_map"
+    split_index: int = 0
 
     def to_input(self) -> EvalInput:
         """Convert to EvalInput schema."""
@@ -53,6 +55,8 @@ class EvalConfig:
             features_path=self.features_path,
             ground_truth_path=self.ground_truth_path,
             split_path=self.split_path,
+            task_id=self.task_id,
+            split_index=self.split_index,
         )
 
 
@@ -62,6 +66,9 @@ class PipelineConfig:
 
     inference: InferenceConfig = field(default_factory=InferenceConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
+
+    # Pipeline mode
+    run_eval: bool = False
 
     # Caching
     cache_dir: str = "/data/valence/cache"

@@ -3,8 +3,6 @@
 Each step's output = next step's input.
 """
 
-from pathlib import Path
-
 from pydantic import BaseModel, Field
 
 
@@ -12,7 +10,7 @@ class InferenceInput(BaseModel):
     """Input for inference step."""
 
     checkpoint_path: str = Field(..., description="W&B artifact ref or local path")
-    dataset_path: str = Field(..., description="Path to dataset")
+    dataset_path: str = Field(..., description="Path to dataset (parquet)")
     output_dir: str = Field(..., description="Output directory for features")
 
     # Job config
@@ -20,9 +18,14 @@ class InferenceInput(BaseModel):
     num_workers: int = Field(default=100, description="Number of parallel workers")
     num_samples: int = Field(default=36, description="Samples per well")
 
+    # Representations
+    representations: list[str] | None = Field(default=None, description="Representations to extract (auto-detected if None)")
+    tx_zarr_path: str = Field(default="", description="Path to tx feature zarr (required for tx modality)")
+
     # SLURM config
     partition: str = Field(default="hopper", description="SLURM partition")
     gpus_per_node: int = Field(default=4, description="GPUs per node")
+    qos: str | None = Field(default=None, description="SLURM QOS")
 
 
 class InferenceOutput(BaseModel):
@@ -45,6 +48,8 @@ class EvalInput(BaseModel):
         default="/rxrx/data/valence/internal_benchmarking/vcb/splits/drugscreen__cell_paint__v1_2/split_compound_random__v1.json",
         description="Path to split JSON",
     )
+    task_id: str = Field(default="virtual_map", description="VCB task id ('virtual_map' or 'phenorescue')")
+    split_index: int = Field(default=0, description="Fold index to evaluate")
 
 
 class EvalOutput(BaseModel):
