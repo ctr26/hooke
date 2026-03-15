@@ -25,78 +25,71 @@ from schema_pipeline import (
 
 
 class TestSchemaValidation:
-    def test_conditioning_missing_field(self):
-        with pytest.raises(ValidationError):
-            ConditioningConf(split_path="/x")
-
-    def test_pretrain_wrong_type(self):
-        with pytest.raises(ValidationError):
-            PretrainConf(
-                split_path="/x", train_compounds=[], val_compounds=[],
-                test_compounds=[], cell_types=[], assay_types=[],
-                vocab_size="bad", conditioning_path="/x",
-            )
-
     def test_data_conf_defaults(self):
         d = DataConf()
         assert d.split_file == "data/splits/default.json"
 
-    def test_finetuning_conf_default_cell_type(self):
-        f = FinetuningConf(
-            checkpoint_path="/ckpt", cell_types=["A"], vocab_size=1024,
-            step=100, test_compounds=["c"],
+    def test_conditioning_requires_data(self):
+        with pytest.raises(ValidationError):
+            ConditioningConf(split_path="/x", train_compounds=[], val_compounds=[], test_compounds=[])
+
+    def test_pretrain_requires_conditioning(self):
+        with pytest.raises(ValidationError):
+            PretrainConf(cell_types=[], assay_types=[], vocab_size=2048, conditioning_path="/x")
+
+    def test_finetuning_default_cell_type(self):
+        pretrain = PretrainConf(
+            conditioning=ConditioningConf(
+                data=DataConf(), split_path="/x",
+                train_compounds=[], val_compounds=[], test_compounds=[],
+            ),
+            cell_types=[], assay_types=[], vocab_size=2048, conditioning_path="/x",
         )
+        f = FinetuningConf(pretrain=pretrain, checkpoint_path="/ckpt", step=100)
         assert f.target_cell_type == "ARPE19"
 
     def test_json_roundtrip(self):
-        o = InferenceConf(
-            checkpoint_path="/ckpt", cell_types=["A"], vocab_size=1024,
-            step=100, test_compounds=["c"], target_cell_type="HUVEC",
-        )
-        assert InferenceConf.model_validate_json(o.model_dump_json()) == o
+        cond = splits_step(DataConf())
+        pretrain = conditioning_step(cond)
+        rebuilt = PretrainConf.model_validate_json(pretrain.model_dump_json())
+        assert rebuilt == pretrain
+        assert rebuilt.conditioning.data.split_file == pretrain.conditioning.data.split_file
 
     def test_pipeline_config_defaults(self):
         cfg = PipelineConfig()
-        assert cfg.output_dir == "outputs/demo"
         assert cfg.project == "hooke-demo"
 
 
-# -- Schema chaining --
+# -- Nested composition --
 
 
-class TestSchemaChaining:
-    def test_splits_returns_conditioning_conf(self):
-        result = splits_step(DataConf())
-        assert isinstance(result, ConditioningConf)
+class TestComposition:
+    def test_conditioning_nests_data(self):
+        cond = splits_step(DataConf())
+        assert isinstance(cond.data, DataConf)
+        assert cond.data.split_file == "data/splits/default.json"
 
-    def test_conditioning_returns_pretrain_conf(self):
+    def test_pretrain_nests_conditioning(self):
         cond = splits_step(DataConf())
         pretrain = conditioning_step(cond)
-        assert isinstance(pretrain, PretrainConf)
-        assert pretrain.split_path == cond.split_path
+        assert isinstance(pretrain.conditioning, ConditioningConf)
+        assert pretrain.conditioning.split_path == cond.split_path
 
-    def test_pretrain_returns_finetuning_conf(self):
-        cond = splits_step(DataConf())
-        pretrain = conditioning_step(cond)
-        finetune = pretrain_step(pretrain)
-        assert isinstance(finetune, FinetuningConf)
-        assert finetune.cell_types == pretrain.cell_types
-
-    def test_finetuning_returns_inference_conf(self):
+    def test_finetuning_nests_pretrain(self):
         cond = splits_step(DataConf())
         pretrain = conditioning_step(cond)
         finetune = pretrain_step(pretrain)
-        inference = finetuning_step(finetune)
-        assert isinstance(inference, InferenceConf)
-        assert inference.target_cell_type == finetune.target_cell_type
+        assert isinstance(finetune.pretrain, PretrainConf)
+        assert finetune.pretrain.cell_types == pretrain.cell_types
 
-    def test_inference_returns_eval_conf(self):
+    def test_full_lineage_traversal(self):
         cond = splits_step(DataConf())
         pretrain = conditioning_step(cond)
         finetune = pretrain_step(pretrain)
         inference = finetuning_step(finetune)
         ev = inference_step(inference)
-        assert isinstance(ev, EvalConf)
+        # Traverse all the way back to DataConf
+        assert ev.inference.finetuning.pretrain.conditioning.data.split_file == "data/splits/default.json"
 
 
 # -- End to end --

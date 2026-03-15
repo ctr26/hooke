@@ -2,6 +2,7 @@
 """Schema-governed pipeline demo.
 
 Each step returns the next step's input as a Pydantic schema.
+Schemas compose by nesting the previous conf, not flattening.
 Weave tracks lineage, hydra-zen provides CLI config.
 
     uv run python demo/schema_pipeline.py
@@ -14,7 +15,7 @@ from hydra_zen import builds, store, zen
 from pydantic import BaseModel
 
 
-# -- Schemas: each describes the input to a step --
+# -- Schemas: nested composition --
 
 
 class DataConf(BaseModel):
@@ -23,6 +24,7 @@ class DataConf(BaseModel):
 
 
 class ConditioningConf(BaseModel):
+    data: DataConf
     split_path: str
     train_compounds: list[str]
     val_compounds: list[str]
@@ -30,10 +32,7 @@ class ConditioningConf(BaseModel):
 
 
 class PretrainConf(BaseModel):
-    split_path: str
-    train_compounds: list[str]
-    val_compounds: list[str]
-    test_compounds: list[str]
+    conditioning: ConditioningConf
     cell_types: list[str]
     assay_types: list[str]
     vocab_size: int
@@ -41,27 +40,22 @@ class PretrainConf(BaseModel):
 
 
 class FinetuningConf(BaseModel):
+    pretrain: PretrainConf
     checkpoint_path: str
-    cell_types: list[str]
-    vocab_size: int
     step: int
-    test_compounds: list[str]
     target_cell_type: str = "ARPE19"
 
 
 class InferenceConf(BaseModel):
+    finetuning: FinetuningConf
     checkpoint_path: str
-    cell_types: list[str]
-    vocab_size: int
     step: int
-    test_compounds: list[str]
-    target_cell_type: str
 
 
 class EvalConf(BaseModel):
+    inference: InferenceConf
     features_path: str
     num_samples: int
-    split_path: str
 
 
 class ResultsConf(BaseModel):
@@ -74,6 +68,7 @@ class ResultsConf(BaseModel):
 @weave.op()
 def splits_step(input: DataConf) -> ConditioningConf:
     return ConditioningConf(
+        data=input,
         split_path=input.split_file,
         train_compounds=["cpd_001", "cpd_002", "cpd_003"],
         val_compounds=["cpd_004"],
@@ -84,7 +79,7 @@ def splits_step(input: DataConf) -> ConditioningConf:
 @weave.op()
 def conditioning_step(input: ConditioningConf) -> PretrainConf:
     return PretrainConf(
-        **input.model_dump(),
+        conditioning=input,
         cell_types=["ARPE19", "HUVEC", "HepG2"],
         assay_types=["cell_paint", "brightfield"],
         vocab_size=2048,
@@ -95,32 +90,27 @@ def conditioning_step(input: ConditioningConf) -> PretrainConf:
 @weave.op()
 def pretrain_step(input: PretrainConf) -> FinetuningConf:
     return FinetuningConf(
+        pretrain=input,
         checkpoint_path="/checkpoints/pretrain_200k.pt",
-        cell_types=input.cell_types,
-        vocab_size=input.vocab_size,
         step=200_000,
-        test_compounds=input.test_compounds,
     )
 
 
 @weave.op()
 def finetuning_step(input: FinetuningConf) -> InferenceConf:
     return InferenceConf(
+        finetuning=input,
         checkpoint_path=f"{input.checkpoint_path}.finetuned",
-        cell_types=input.cell_types,
-        vocab_size=input.vocab_size,
         step=input.step + 50_000,
-        test_compounds=input.test_compounds,
-        target_cell_type=input.target_cell_type,
     )
 
 
 @weave.op()
 def inference_step(input: InferenceConf) -> EvalConf:
     return EvalConf(
+        inference=input,
         features_path="/outputs/features.npy",
-        num_samples=len(input.test_compounds) * 100,
-        split_path="/data/splits/v1.json",
+        num_samples=len(input.finetuning.pretrain.conditioning.test_compounds) * 100,
     )
 
 
@@ -140,38 +130,37 @@ class PipelineConfig(BaseModel):
 def run_pipeline(cfg: PipelineConfig) -> ResultsConf:
     weave.init(cfg.project)
 
-    # Each step's output is published as a named artifact.
-    # Downstream steps could consume via weave.ref("artifact-name:latest")
-    # instead of direct Python variable passing.
+    cond = splits_step(DataConf())
+    weave.publish(cond, name="splits-output")
 
-    cond_in = splits_step(DataConf())
-    weave.publish(cond_in, name="splits-output")
+    pretrain = conditioning_step(cond)
+    weave.publish(pretrain, name="conditioning-output")
 
-    pretrain_in = conditioning_step(cond_in)
-    weave.publish(pretrain_in, name="conditioning-output")
+    finetune = pretrain_step(pretrain)
+    weave.publish(finetune, name="pretrain-output")
 
-    finetune_in = pretrain_step(pretrain_in)
-    weave.publish(finetune_in, name="pretrain-output")
+    inference = finetuning_step(finetune)
+    weave.publish(inference, name="finetuning-output")
 
-    inference_in = finetuning_step(finetune_in)
-    weave.publish(inference_in, name="finetuning-output")
+    ev = inference_step(inference)
+    weave.publish(ev, name="inference-output")
 
-    eval_in = inference_step(inference_in)
-    weave.publish(eval_in, name="inference-output")
-
-    result = eval_step(eval_in)
+    result = eval_step(ev)
     weave.publish(result, name="results")
 
     print("Pipeline:")
-    print(f"  splits_step(DataConf)              -> {type(cond_in).__name__}")
-    print(f"  conditioning_step(ConditioningConf) -> {type(pretrain_in).__name__}")
-    print(f"  pretrain_step(PretrainConf)         -> {type(finetune_in).__name__}")
-    print(f"  finetuning_step(FinetuningConf)     -> {type(inference_in).__name__}")
-    print(f"  inference_step(InferenceConf)       -> {type(eval_in).__name__}")
+    print(f"  splits_step(DataConf)              -> {type(cond).__name__}")
+    print(f"  conditioning_step(ConditioningConf) -> {type(pretrain).__name__}")
+    print(f"  pretrain_step(PretrainConf)         -> {type(finetune).__name__}")
+    print(f"  finetuning_step(FinetuningConf)     -> {type(inference).__name__}")
+    print(f"  inference_step(InferenceConf)       -> {type(ev).__name__}")
     print(f"  eval_step(EvalConf)                 -> {result.metrics}")
     print()
-    print(f"Chain proof: pretrain_in.split_path == cond_in.split_path -> {pretrain_in.split_path == cond_in.split_path}")
-    print(f"JSON roundtrip: {InferenceConf.model_validate_json(inference_in.model_dump_json()) == inference_in}")
+
+    # Traverse the nested lineage
+    print(f"Lineage traversal: ev.inference.finetuning.pretrain.conditioning.data.split_file")
+    print(f"  = {ev.inference.finetuning.pretrain.conditioning.data.split_file}")
+    print()
     print(f"Weave project: {cfg.project}")
     print(f"View lineage: https://wandb.ai/valencelabs/{cfg.project}/weave")
 
