@@ -1,0 +1,17 @@
+[project]
+name = "hooke"
+version = "0.0.0"
+description = "Hub repo for the Hooke virtual cell ecosystem"
+requires-python = ">=3.11"
+
+[tool.semantic_release]
+commit_message = "chore(release): release `hooke@{version}` [skip ci]"
+tag_format = "v{version}"
+version_toml = ["pyproject.toml:project.version"]
+
+[tool.semantic_release.branches.main]
+match = "main"
+prerelease = false
+
+[tool.semantic_release.commit_parser_options]
+allowed_tags = ["feat", "fix", "refactor", "perf", "test", "docs", "ci", "chore", "config", "data", "exp"]

@@ -1,0 +1,31 @@
+name: Sync upstream branches
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure upstream remote
+        run: |
+          git remote add upstream https://github.com/valence-labs/captain-hooke.git ||
+            git remote set-url upstream https://github.com/valence-labs/captain-hooke.git
+
+      - name: Fetch and push upstream branches
+        run: |
+          git fetch upstream --prune
+          for ref in $(git for-each-ref --format='%(refname:short)' refs/remotes/upstream/ | grep -v HEAD); do
+            branch="${ref#upstream/}"
+            echo "Syncing upstream/$branch -> origin/$branch"
+            git push origin "refs/remotes/upstream/$branch:refs/heads/upstream/$branch" --force
+          done

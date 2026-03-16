@@ -1,3 +1,11 @@
+# macOS
+.DS_Store
+
+# Personal agent/IDE config (see GUIDELINES.md §6.4)
+CLAUDE.md
+.cursor/
+.claude/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

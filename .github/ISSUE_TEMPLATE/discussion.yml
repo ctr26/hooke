@@ -1,0 +1,29 @@
+name: Discussion
+description: Open-ended discussion or question — no implementation yet
+labels: [discussion]
+body:
+  - type: textarea
+    id: topic
+    attributes:
+      label: Topic
+      description: What do you want to discuss?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Background information, links, or related work
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options / Trade-offs
+      description: If you have potential approaches in mind, list them here
+
+  - type: textarea
+    id: related
+    attributes:
+      label: Related Issues
+      description: Link to related issues if any
