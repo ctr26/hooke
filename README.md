@@ -28,16 +28,23 @@ Ready-to-copy project scaffolding in `templates/`:
 
 ## Quick Start
 
+```python
+from hooke.pipeline import Pipeline
+
+pipe = Pipeline.from_config("configs/example.yaml")
+result = pipe({"features": [0.5, -1.2, 0.3]})
+print(result["predictions"])
+```
+
 ```bash
-# New project from hooke
-gh repo create ctr26/<name> --private --clone && cd <name>
-cp ~/projects/ctr26/hooke/AGENTS.md .
-cp ~/projects/ctr26/hooke/templates/pyproject.toml .
-cp ~/projects/ctr26/hooke/templates/Makefile .
-cp -r ~/projects/ctr26/hooke/templates/.github .
-cp ~/projects/ctr26/hooke/templates/PROJECT_SPEC.md .
-cp -r ~/projects/ctr26/hooke/.claude .
-cp -r ~/projects/ctr26/hooke/.cursor .
+# Install
+uv sync --all-extras
+
+# Run tests
+make test
+
+# Lint + format
+make lint && make format
 ```
 
 ## Agent Configuration

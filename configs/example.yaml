@@ -1,0 +1,16 @@
+model:
+  model_class: hooke.model.HookeModel
+  device: cpu
+  precision: float32
+
+data:
+  feature_names:
+    - gene_expression_1
+    - gene_expression_2
+    - gene_expression_3
+  batch_size: 32
+  preprocessing_steps:
+    - name: standard_scaler
+
+name: example-pipeline
+version: "0.1.0"
